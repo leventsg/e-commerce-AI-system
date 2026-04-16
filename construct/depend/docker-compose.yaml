@@ -15,7 +15,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - mall
+      - go-mall
   redis:
     image: redis:6-alpine
     volumes:
@@ -24,7 +24,7 @@ services:
       - "6379:6379"
     restart: unless-stopped
     networks:
-      - mall
+      - go-mall
     command: [ "redis-server", "/etc/redis/redis.conf" ]
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
@@ -35,12 +35,12 @@ services:
     image: mysql:8.0-debian
     restart: unless-stopped
     ports:
-      - "3306:3306"
+      - "33061:3306"
     platform: linux/amd64
     volumes:
       - ./sql:/docker-entrypoint-initdb.d/
     networks:
-      - mall
+      - go-mall
     environment:
       MYSQL_ROOT_USER: 'root'
       MYSQL_ROOT_PASSWORD: 'root'
@@ -55,7 +55,7 @@ services:
       - "5672:5672"
       - "15672:15672"
     networks:
-      - mall
+      - go-mall
     environment:
       RABBITMQ_DEFAULT_USER: 'admin'
       RABBITMQ_DEFAULT_PASS: 'admin'
@@ -91,8 +91,8 @@ services:
     volumes:
       - ./conf/dtm.yaml:/app/dtm/configs/config.yaml
     networks:
-      mall:
+      go-mall:
 
 
 networks:
-  mall:
+  go-mall:

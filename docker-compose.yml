@@ -8,7 +8,7 @@ x-common: &common
     - go-mall
   restart: unless-stopped
   volumes:
-    - /app/logs:/app/logs
+    - ./logs:/app/logs
   deploy:
     resources:
       limits:
@@ -42,7 +42,7 @@ services:
   products-service:
     <<: [ *common,*healthcheck ]
     container_name: go-mall-products-service
-    command: [ "/app/services/Product", "-f", "/app/etc/products.prod.yaml" ]
+    command: [ "/app/services/Product", "-f", "/app/etc/product.prod.yaml" ]
     ports:
       - "10002:10002"
       - "11002:11002"

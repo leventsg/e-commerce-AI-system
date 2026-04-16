@@ -22,7 +22,7 @@ services:
       - go-mall
     restart: unless-stopped
   prometheus:
-    image: bitnami/prometheus:latest
+    image: prom/prometheus:latest
     volumes:
       - ./conf/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
     ports:

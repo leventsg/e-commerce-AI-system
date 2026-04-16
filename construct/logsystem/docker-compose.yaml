@@ -12,14 +12,15 @@ services:
     volumes:
       - ./conf/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
     networks:
-      - Tiktok
+      - go-mall
   kibana:
     image: docker.io/library/kibana:7.3.2
+    platform: linux/amd64
     volumes:
       - ./conf/kibana.yml:/usr/share/kibana/config/kibana.yml
     ports:
       - 5601:5601
     networks:
-      - Tiktok
+      - go-mall
 networks:
-  Tiktok:
+  go-mall:

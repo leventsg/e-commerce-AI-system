@@ -24,6 +24,9 @@ create database if not exists mall character set utf8mb4;
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+-- 使用数据库
+USE mall;
+
 -- ----------------------------
 -- Table structure for carts
 -- ----------------------------

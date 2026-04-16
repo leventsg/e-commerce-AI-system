@@ -15,7 +15,7 @@ scrape_configs:
     metrics_path: /metrics  # 默认指标端点（根据实际情况确认）
     static_configs:
 #      - http://node01:31000
-      - targets: [ '47.96.42.228:31000' ]  # 对应 DevServer 配置的 Host:Port
+      - targets: ['user-api:8001' ]  # 对应 DevServer 配置的 Host:Port
         labels:
           namespace: go-mall
           service: user-api        # 添加服务标签
