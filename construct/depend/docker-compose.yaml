@@ -36,6 +36,7 @@ services:
     restart: unless-stopped
     ports:
       - "3306:3306"
+    platform: linux/amd64
     volumes:
       - ./sql:/docker-entrypoint-initdb.d/
     networks:
@@ -66,27 +67,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  gorse:
-    image: zhenghaoz/gorse-in-one
-    restart: unless-stopped
-    ports:
-      - 8086:8086
-      - 8087:8087
-      - 8088:8088
-    command: >
-      -c /etc/gorse/config.toml
-      --log-path /var/log/gorse/master.log
-      --cache-path /var/lib/gorse/master_cache.data
-    volumes:
-      - ./conf/gorse.config.toml:/etc/gorse/config.toml
-    networks:
-      mall:
+  # gorse:
+  #   image: zhenghaoz/gorse-in-one
+  #   restart: unless-stopped
+  #   ports:
+  #     - 8086:8086
+  #     - 8087:8087
+  #     - 8088:8088
+  #   command: >
+  #     -c /etc/gorse/config.toml
+  #     --log-path /var/log/gorse/master.log
+  #     --cache-path /var/lib/gorse/master_cache.data
+  #   volumes:
+  #     - ./conf/gorse.config.toml:/etc/gorse/config.toml
+  #   networks:
+  #     mall:
   dtm:
     image: yedf/dtm:latest
     ports:
       - "36789:36789"
       - "36790:36790"
-    command: [ "dtm", "-c", "/app/dtm/configs/config.yaml" ]
+    command: ["-c", "/app/dtm/configs/config.yaml" ]
     volumes:
       - ./conf/dtm.yaml:/app/dtm/configs/config.yaml
     networks:

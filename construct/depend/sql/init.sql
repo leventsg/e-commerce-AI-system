@@ -16,8 +16,8 @@
 
 
 -- 创建一个单独的用户
-CREATE USER IF NOT EXISTS 'jjzzchtt'@'%' IDENTIFIED BY 'jjzzchtt';
-GRANT ALL PRIVILEGES ON *.* TO 'jjzzchtt'@'%';
+CREATE USER IF NOT EXISTS 'leventsg'@'%' IDENTIFIED BY 'leventsg';
+GRANT ALL PRIVILEGES ON *.* TO 'leventsg'@'%';
 
 -- 创建数据库
 create database if not exists mall character set utf8mb4;

@@ -1,6 +1,6 @@
 [database]
-cache_store = "redis://:jjzzchtt@localhost:6379/10"
-data_store = "mysql://jjzzchtt:jjzzchtt@tcp(localhost:3306)/gorse"
+cache_store = "redis://:leventsg@localhost:6379/10"
+data_store = "mysql://leventsg:leventsg@tcp(localhost:3306)/gorse"
 table_prefix = ""
 cache_table_prefix = ""
 data_table_prefix = ""
@@ -161,10 +161,11 @@ num_feedback_fallback_item_based = 10
 [tracing]
 
 # Enable tracing for REST APIs. The default value is false.
-enable_tracing = true
+#jaeger和gorse好像不匹配了
+enable_tracing = false
 
 # The type of tracing exporters should be one of "jaeger", "zipkin", "otlp" and "otlphttp". The default value is "jaeger".
-exporter = "jaeger"
+exporter = "otlphttp"
 
 # The endpoint of tracing collector.
 collector_endpoint = "http://jaeger:14268/api/traces"
