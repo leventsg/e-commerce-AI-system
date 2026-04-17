@@ -178,3 +178,5 @@ services:
       HEALTHCHECK_PORT: "8106"
 networks:
   go-mall:
+    name: go-mall
+    external: true

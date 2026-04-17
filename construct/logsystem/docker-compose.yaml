@@ -24,3 +24,5 @@ services:
       - go-mall
 networks:
   go-mall:
+    name: go-mall
+    external: true

@@ -22,7 +22,7 @@ FROM alpine:3.19
 # 使用阿里云镜像
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
     apk update && \
-    apk add --no-cache tzdata ca-certificates
+    apk add --no-cache tzdata ca-certificates curl
 
 # 设置时区
 ENV TZ=Asia/Shanghai

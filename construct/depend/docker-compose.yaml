@@ -32,11 +32,11 @@ services:
       timeout: 5s
       retries: 3
   mysql:
-    image: mysql:8.0-debian
+    image: mysql:8.0
     restart: unless-stopped
     ports:
       - "33061:3306"
-    platform: linux/amd64
+    #platform: linux/amd64
     volumes:
       - ./sql:/docker-entrypoint-initdb.d/
     networks:
@@ -45,10 +45,11 @@ services:
       MYSQL_ROOT_USER: 'root'
       MYSQL_ROOT_PASSWORD: 'root'
     healthcheck:
-      test: [ "CMD", "mysqladmin" ,"ping", "-h", "localhost" ]
+      test: [ "CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent" ]
       interval: 10s
-      timeout: 5s
-      retries: 3
+      timeout: 10s
+      retries: 10
+      start_period: 30s
   rabbitmq:
     image: rabbitmq:3.8.17-management-alpine
     ports:
@@ -96,3 +97,5 @@ services:
 
 networks:
   go-mall:
+    name: go-mall
+    external: true
