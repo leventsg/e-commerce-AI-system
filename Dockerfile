@@ -1,5 +1,5 @@
 # 第一阶段：构建
-FROM golang:1.21 as builder
+FROM golang:1.21 AS builder
 
 WORKDIR /project/go-mall
 

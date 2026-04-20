@@ -98,4 +98,4 @@ services:
 networks:
   go-mall:
     name: go-mall
-    external: true
+    #external: true
