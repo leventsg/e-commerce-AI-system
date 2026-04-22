@@ -30,16 +30,14 @@ func (a *PaymentDelayMQ) Product(msg *PaymentReq) error {
 	publishErr := retry.Do(
 		func() error {
 			return channel.Publish(
-				ExchangeName,
 				"",
+				DelayQueueName,
 				false,
 				false,
 				amqp.Publishing{
 					DeliveryMode: amqp.Persistent,
+					Expiration:   fmt.Sprintf("%d", Delay.Milliseconds()),
 					Body:         body,
-					Headers: amqp.Table{
-						"x-delay": int(Delay.Milliseconds()), // 设置延迟时间（毫秒）
-					},
 				},
 			)
 		},

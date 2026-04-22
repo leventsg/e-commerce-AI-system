@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	ExchangeName = "payment-delay-exchange"
-	ExchangeKind = "x-delayed-message"
-	QueueName    = "payment-delay-queue"
-	Delay        = 30 * time.Minute
+	ExchangeName   = "payment-delay-exchange"
+	ExchangeKind   = "direct"
+	QueueName      = "payment-delay-queue"
+	DelayQueueName = "payment-delay-wait-queue"
+	RoutingKey     = "payment-delay"
+	Delay          = 30 * time.Minute
 )
 
 type PaymentDelayMQ struct {
@@ -34,14 +36,12 @@ func Init(c config.Config) (*PaymentDelayMQ, error) {
 	// 声明交换机（使用延迟交换机）
 	err = ch.ExchangeDeclare(
 		ExchangeName, // 交换机名称
-		ExchangeKind, // 类型为延迟交换机
-		true,         // 持久化
-		false,        // 自动删除
-		false,        // 内部交换机
-		false,        // 等待确认
-		amqp.Table{
-			"x-delayed-type": "direct",
-		},
+		ExchangeKind,
+		true,  // 持久化
+		false, // 自动删除
+		false, // 内部交换机
+		false, // 等待确认
+		nil,
 	)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func Init(c config.Config) (*PaymentDelayMQ, error) {
 	// 绑定队列到交换机
 	if err = ch.QueueBind(
 		QueueName,
-		"",
+		RoutingKey,
 		ExchangeName,
 		false,
 		nil,
@@ -73,6 +73,21 @@ func Init(c config.Config) (*PaymentDelayMQ, error) {
 		return nil, err
 
 	}
+	_, err = ch.QueueDeclare(
+		DelayQueueName,
+		true,
+		false,
+		false,
+		false,
+		amqp.Table{
+			"x-dead-letter-exchange":    ExchangeName,
+			"x-dead-letter-routing-key": RoutingKey,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	paymentDelay := &PaymentDelayMQ{
 		conn: conn,
 	}

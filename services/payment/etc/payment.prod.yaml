@@ -35,13 +35,13 @@ RedisConf:
   Tls: false
 
 Alipay:
-  AppId: ${ALIPAY_APPID}
-  AlipayPublicKey: ${ALIPAY_PUBLIC_KEY}
-  PrivateKey: ${ALIPAY_PRIVATE_KEY}
-  NotifyURL: ${ALIPAY_NOTIFY_URL}
-  NotifyPath: ${ALIPAY_NOTIFY_PATH}
+  AppId: "${ALIPAY_APPID}"
+  AlipayPublicKey: "${ALIPAY_PUBLIC_KEY}"
+  PrivateKey: "${ALIPAY_PRIVATE_KEY}"
+  NotifyURL: "${ALIPAY_NOTIFY_URL}"
+  NotifyPath: "${ALIPAY_NOTIFY_PATH}"
   NotifyPort: ${ALIPAY_NOTIFY_PORT}
-  ReturnURL: ${ALIPAY_RETURN_URL}
+  ReturnURL: "${ALIPAY_RETURN_URL}"
 # 指标监控配置
 DevServer:
   Enabled: true

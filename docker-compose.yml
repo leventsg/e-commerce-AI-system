@@ -106,8 +106,12 @@ services:
     <<: [ *common,*healthcheck ]
     container_name: go-mall-payment-service
     command: [ "/app/services/Payment", "-f", "/app/etc/payment.prod.yaml" ]
+    volumes:
+      - ./logs:/app/logs
+      - ./services/payment/etc/payment.prod.yaml:/app/etc/payment.prod.yaml:ro
     ports:
       - "10006:10006"
+      - "11111:11111"
       - "11006:11006"
     environment:
       HEALTHCHECK_PORT: "11006"
