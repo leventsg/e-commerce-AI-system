@@ -13,16 +13,6 @@
 
 <p align="center">基于Go语言与Go-zero框架开发的轻量级抖音电商系统，支持高并发场景与全链路监控。通过微服务架构实现高扩展性，集成AI查询、分布式事务、缓存预热等功能。
 </p>
-
-### 队员介绍
-| 角色 | 姓名 | GitHub链接 |
-| ---- | ---- | ---- |
-| 队长 | bbz1024 | [bbz1024](https://github.com/bbz1024) |
-| 副队 | 薛瑞东 | [xxd](https://github.com/a1623266234) |
-| 组员 | djj01 | [djj01](https://github.com/orgs/jijizhazha1024/people/djj10) |
-| 组员 | Kasiery | [Kasiery](https://github.com/orgs/jijizhazha1024/people/Kasiery) |
-| 组员 | Swifter24 | [Swifter24](https://github.com/orgs/jijizhazha1024/people/Swifter24) |
-
   
 ## 🚀 技术栈
 
