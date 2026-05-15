@@ -5,14 +5,15 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/rest/httpx"
-	"github.com/zeromicro/go-zero/zrpc"
 	"jijizhazha1024/go-mall/common/consts/biz"
 	"jijizhazha1024/go-mall/common/consts/code"
 	"jijizhazha1024/go-mall/common/response"
 	"jijizhazha1024/go-mall/services/auths/auths"
 	"jijizhazha1024/go-mall/services/auths/authsclient"
+
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/rest/httpx"
+	"github.com/zeromicro/go-zero/zrpc"
 )
 
 func WrapperAuthMiddleware(rpcConf zrpc.RpcClientConf, whitePaths, optionPaths []string) func(next http.HandlerFunc) http.HandlerFunc {
@@ -42,7 +43,19 @@ func WrapperAuthMiddleware(rpcConf zrpc.RpcClientConf, whitePaths, optionPaths [
 			}
 			// 获取认证令牌
 			token := r.Header.Get(biz.TokenKey)
-			refreshToken := r.Header.Get(biz.RefreshTokenKey)
+			c, err := r.Cookie(biz.RefreshTokenKey)
+			if err != nil {
+				logx.Errorw("get refresh token cookie err", logx.Field("err", err), logx.Field("path", r.URL.Path))
+				sendAuthError(w, r, code.AuthBlank, code.AuthBlankMsg)
+				return
+			}
+			refreshToken := c.Value
+			if refreshToken == "" {
+				logx.Errorw("no refresh token cookie", logx.Field("path", r.URL.Path))
+				sendAuthError(w, r, code.AuthBlank, code.AuthBlankMsg)
+				return
+			}
+			// refreshToken := r.Header.Get(biz.RefreshTokenKey)
 
 			// 处理可选令牌路径
 			if _, ok := optionPathSet[r.URL.Path]; ok && token == "" {

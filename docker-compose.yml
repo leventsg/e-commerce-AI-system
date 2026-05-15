@@ -1,7 +1,7 @@
 x-common: &common
-  # build:
-  #   context: .
-  #   dockerfile: Dockerfile
+  build:
+    context: .
+    dockerfile: Dockerfile
   image: go-mall:latest
   env_file: .env
   networks:

@@ -1,0 +1,7 @@
+{"@timestamp":"2026-05-15T16:28:37.203+08:00","caller":"middleware/auth.go:22","content":"auth middleware init","level":"info","option_paths":["/douyin/product/list","/douyin/product"],"white_paths":null}
+Starting server at 0.0.0.0:8002...
+{"@timestamp":"2026-05-15T16:28:37.251+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 46.391ms for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:45.141+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 7.8903893s for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:45.144+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 1.3789ms for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:59.452+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 14.3077596s for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+exit status 0xc000013a

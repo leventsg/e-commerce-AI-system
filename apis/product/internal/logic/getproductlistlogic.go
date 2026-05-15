@@ -2,10 +2,11 @@ package logic
 
 import (
 	"context"
-	"github.com/zeromicro/x/errors"
 	"jijizhazha1024/go-mall/common/consts/biz"
 	"jijizhazha1024/go-mall/common/consts/code"
 	"jijizhazha1024/go-mall/services/product/product"
+
+	"github.com/zeromicro/x/errors"
 
 	"jijizhazha1024/go-mall/apis/product/internal/svc"
 	"jijizhazha1024/go-mall/apis/product/internal/types"
@@ -32,6 +33,7 @@ func (l *GetProductListLogic) GetProductList(req *types.GetProductListReq) (resp
 	if !ok {
 		return nil, errors.New(code.AuthBlank, code.AuthBlankMsg)
 	}
+	l.Logger.Info("userID from context", logx.Field("user_id", userID))
 	var res *product.GetAllProductsResp
 	if userID == 0 {
 		// 调用 RPC 服务获取分页商品列表

@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"jijizhazha1024/go-mall/common/consts/code"
 	checkout2 "jijizhazha1024/go-mall/dal/model/checkout"
 	"jijizhazha1024/go-mall/services/checkout/checkout"
@@ -16,6 +13,10 @@ import (
 	"jijizhazha1024/go-mall/services/inventory/inventory"
 	"jijizhazha1024/go-mall/services/product/product"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 type PrepareCheckoutLogic struct {
@@ -55,6 +56,7 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 	}
 
 	// 2. 使用 Redis 锁来保证幂等性
+	// 通过userid来生成锁的key，确保同一用户在短时间内（5分钟）只能有一个预订单在处理
 	cacheKey := fmt.Sprintf("checkout:preorder:%d", in.UserId)
 	luaScript := `
 		if redis.call("EXISTS", KEYS[1]) == 1 then

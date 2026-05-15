@@ -1,0 +1,7 @@
+{"@timestamp":"2026-05-15T16:28:35.823+08:00","caller":"middleware/auth.go:22","content":"auth middleware init","level":"info","option_paths":null,"white_paths":null}
+Starting server at 0.0.0.0:8006...
+{"@timestamp":"2026-05-15T16:28:35.881+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 47.9481ms for target={service='payment.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:44.984+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 9.1028822s for target={service='payment.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:44.992+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 7.5455ms for target={service='payment.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:59.195+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 14.2026839s for target={service='payment.rpc' healthy='false' tag=''}","level":"info"}
+exit status 0xc000013a

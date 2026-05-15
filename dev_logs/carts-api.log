@@ -1,0 +1,11 @@
+{"@timestamp":"2026-05-15T16:28:31.451+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 65.6579ms for target={service='carts.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:31.455+08:00","caller":"middleware/auth.go:22","content":"auth middleware init","level":"info","option_paths":null,"white_paths":null}
+Starting server at 0.0.0.0:8003...
+{"@timestamp":"2026-05-15T16:28:31.462+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 5.4352ms for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:42.642+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 11.1899707s for target={service='carts.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:42.645+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 2.0129ms for target={service='carts.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:45.142+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 13.6747155s for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:45.145+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 2.5003ms for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:56.686+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 14.0412368s for target={service='carts.rpc' healthy='false' tag=''}","level":"info"}
+{"@timestamp":"2026-05-15T16:28:59.349+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 14.2032476s for target={service='products.rpc' healthy='false' tag=''}","level":"info"}
+exit status 0xc000013a

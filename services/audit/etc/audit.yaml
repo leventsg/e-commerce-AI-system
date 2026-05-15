@@ -20,7 +20,7 @@ Log:
   Path: "./logs/audit-rpc"
 
 MysqlConfig:
-  datasource: "jjzzchtt:jjzzchtt@tcp(localhost:3306)/mall?charset=utf8mb4&parseTime=True&loc=Local"
+  datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Local"
 
 RabbitMQ:
   Host: "localhost"

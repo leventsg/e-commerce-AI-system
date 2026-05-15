@@ -23,13 +23,13 @@ Log:
   Path: "./logs/coupons-rpc"
 
 MysqlConfig:
-  datasource: "jjzzchtt:jjzzchtt@tcp(localhost:3306)/mall?charset=utf8mb4&parseTime=True&loc=Local"
+  datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Local"
 
 
 RedisConf:
   Host: localhost:6379
   Type: node
-  Pass: jjzzchtt # 如果有密码则填写
+  Pass: leventsg # 如果有密码则填写
   Tls: false
 
 

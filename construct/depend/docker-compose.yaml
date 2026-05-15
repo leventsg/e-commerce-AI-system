@@ -1,5 +1,6 @@
 services:
   consul:
+    container_name: consul
     image: consul:1.8.8
     command: [
       "agent",
