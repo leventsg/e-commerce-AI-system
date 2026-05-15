@@ -1,7 +1,0 @@
-{"@timestamp":"2026-05-15T16:28:34.656+08:00","caller":"middleware/auth.go:22","content":"auth middleware init","level":"info","option_paths":["/douyin/coupons/detail"],"white_paths":["/douyin/coupons/list"]}
-Starting server at 0.0.0.0:8009...
-{"@timestamp":"2026-05-15T16:28:34.713+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 55.6648ms for target={service='coupons.rpc' healthy='false' tag=''}","level":"info"}
-{"@timestamp":"2026-05-15T16:28:44.832+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 10.1195445s for target={service='coupons.rpc' healthy='false' tag=''}","level":"info"}
-{"@timestamp":"2026-05-15T16:28:44.850+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 17.4597ms for target={service='coupons.rpc' healthy='false' tag=''}","level":"info"}
-{"@timestamp":"2026-05-15T16:28:59.071+08:00","caller":"consul@v0.0.0-20231030135404-af9ae855016f/resolver.go:76","content":"[Consul resolver] 1 endpoints fetched in(+wait) 14.2207268s for target={service='coupons.rpc' healthy='false' tag=''}","level":"info"}
-exit status 0xc000013a
