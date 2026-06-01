@@ -1,0 +1,116 @@
+services:
+  consul:
+    container_name: consul
+    image: consul:1.8.8
+    command: [
+      "agent",
+      "-dev",
+      "-client=0.0.0.0"
+    ]
+    ports:
+      - "8500:8500"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8500/v1/status/leader" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - go-mall
+  redis:
+    image: redis/redis-stack-server:latest
+    environment:
+      REDIS_ARGS: "--requirepass leventsg --appendonly yes"
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - go-mall
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "leventsg", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    ports:
+      - "33061:3306"
+    #platform: linux/amd64
+    volumes:
+      - ./sql:/docker-entrypoint-initdb.d/
+    networks:
+      - go-mall
+    environment:
+      MYSQL_ROOT_PASSWORD: 'root'
+      MYSQL_DATABASE: 'mall'
+      MYSQL_USER: 'root'
+      MYSQL_PASSWORD: 'root'
+    healthcheck:
+      test: [ "CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent" ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+  rabbitmq:
+    image: rabbitmq:3.8.17-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - go-mall
+    environment:
+      RABBITMQ_DEFAULT_USER: 'admin'
+      RABBITMQ_DEFAULT_PASS: 'admin'
+      RABBITMQ_DEFAULT_VHOST: '/'
+      TZ: 'Asia/Shanghai'
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "rabbitmqctl status" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  gorse:
+    image: zhenghaoz/gorse-in-one
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - mysql
+    ports:
+      - 8086:8086
+      - 8087:8087
+      - 8088:8088
+    environment:
+      GORSE_CACHE_STORE: redis://:leventsg@redis:6379/0
+      GORSE_DATA_STORE: mysql://root:root@tcp(mysql:3306)/mall?parseTime=true
+    command: >
+      --log-path /var/log/gorse/master.log
+      --cache-path /var/lib/gorse/master
+    volumes:
+      - ./conf/gorse.config.toml:/etc/gorse/config.toml
+      - gorse_data:/var/lib/gorse
+      - gorse_logs:/var/log/gorse
+    networks:
+      go-mall:
+  dtm:
+    image: yedf/dtm:latest
+    ports:
+      - "36789:36789"
+      - "36790:36790"
+    environment:
+      IS_DOCKER: "1"
+    command: ["-c", "/app/dtm/configs/config.yaml" ]
+    volumes:
+      - ./conf/dtm.yaml:/app/dtm/configs/config.yaml
+    networks:
+      go-mall:
+
+
+networks:
+  go-mall:
+    name: go-mall
+    #external: true
+
+volumes:
+  gorse_data:
+  gorse_logs:

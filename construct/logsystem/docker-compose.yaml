@@ -1,0 +1,43 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.12
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    mem_limit: 2g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./conf/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    networks:
+      - go-mall
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.12
+    platform: linux/amd64
+    volumes:
+      - ./conf/kibana.yml:/usr/share/kibana/config/kibana.yml
+    ports:
+      - 5601:5601
+    networks:
+      - go-mall
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:7.17.12
+    user: root
+    command: ["-e", "--strict.perms=false"]
+    depends_on:
+      - elasticsearch
+    volumes:
+      - ./conf/filebeat.yaml:/usr/share/filebeat/filebeat.yml:ro
+      - ../../dev_logs:/usr/share/filebeat/logs:ro
+      - filebeat-data:/usr/share/filebeat/data
+    networks:
+      - go-mall
+networks:
+  go-mall:
+    name: go-mall
+    external: true
+
+volumes:
+  filebeat-data:

@@ -1,0 +1,28 @@
+Name: payment-api
+Host: 0.0.0.0
+Port: 8006
+Timeout: 0
+
+
+PaymentRpc:
+  Target: consul://localhost:8500/payment.rpc?wait=14s
+  NonBlock: true
+  Timeout: 0
+AuthsRpc:
+  Target: consul://localhost:8500/auths.rpc?wait=14s
+  NonBlock: true
+
+# 指标监控配置
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 8106 # api服务端口+100，例如api端口为8001，指标端口是8101
+  EnablePprof: false
+
+# 链路追踪
+Telemetry:
+  Name: payment-api
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 0.1
+

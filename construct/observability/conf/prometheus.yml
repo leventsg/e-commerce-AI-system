@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'go-mall-apis'
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'host.docker.internal:8101'
+          - 'host.docker.internal:8102'
+          - 'host.docker.internal:8103'
+          - 'host.docker.internal:8104'
+          - 'host.docker.internal:8105'
+          - 'host.docker.internal:8106'
+          - 'host.docker.internal:8109'
+        labels:
+          namespace: go-mall
+          tier: api
+          environment: pro
+
+  - job_name: 'go-mall-rpcs'
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'host.docker.internal:11000'
+          - 'host.docker.internal:11001'
+          - 'host.docker.internal:11002'
+          - 'host.docker.internal:11003'
+          - 'host.docker.internal:11004'
+          - 'host.docker.internal:11005'
+          - 'host.docker.internal:11006'
+          - 'host.docker.internal:11008'
+          - 'host.docker.internal:11009'
+          - 'host.docker.internal:11011'
+        labels:
+          namespace: go-mall
+          tier: rpc
+          environment: pro

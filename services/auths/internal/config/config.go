@@ -1,0 +1,13 @@
+package config
+
+import (
+	"github.com/zeromicro/go-zero/zrpc"
+	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
+	"github.com/leventsg/e-commerce-AI-system/common/config"
+)
+
+type Config struct {
+	zrpc.RpcServerConf
+	Consul      consul.Conf
+	MysqlConfig config.MysqlConfig
+}

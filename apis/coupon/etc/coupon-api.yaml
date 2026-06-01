@@ -1,0 +1,35 @@
+Name: coupon-api
+Host: 0.0.0.0
+Port: 8009
+
+
+
+CouponRpc:
+  Target: consul://localhost:8500/coupons.rpc?wait=14s
+  NonBlock: true
+
+AuthsRpc:
+  Target: consul://localhost:8500/auths.rpc?wait=14s
+  NonBlock: true
+
+
+WhitePathList:
+  - /douyin/coupon/list
+
+OptionPathList:
+  - /douyin/coupon/detail
+
+# 指标监控配置
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 8109 # api服务端口+100，例如api端口为8001，指标端口是8101
+  EnablePprof: false
+
+
+# 链路追踪
+Telemetry:
+  Name: coupon-api
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 0.1

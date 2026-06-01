@@ -1,0 +1,5 @@
+MicroService:
+  Driver: 'dtm-driver-gozero' # 配置dtm使用go-zero的微服务协议
+  Target: 'consul://consul:8500/dtmservice' # 把dtm注册到consul的这个地址
+  EndPoint: 'localhost:36790' # 本地开发时业务服务跑在宿主机，通过宿主机端口访问dtm
+  

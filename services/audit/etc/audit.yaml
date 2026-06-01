@@ -1,0 +1,46 @@
+Name: audit.rpc
+ListenOn: 0.0.0.0:10008
+# 服务发现
+Consul:
+  Host: localhost:8500 # consul endpoint
+  Key: audit.rpc
+  Meta:
+    Protocol: grpc
+
+# 链路追踪
+Telemetry:
+  Name: audit.rpc
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 1.0
+Log:
+  ServiceName: "audit-rpc"
+  Mode: 'console'
+  Encoding: "json"
+  Path: "./logs/audit-rpc"
+
+MysqlConfig:
+  datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
+
+RabbitMQ:
+  Host: "localhost"
+  Port: 5672
+  User: "admin"
+  Pass: "admin"
+  VHost: "/"
+
+KafkaMQ:
+  Brokers: 
+    - "localhost:9092"
+  Topic: "audit-logs"
+
+ElasticSearch:
+  Addr: "http://localhost:9200"
+
+
+# 指标监控配置
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 11008
+  EnablePprof: false

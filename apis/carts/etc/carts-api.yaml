@@ -1,0 +1,34 @@
+Name: carts-api
+Host: 0.0.0.0
+Port: 8003
+
+CartsRpc:
+  Target: consul://localhost:8500/carts.rpc?wait=14s
+
+ProductRpc:
+  Target: consul://localhost:8500/products.rpc?wait=14s
+  NonBlock: true
+
+AuthsRpc:
+  Target: consul://localhost:8500/auths.rpc?wait=14s
+  NonBlock: true
+
+Telemetry:
+  Name: carts-api
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 1.0
+
+# 指标监控配置
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 8103 # api服务端口+100，例如api端口为8001，指标端口是8101
+  EnablePprof: false
+
+# 链路追踪
+Telemetry:
+  Name: carts-api
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 0.1

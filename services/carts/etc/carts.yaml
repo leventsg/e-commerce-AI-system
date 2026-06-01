@@ -1,0 +1,30 @@
+Name: carts.rpc
+ListenOn: 0.0.0.0:10003
+
+Consul:
+  Host: localhost:8500 # consul endpoint
+  Key: carts.rpc
+  Meta:
+    Protocol: grpc
+
+MysqlConfig:
+  datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
+  conntimeout: 5
+
+#MysqlConfig:
+#  datasource: "root:123456@tcp(127.0.0.1:3306)/cart_db?charset=utf8mb4&parseTime=True&loc=Local"
+#  conntimeout: 5
+
+# 指标监控配置
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 11003  #服务端口+1000，如果服务端口是10001，则指标端口就是11001
+  EnablePprof: false
+
+# 链路追踪
+Telemetry:
+  Name: carts.rpc # 与服务名称保持一致
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 0.1 # 采样率，1.0表示全部采集, 0.1表示10%
