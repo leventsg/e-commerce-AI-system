@@ -3,12 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
+
 	"github.com/leventsg/e-commerce-AI-system/services/audit/audit"
+	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/consumer"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/svc"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/service"
@@ -37,8 +39,13 @@ func main() {
 		logx.Errorw("register service error", logx.Field("err", err))
 		panic(err)
 	}
-	defer s.Stop()
+	// 注册MQ消费者
+	if err := consumer.Init(c); err != nil {
+		logx.Errorw("init consumer error", logx.Field("err", err))
+		panic(err)
+	}
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()
+	defer s.Stop()
 }

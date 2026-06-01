@@ -2,11 +2,13 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"go.opentelemetry.io/otel/trace"
+
 	"github.com/leventsg/e-commerce-AI-system/services/audit/audit"
-	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/mq"
+	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/event"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/svc"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -63,7 +65,7 @@ func (l *CreateAuditLogLogic) CreateAuditLog(in *audit.CreateAuditLogReq) (*audi
 	traceID := spanContext.TraceID().String()
 	spanID := spanContext.SpanID().String()
 
-	req := mq.AuditReq{
+	msg := event.AuditLog{
 		UserID:      in.UserId,
 		TargetTable: in.TargetTable,
 		TargetID:    in.TargetId,
@@ -76,7 +78,21 @@ func (l *CreateAuditLogLogic) CreateAuditLog(in *audit.CreateAuditLogReq) (*audi
 		ClientIP:    in.ClientIp,
 		CreatedAt:   in.CreateAt,
 	}
-	if err := l.svcCtx.AuditMQ.Product(&req); err != nil {
+
+	jsonMsg, err := json.Marshal(msg)
+	if err != nil {
+		l.Logger.Errorw("CreateAuditLogLogic.CreateAuditLog",
+			logx.Field("traceID", traceID),
+			logx.Field("json序列化失败", err))
+		return nil, err
+	}
+
+	err = l.svcCtx.Producer.Publish(
+		l.ctx,
+		l.svcCtx.Config.KafkaMQ.Topic,
+		jsonMsg,
+	)
+	if err != nil {
 		l.Logger.Errorw("CreateAuditLogLogic.CreateAuditLog",
 			logx.Field("traceID", traceID),
 			logx.Field("err", err))
