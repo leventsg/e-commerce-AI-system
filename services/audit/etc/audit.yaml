@@ -33,6 +33,11 @@ KafkaMQ:
   Brokers: 
     - "localhost:9092"
   Topic: "audit-logs"
+  Group: "audit-log-consumer"
+  Offset: last
+  Conns: 1
+  Consumers: 1
+  Processors: 2
 
 ElasticSearch:
   Addr: "http://localhost:9200"

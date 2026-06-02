@@ -1,6 +1,8 @@
 module github.com/leventsg/e-commerce-AI-system
 
-go 1.21
+go 1.23.0
+
+toolchain go1.24.0
 
 require (
 	github.com/avast/retry-go v2.7.0+incompatible
@@ -20,7 +22,7 @@ require (
 	github.com/zeromicro/x v0.0.0-20240408115609-8224c482b07e
 	github.com/zeromicro/zero-contrib/zrpc/registry/consul v0.0.0-20231030135404-af9ae855016f
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.45.0
-	golang.org/x/crypto v0.32.0
+	golang.org/x/crypto v0.36.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.1
 )
@@ -28,7 +30,7 @@ require (
 require (
 	github.com/felixge/httpsnoop v1.0.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
-	github.com/segmentio/kafka-go v0.4.47 // indirect
+	github.com/segmentio/kafka-go v0.4.51 // indirect
 	github.com/smartwalle/ncrypto v1.0.4 // indirect
 	github.com/smartwalle/ngx v1.0.9 // indirect
 	github.com/smartwalle/nsign v1.0.9 // indirect
@@ -132,12 +134,12 @@ require (
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29 // indirect
-	golang.org/x/net v0.33.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sync v0.10.0
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/sync v0.12.0
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/term v0.30.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240711142825-46eb208f015d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094 // indirect

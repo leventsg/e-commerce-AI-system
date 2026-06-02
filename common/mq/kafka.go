@@ -3,7 +3,8 @@ package mq
 import "context"
 
 type Producer interface {
-	Publish(ctx context.Context, topic string, message []byte) error
+	Publish(ctx context.Context, topic string, message []byte, opts ...PublishOption) error
+	PublishWithKey(ctx context.Context, topic string, key string, message []byte, opts ...PublishOption) error
 	Close() error
 }
 

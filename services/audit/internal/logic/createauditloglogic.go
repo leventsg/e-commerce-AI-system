@@ -87,9 +87,10 @@ func (l *CreateAuditLogLogic) CreateAuditLog(in *audit.CreateAuditLogReq) (*audi
 		return nil, err
 	}
 
-	err = l.svcCtx.Producer.Publish(
+	err = l.svcCtx.Producer.PublishWithKey(
 		l.ctx,
 		l.svcCtx.Config.KafkaMQ.Topic,
+		traceID,
 		jsonMsg,
 	)
 	if err != nil {
