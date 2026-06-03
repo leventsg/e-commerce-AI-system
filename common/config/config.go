@@ -20,14 +20,14 @@ type KafkaConfig struct {
 	Brokers    []string
 	Group      string
 	Topic      string
-	Offset     string `json:",options=first|last,default=last"`
-	Conns      int    `json:",default=1"`        //Conns 对应 kafka queue 数量, 默认只启动一个
-	Consumers  int    `json:",default=8"`        //控制 goroutine 的数量，从 kafka 中获取信息写入进程内的 channel
-	Processors int    `json:",default=8"`        //控制当前消费的并发 goroutine 数量
-	MinBytes   int    `json:",default=10240"`    // 10K
-	MaxBytes   int    `json:",default=10485760"` // 10M
-	Username   string `json:",optional"`
-	Password   string `json:",optional"`
+	Offset     string `json:"offset"`
+	Conns      int    `json:"conns"`      // Conns 对应 kafka queue 数量, 默认只启动一个
+	Consumers  int    `json:"consumers"`  // 控制 goroutine 的数量，从 kafka 中获取信息写入进程内的 channel
+	Processors int    `json:"processors"` // 控制当前消费的并发 goroutine 数量
+	MinBytes   int    `json:"min_bytes"`  // 10K
+	MaxBytes   int    `json:"max_bytes"`  // 10M
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
 }
 
 type ElasticSearchConfig struct {

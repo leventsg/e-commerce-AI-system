@@ -10,10 +10,11 @@ import (
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
-	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/consumer/registry"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/consumer/registry"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/model/es"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
@@ -44,7 +45,11 @@ func Init(c config.Config) error {
 	}
 	handler := NewAuditLogConsumer(model, esClient)
 
-	go consumer.Consume(context.Background(), c.KafkaMQ.Topic, c.KafkaMQ.Group, handler)
+	go func() {
+		if err := consumer.Consume(context.Background(), c.KafkaMQ.Topic, c.KafkaMQ.Group, handler); err != nil {
+			logx.Errorw("audit log consumer stopped", logx.Field("err", err))
+		}
+	}()
 	return nil
 }
 
