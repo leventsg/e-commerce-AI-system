@@ -14,10 +14,12 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/olivere/elastic/v7 v7.0.32
 	github.com/qiniu/go-sdk/v7 v7.25.2
+	github.com/segmentio/kafka-go v0.4.51
 	github.com/shopspring/decimal v1.4.0
 	github.com/smartwalle/alipay/v3 v3.2.25
 	github.com/streadway/amqp v1.1.0
 	github.com/stretchr/testify v1.10.0
+	github.com/zeromicro/go-queue v1.2.2
 	github.com/zeromicro/go-zero v1.7.6
 	github.com/zeromicro/x v0.0.0-20240408115609-8224c482b07e
 	github.com/zeromicro/zero-contrib/zrpc/registry/consul v0.0.0-20231030135404-af9ae855016f
@@ -30,11 +32,9 @@ require (
 require (
 	github.com/felixge/httpsnoop v1.0.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
-	github.com/segmentio/kafka-go v0.4.51 // indirect
 	github.com/smartwalle/ncrypto v1.0.4 // indirect
 	github.com/smartwalle/ngx v1.0.9 // indirect
 	github.com/smartwalle/nsign v1.0.9 // indirect
-	github.com/zeromicro/go-queue v1.2.2 // indirect
 )
 
 require (
