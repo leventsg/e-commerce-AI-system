@@ -44,10 +44,10 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		return err
 	}
 	if err := co.Model.TransactCtx(ctx, func(ctx context.Context, session sqlx.Session) error {
-		oRes, err := co.OrdersModel.WithSession(session).GetOrderByOrderIDAndUserIDWithLock(ctx, data.OrderID, data.UserID)
+		oRes, err := co.OrdersModel.WithSession(session).GetOrderByOrderIDAndUserIDWithLock(ctx, data.OrderId, data.UserId)
 		if err != nil {
 			if errors.Is(err, sqlx.ErrNotFound) {
-				logx.Errorw("timeout order is not exist", logx.Field("order_id", data.OrderID), logx.Field("user_id", data.UserID))
+				logx.Errorw("timeout order is not exist", logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 				return nil
 			}
 			return err
@@ -61,28 +61,28 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		if orderStatus == service_order.OrderStatus_ORDER_STATUS_CLOSED &&
 			paymentStatus == service_order.PaymentStatus_PAYMENT_STATUS_EXPIRED {
 			logx.Infow("timeout order already processed, continue returning pre inventory",
-				logx.Field("order_id", data.OrderID),
-				logx.Field("user_id", data.UserID))
+				logx.Field("order_id", data.OrderId),
+				logx.Field("user_id", data.UserId))
 			return nil
 		}
 		if orderStatus != service_order.OrderStatus_ORDER_STATUS_CREATED {
 			shouldReturnInventory = false
 			logx.Infow("timeout order status skipped",
-				logx.Field("order_id", data.OrderID),
-				logx.Field("user_id", data.UserID),
+				logx.Field("order_id", data.OrderId),
+				logx.Field("user_id", data.UserId),
 				logx.Field("order_status", oRes.OrderStatus))
 			return nil
 		}
 
 		return co.OrdersModel.WithSession(session).UpdateOrderStatusByOrderIDAndUserID(
 			ctx,
-			data.OrderID,
-			data.UserID,
+			data.OrderId,
+			data.UserId,
 			service_order.OrderStatus_ORDER_STATUS_CLOSED,
 			service_order.PaymentStatus_PAYMENT_STATUS_EXPIRED,
 		)
 	}); err != nil {
-		logx.Errorw("close timeout order failed", logx.Field("err", err), logx.Field("order_id", data.OrderID), logx.Field("user_id", data.UserID))
+		logx.Errorw("close timeout order failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 		return err
 	}
 
@@ -92,7 +92,7 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 
 	orderItems, err := co.OrderItemsModel.QueryOrderItemsByOrderID(ctx, orderRes.OrderId)
 	if err != nil {
-		logx.Errorw("query timeout order items failed", logx.Field("err", err), logx.Field("order_id", data.OrderID), logx.Field("user_id", data.UserID))
+		logx.Errorw("query timeout order items failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 		return err
 	}
 
@@ -110,13 +110,13 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		Items:      inventoryItems,
 	})
 	if err != nil {
-		logx.Errorw("return timeout order pre inventory failed", logx.Field("err", err), logx.Field("order_id", data.OrderID), logx.Field("user_id", data.UserID))
+		logx.Errorw("return timeout order pre inventory failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 		return err
 	}
 	if resp.StatusCode != code.Success {
 		logx.Errorw("return timeout order pre inventory failed with status",
-			logx.Field("order_id", data.OrderID),
-			logx.Field("user_id", data.UserID),
+			logx.Field("order_id", data.OrderId),
+			logx.Field("user_id", data.UserId),
 			logx.Field("status_code", resp.StatusCode),
 			logx.Field("status_msg", resp.StatusMsg))
 		return fmt.Errorf("return timeout order pre inventory failed: status_code=%d status_msg=%s", resp.StatusCode, resp.StatusMsg)

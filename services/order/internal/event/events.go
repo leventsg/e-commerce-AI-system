@@ -9,6 +9,6 @@ type CancelOrder struct {
 }
 
 type TimeoutOrder struct {
-	OrderID string `json:"order_id"`
-	UserID  int32  `json:"user_id"`
+	OrderId string `json:"order_id"`
+	UserId  int32  `json:"user_id"`
 }
