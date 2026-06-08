@@ -1,6 +1,8 @@
 package mq
 
-import "context"
+import (
+	"context"
+)
 
 type Producer interface {
 	Publish(ctx context.Context, topic string, message []byte, opts ...PublishOption) error

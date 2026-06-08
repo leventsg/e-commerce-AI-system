@@ -48,9 +48,8 @@ func NewKafkaProducer(c config.KafkaConfig) (Producer, error) {
 	}
 
 	return &KafkaProducer{
-		brokers:      append([]string(nil), c.Brokers...),
-		defaultTopic: c.Topic,
-		pushers:      make(map[pusherKey]*kq.Pusher),
+		brokers: append([]string(nil), c.Brokers...),
+		pushers: make(map[pusherKey]*kq.Pusher),
 	}, nil
 }
 

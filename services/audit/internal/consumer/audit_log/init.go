@@ -39,14 +39,19 @@ func Init(c config.Config) error {
 		return err
 	}
 
-	consumer, err := mq.NewKafkaConsumer(c.KafkaMQ)
+	kafkaConf, err := c.KafkaMQ.TopicConfig("AuditLog")
+	if err != nil {
+		return err
+	}
+
+	consumer, err := mq.NewKafkaConsumer(kafkaConf)
 	if err != nil {
 		return err
 	}
 	handler := NewAuditLogConsumer(model, esClient)
 
 	go func() {
-		if err := consumer.Consume(context.Background(), c.KafkaMQ.Topic, c.KafkaMQ.Group, handler); err != nil {
+		if err := consumer.Consume(context.Background(), kafkaConf.Topic, kafkaConf.Group, handler); err != nil {
 			logx.Errorw("audit log consumer stopped", logx.Field("err", err))
 		}
 	}()

@@ -87,9 +87,17 @@ func (l *CreateAuditLogLogic) CreateAuditLog(in *audit.CreateAuditLogReq) (*audi
 		return nil, err
 	}
 
+	kafkaConf, err := l.svcCtx.Config.KafkaMQ.TopicConfig("AuditLog")
+	if err != nil {
+		l.Logger.Errorw("CreateAuditLogLogic.CreateAuditLog",
+			logx.Field("traceID", traceID),
+			logx.Field("err", err))
+		return nil, err
+	}
+
 	err = l.svcCtx.Producer.PublishWithKey(
 		l.ctx,
-		l.svcCtx.Config.KafkaMQ.Topic,
+		kafkaConf.Topic,
 		traceID,
 		jsonMsg,
 	)

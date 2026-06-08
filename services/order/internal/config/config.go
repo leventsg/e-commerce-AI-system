@@ -1,9 +1,9 @@
 package config
 
 import (
+	"github.com/leventsg/e-commerce-AI-system/common/config"
 	"github.com/zeromicro/go-zero/zrpc"
 	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
-	"github.com/leventsg/e-commerce-AI-system/common/config"
 )
 
 type Config struct {
@@ -15,4 +15,5 @@ type Config struct {
 	UserRpc        zrpc.RpcClientConf
 	InventoryRpc   zrpc.RpcClientConf
 	RabbitMQConfig config.RabbitMQConfig
+	KafkaMQ        config.KafkaConfig
 }

@@ -13,11 +13,11 @@ import (
 
 type KafkaConsumer struct {
 	mu     sync.Mutex
-	config config.KafkaConfig
+	config config.KafkaTopicConfig
 	queues []queue.MessageQueue
 }
 
-func NewKafkaConsumer(c config.KafkaConfig) (Consumer, error) {
+func NewKafkaConsumer(c config.KafkaTopicConfig) (Consumer, error) {
 	if len(c.Brokers) == 0 {
 		return nil, errors.New("kafka brokers is empty")
 	}
@@ -84,7 +84,7 @@ func (c *KafkaConsumer) Close() error {
 	return nil
 }
 
-func toKqConf(c config.KafkaConfig) kq.KqConf {
+func toKqConf(c config.KafkaTopicConfig) kq.KqConf {
 	return kq.KqConf{
 		ServiceConf: service.ServiceConf{
 			Name: c.Topic,
@@ -100,7 +100,7 @@ func toKqConf(c config.KafkaConfig) kq.KqConf {
 		MaxBytes:      c.MaxBytes,
 		Username:      c.Username,
 		Password:      c.Password,
-		ForceCommit:   true,
+		ForceCommit:   c.ForceCommit,
 		CommitInOrder: false,
 	}
 }

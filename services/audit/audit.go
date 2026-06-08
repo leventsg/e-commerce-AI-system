@@ -6,6 +6,7 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/services/audit/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/consumer"
+	_ "github.com/leventsg/e-commerce-AI-system/services/audit/internal/consumer/audit_log"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/internal/svc"

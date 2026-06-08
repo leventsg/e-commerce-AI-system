@@ -10,7 +10,6 @@ import (
 type Config struct {
 	zrpc.RpcServerConf
 	Consul        consul.Conf
-	RabbitMQ      config.RabbitMQConfig
 	MysqlConfig   config.MysqlConfig
 	ElasticSearch config.ElasticSearchConfig
 	KafkaMQ       config.KafkaConfig

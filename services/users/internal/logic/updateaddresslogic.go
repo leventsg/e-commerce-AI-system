@@ -169,7 +169,6 @@ func (l *UpdateAddressLogic) UpdateAddress(in *users.UpdateAddressRequest) (*use
 	}
 
 	return &users.UpdateAddressResponse{
-
 		Data: data,
 	}, nil
 }
