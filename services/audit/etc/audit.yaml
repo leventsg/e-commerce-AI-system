@@ -22,22 +22,22 @@ Log:
 MysqlConfig:
   datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
 
-RabbitMQ:
-  Host: "localhost"
-  Port: 5672
-  User: "admin"
-  Pass: "admin"
-  VHost: "/"
-
 KafkaMQ:
-  Brokers: 
+  Brokers:
     - "localhost:9092"
-  Topic: "audit-logs"
-  Group: "audit-log-consumer"
-  Offset: last
-  Conns: 1
-  Consumers: 1
-  Processors: 2
+  Username: ""
+  Password: ""
+  Topics:
+    AuditLog:
+      Topic: "audit-logs"
+      Group: "audit-log-consumer"
+      Offset: last
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: true
 
 ElasticSearch:
   Addr: "http://localhost:9200"

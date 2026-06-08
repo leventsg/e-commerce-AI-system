@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/order/internal/consumer"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
@@ -39,6 +40,12 @@ func main() {
 		panic(err)
 	}
 	defer s.Stop()
+
+	// 注册MQ消费者
+	if err := consumer.Init(c); err != nil {
+		logx.Errorw("init consumer error", logx.Field("err", err))
+		panic(err)
+	}
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()
