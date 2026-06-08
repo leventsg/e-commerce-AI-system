@@ -19,6 +19,6 @@ for i=2, #KEYS do
     redis.call('DECRBY', KEYS[i], tonumber(ARGV[i]))
 end
 
--- 设置处理标记（30分钟过期）
-redis.call("SET", KEYS[1], ARGV[1], "EX", 1800)
+-- 设置预扣标记（3小时过期）
+redis.call("SET", KEYS[1], ARGV[1], "EX", 10800)
 return 0

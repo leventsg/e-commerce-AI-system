@@ -10,6 +10,7 @@ const (
 	CheckoutOrderExpired
 	CheckoutRecordNotFound
 	CheckoutRecordStatusNotReserving
+	InventoryReservationNotFound
 )
 const (
 	UpdateInventoryErrorMsg             = "更新库存失败"
@@ -21,4 +22,5 @@ const (
 	CheckoutOrderExpiredMsg             = "订单已过期"
 	CheckoutRecordNotFoundMsg           = "订单记录不存在"
 	CheckoutRecordStatusNotReservingMsg = "订单状态不是待支付"
+	InventoryReservationNotFoundMsg     = "预扣库存记录不存在或已过期"
 )

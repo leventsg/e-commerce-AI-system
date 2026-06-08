@@ -1,7 +1,7 @@
 package consumer
 
 import (
-	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/config"
 )
 
 // 初始化所有消费者

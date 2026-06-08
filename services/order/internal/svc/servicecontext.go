@@ -1,9 +1,7 @@
 package svc
 
 import (
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
-	"github.com/zeromicro/go-zero/zrpc"
+	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
@@ -15,6 +13,9 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/mq/notify"
 	"github.com/leventsg/e-commerce-AI-system/services/users/users"
 	"github.com/leventsg/e-commerce-AI-system/services/users/usersclient"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
+	"github.com/zeromicro/go-zero/zrpc"
 )
 
 type ServiceContext struct {
@@ -29,9 +30,15 @@ type ServiceContext struct {
 	Model          sqlx.SqlConn
 	OrderDelayMQ   *delay.OrderDelayMQ
 	OrderNotifyMQ  *notify.OrderNotifyMQ
+	Producer       mq.Producer
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
+	producer, err := mq.NewKafkaProducer(c.KafkaMQ)
+	if err != nil {
+		logx.Error(err)
+		panic(err)
+	}
 	orderDelayMQ, err := delay.Init(c)
 	if err != nil {
 		logx.Error(err)
@@ -54,5 +61,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		InventoryRpc:   inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc)),
 		OrderDelayMQ:   orderDelayMQ,
 		OrderNotifyMQ:  notifyMQ,
+		Producer:       producer,
 	}
 }

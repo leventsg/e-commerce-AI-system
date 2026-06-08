@@ -1,6 +1,6 @@
-package registry
+package consumer
 
-import "github.com/leventsg/e-commerce-AI-system/services/audit/internal/config"
+import "github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
 
 type Initializer struct {
 	Name string
