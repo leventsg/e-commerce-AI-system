@@ -11,7 +11,7 @@ type Producer interface {
 }
 
 type Consumer interface {
-	Consume(ctx context.Context, topic string, group string, handler Handler) error
+	Consume(ctx context.Context, topic string, group string, handler Handler, errorHandler Handler) error
 	Close() error
 }
 

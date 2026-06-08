@@ -6,7 +6,9 @@ import (
 	"sync"
 
 	"github.com/leventsg/e-commerce-AI-system/common/config"
+	"github.com/segmentio/kafka-go"
 	"github.com/zeromicro/go-queue/kq"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/queue"
 	"github.com/zeromicro/go-zero/core/service"
 )
@@ -27,7 +29,7 @@ func NewKafkaConsumer(c config.KafkaTopicConfig) (Consumer, error) {
 	}, nil
 }
 
-func (c *KafkaConsumer) Consume(ctx context.Context, topic string, group string, handler Handler) error {
+func (c *KafkaConsumer) Consume(ctx context.Context, topic string, group string, handler Handler, errorHandler Handler) error {
 	if c == nil {
 		return errors.New("kafka consumer is not initialized")
 	}
@@ -51,6 +53,22 @@ func (c *KafkaConsumer) Consume(ctx context.Context, topic string, group string,
 
 	q, err := kq.NewQueue(toKqConf(conf), kq.WithHandle(func(ctx context.Context, key, value string) error {
 		return handler.Handle(ctx, []byte(value))
+	}), kq.WithErrorHandler(func(ctx context.Context, msg kafka.Message, err error) {
+		if errorHandler != nil {
+			if handleErr := errorHandler.Handle(ctx, msg.Value); handleErr != nil {
+				logx.Errorw("kafka error handler failed",
+					logx.Field("topic", conf.Topic),
+					logx.Field("group", conf.Group),
+					logx.Field("err", handleErr))
+			}
+			return
+		}
+		logx.Errorw("kafka message consume failed",
+			logx.Field("topic", conf.Topic),
+			logx.Field("group", conf.Group),
+			logx.Field("key", string(msg.Key)),
+			logx.Field("value", string(msg.Value)),
+			logx.Field("err", err))
 	}))
 	if err != nil {
 		return err

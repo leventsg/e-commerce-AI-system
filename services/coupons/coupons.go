@@ -8,6 +8,8 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer"
+	_ "github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer/timeout_order"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/svc"
 
@@ -41,6 +43,12 @@ func main() {
 	}
 
 	defer s.Stop()
+
+	// 注册MQ消费者
+	if err := consumer.Init(c); err != nil {
+		logx.Errorw("init consumer error", logx.Field("err", err))
+		panic(err)
+	}
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()

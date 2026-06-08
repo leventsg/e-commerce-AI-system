@@ -19,6 +19,25 @@ type ReleaseCouponLogic struct {
 	logx.Logger
 }
 
+type releaseCouponAction int
+
+const (
+	releaseCouponActionInvalid releaseCouponAction = iota
+	releaseCouponActionSkip
+	releaseCouponActionUpdate
+)
+
+func releaseCouponActionForStatus(status coupons.CouponStatus) (releaseCouponAction, bool) {
+	switch status {
+	case coupons.CouponStatus_COUPON_STATUS_LOCKED:
+		return releaseCouponActionUpdate, true
+	case coupons.CouponStatus_COUPON_STATUS_UNSPECIFIED:
+		return releaseCouponActionSkip, true
+	default:
+		return releaseCouponActionInvalid, false
+	}
+}
+
 func NewReleaseCouponLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ReleaseCouponLogic {
 	return &ReleaseCouponLogic{
 		ctx:    ctx,
@@ -47,10 +66,15 @@ func (l *ReleaseCouponLogic) ReleaseCoupon(in *coupons.ReleaseCouponReq) (*coupo
 		}
 
 		// 2. 状态校验（幂等性保障）
-		if coupons.CouponStatus(userCoupon.Status) != coupons.CouponStatus_COUPON_STATUS_LOCKED {
+		action, ok := releaseCouponActionForStatus(coupons.CouponStatus(userCoupon.Status))
+		if !ok {
 			l.Logger.Infow("coupon status is not locked", logx.Field("userId", in.UserId), logx.Field("couponId", in.UserCouponId))
 			res.StatusCode = code.CouponStatusInvalid
 			res.StatusMsg = code.CouponStatusInvalidMsg
+			return nil
+		}
+		if action == releaseCouponActionSkip {
+			l.Logger.Infow("coupon already released", logx.Field("userId", in.UserId), logx.Field("couponId", in.UserCouponId))
 			return nil
 		}
 

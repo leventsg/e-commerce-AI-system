@@ -33,12 +33,14 @@ func (l *ReturnPreInventoryLogic) ReturnPreInventory(in *inventory.InventoryReq)
 	resp := &inventory.InventoryResp{}
 	// 构建幂等锁Key（用户ID+预订单ID）
 	lockKey := fmt.Sprintf("%s:%d:%s", biz.InventoryDeductLockPrefix, in.UserId, in.PreOrderId)
+	returnedKey := fmt.Sprintf("%s:returned", lockKey)
 
 	//准备参数
-	keys := make([]string, len(in.Items)+1)
+	keys := make([]string, len(in.Items)+2)
 	args := make([]interface{}, len(in.Items)+1)
 
 	keys[0] = lockKey
+	keys[1] = returnedKey
 	args[0] = in.PreOrderId // 构造库存Key列表
 
 	// 构造库存Key列表
@@ -52,7 +54,7 @@ func (l *ReturnPreInventoryLogic) ReturnPreInventory(in *inventory.InventoryReq)
 			return resp, nil
 		}
 		productKey := fmt.Sprintf("%s:%d", biz.InventoryProductKey, item.ProductId)
-		keys[i+1] = productKey
+		keys[i+2] = productKey
 		args[i+1] = item.Quantity
 	}
 
@@ -78,13 +80,17 @@ func (l *ReturnPreInventoryLogic) ReturnPreInventory(in *inventory.InventoryReq)
 	switch result {
 	case 0: // 归还成功
 		return &inventory.InventoryResp{}, nil
-	case 1: // 已处理过
-		l.Logger.Infow("订单已处理",
+	case 1: // 已回滚过，幂等成功
+		l.Logger.Infow("预扣库存已回滚",
 			logx.Field("pre_order_id", in.PreOrderId))
-		resp.StatusCode = code.OrderhasBeenPaid
-		resp.StatusMsg = code.OrderhasBeenPaidMsg
+		return &inventory.InventoryResp{}, nil
+	case 2: // 预扣记录不存在或已过期，状态不可确认
+		l.Logger.Errorw("预扣库存记录不存在或已过期",
+			logx.Field("pre_order_id", in.PreOrderId),
+			logx.Field("user_id", in.UserId))
+		resp.StatusCode = code.InventoryReservationNotFound
+		resp.StatusMsg = code.InventoryReservationNotFoundMsg
 		return resp, nil
-
 	default:
 		l.Logger.Errorw("未知返回码",
 			logx.Field("result", result))

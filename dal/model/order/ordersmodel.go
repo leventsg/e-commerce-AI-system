@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
@@ -106,7 +107,7 @@ func (m *customOrdersModel) UpdateOrder2PaymentRollback(ctx context.Context, ord
 }
 func (m *customOrdersModel) GetOrderByOrderIDAndUserIDWithLock(ctx context.Context, orderId string, userId int32) (*Orders, error) {
 	var resp Orders
-	query := fmt.Sprintf("select %s from %s where `order_id` = ? and `user_id` = ? LIMIT 1 FOR SHARE ",
+	query := fmt.Sprintf("select %s from %s where `order_id` = ? and `user_id` = ? LIMIT 1 FOR UPDATE ",
 		ordersRows, m.table)
 	err := m.conn.QueryRowCtx(ctx, &resp, query, orderId, userId)
 	return &resp, err

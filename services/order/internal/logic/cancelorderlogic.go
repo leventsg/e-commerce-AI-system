@@ -2,12 +2,14 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	order2 "github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
-	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
+	"github.com/leventsg/e-commerce-AI-system/services/order/internal/event"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 
@@ -83,7 +85,32 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 	if res.StatusCode != code.Success {
 		return res, nil
 	}
-	// 退还优惠券，退还库存。
+	kafkaCongif, err := l.svcCtx.Config.KafkaMQ.TopicConfig("CancelOrders")
+	if err != nil {
+		l.Logger.Errorw("get cancel-orders kafka config failed", logx.Field("err", err))
+		return nil, err
+	}
+	event := &event.CancelOrder{
+		OrderId:    in.OrderId,
+		UserId:     int32(in.UserId),
+		Reason:     in.CancelReason,
+		PreOrderId: orderRes.PreOrderId,
+		CouponId:   orderRes.CouponId,
+	}
+	msg, err := json.Marshal(event)
+	if err != nil {
+		l.Logger.Errorw("json failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
+		return nil, err
+	}
+
+	// 发mq消息，异步处理后续的退款和库存回滚等操作
+	if err := l.svcCtx.Producer.Publish(l.ctx, kafkaCongif.Topic, msg); err != nil {
+		l.Logger.Errorw("publish cancel order event failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
+		return nil, err
+	}
+
+	// TODO: 预订单释放和库存回滚后续也用mq消费
+	// 释放 checkout 资源，优惠券由 cancel-orders MQ 事件异步释放。
 	releaseCheckout, err := l.svcCtx.CheckoutRpc.ReleaseCheckout(l.ctx, &checkout.ReleaseReq{
 		PreOrderId: orderRes.PreOrderId,
 		UserId:     int32(in.UserId),
@@ -96,23 +123,6 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 		res.StatusCode = releaseCheckout.StatusCode
 		res.StatusMsg = releaseCheckout.StatusMsg
 		return res, nil
-	}
-	if len(orderRes.CouponId) > 0 {
-		couponRes, err := l.svcCtx.CouponRpc.ReleaseCoupon(l.ctx, &coupons.ReleaseCouponReq{
-			PreOrderId:   orderRes.PreOrderId,
-			UserId:       int32(in.UserId),
-			Reason:       in.CancelReason,
-			UserCouponId: orderRes.CouponId,
-		})
-		if err != nil {
-			l.Logger.Errorw("call rpc ReleaseCoupon failed", logx.Field("err", err))
-			return nil, err
-		}
-		if couponRes.StatusCode != code.Success {
-			res.StatusCode = couponRes.StatusCode
-			res.StatusMsg = couponRes.StatusMsg
-			return res, nil
-		}
 	}
 	orderItems, err := l.svcCtx.OrderItemModel.QueryOrderItemsByOrderID(l.ctx, orderRes.OrderId)
 	if err != nil {
