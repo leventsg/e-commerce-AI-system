@@ -75,8 +75,10 @@ func (co *CancelOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 	}
 	// 如果是pending payment状态，说明订单已经被用户取消了，但是还未支付成功，此时需要调用支付服务的接口进行幂等的退款操作
 	if isPendingPayment {
-		// todo 实现支付服务的接口调用，进行退款操作，注意幂等性，避免重复退款
-		// 调用支付服务的接口进行退款操作
+		// TODO: 调用支付服务的接口进行幂等的退款操作
+		logx.Infow("pending payment order cancelled, payment close api is not implemented",
+			logx.Field("order_id", data.OrderID),
+			logx.Field("user_id", data.UserID))
 	}
 	return nil
 }
