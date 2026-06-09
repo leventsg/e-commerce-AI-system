@@ -7,7 +7,7 @@
 ## 项目简介
 <div align=center>
     
-![](https://avatars.githubusercontent.com/u/194924389?s=100&v=10)
+![](https://cdn.phototourl.com/free/2026-06-09-5e33dc94-c1d4-4cd8-81fb-86e596f5b925.jpg)
 
 </div>
 
@@ -38,7 +38,7 @@
 
 | 领域    | 工具链                     |
 |-------|-------------------------|
-| 容器化   | Docker/K8s              |
+| 容器化   | Docker              |
 | 监控    | Prometheus+Grafana      |
 | 日志    | EFK Stack               |
 | CI | GitHub Actions|
