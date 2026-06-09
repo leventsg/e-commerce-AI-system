@@ -7,11 +7,11 @@
 ## 项目简介
 <div align=center>
     
-![](https://cdn.phototourl.com/free/2026-06-09-37fef84b-e72a-4626-94c1-70c94f3032a6.jpg)
+![](https://cdn.phototourl.com/free/2026-06-09-2c52f513-afac-411f-bf1c-59b4a10f7f97.jpg)
 
 </div>
 
-<p align="center">基于Go语言与Go-zero框架开发的轻量级抖音电商系统，支持高并发场景与全链路监控。通过微服务架构实现高扩展性，集成AI客服、分布式事务、缓存预热等功能。
+<p align="center">基于Go语言与Go-zero框架开发的微服务电商系统，支持高并发场景与全链路监控。通过微服务架构实现高扩展性，集成AI客服、分布式事务、缓存预热等功能。
 </p>
   
 ## 🚀 技术栈
