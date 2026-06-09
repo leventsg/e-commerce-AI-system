@@ -7,7 +7,7 @@
 ## 项目简介
 <div align=center>
     
-![](https://cdn.phototourl.com/free/2026-06-09-5e33dc94-c1d4-4cd8-81fb-86e596f5b925.jpg)
+![](https://cdn.phototourl.com/free/2026-06-09-37fef84b-e72a-4626-94c1-70c94f3032a6.jpg)
 
 </div>
 
