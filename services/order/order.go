@@ -6,6 +6,7 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/consumer"
+	_ "github.com/leventsg/e-commerce-AI-system/services/order/internal/consumer/timeout_order"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"

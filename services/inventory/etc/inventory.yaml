@@ -37,3 +37,29 @@ RedisConf:
   Pass: leventsg
   Tls: false
 
+KafkaMQ:
+  Brokers:
+    - "localhost:9092"
+  Username: ""
+  Password: ""
+  Topics:
+    CancelOrders:
+      Topic: "cancel-orders"
+      Group: "inventory-cancel-order-consumer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false
+    TimeoutOrders:
+      Topic: "timeout-orders"
+      Group: "inventory-timeout-order-consumer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false

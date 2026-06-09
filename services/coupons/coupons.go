@@ -3,12 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
+
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
 
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer"
+	_ "github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer/cancel_order"
 	_ "github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer/timeout_order"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/svc"

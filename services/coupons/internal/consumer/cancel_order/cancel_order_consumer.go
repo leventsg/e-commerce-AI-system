@@ -1,4 +1,4 @@
-package timeout_order
+package cancel_order
 
 import (
 	"context"
@@ -16,30 +16,29 @@ type CouponReleaser interface {
 	ReleaseCoupon(ctx context.Context, in *coupons.ReleaseCouponReq) (*coupons.EmptyResp, error)
 }
 
-type TimeoutOrderConsumer struct {
+type CancelOrderConsumer struct {
 	CouponRpc CouponReleaser
 }
 
-func NewTimeoutOrderConsumer(couponRpc CouponReleaser) *TimeoutOrderConsumer {
-	return &TimeoutOrderConsumer{
+func NewCancelOrderConsumer(couponRpc CouponReleaser) *CancelOrderConsumer {
+	return &CancelOrderConsumer{
 		CouponRpc: couponRpc,
 	}
 }
 
-// 目前和取消订单的处理逻辑是一致的，后续如果有不同的处理逻辑，可以在这里区分开来
-func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
-	data := event.TimeoutOrder{}
+func (co *CancelOrderConsumer) Handle(ctx context.Context, msg []byte) error {
+	data := event.CancelOrder{}
 	if err := json.Unmarshal(msg, &data); err != nil {
 		return err
 	}
 	if data.CouponId == "" {
-		logx.Infow("timeout order has no coupon, skip release",
+		logx.Infow("cancel order has no coupon, skip release",
 			logx.Field("order_id", data.OrderId),
 			logx.Field("user_id", data.UserId))
 		return nil
 	}
 	if data.OrderId == "" || data.UserId == 0 || data.PreOrderId == "" {
-		return errors.New("missing required timeout order fields")
+		return errors.New("missing required cancel order fields")
 	}
 	if co.CouponRpc == nil {
 		return errors.New("coupon releaser is nil")
@@ -52,7 +51,7 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		UserId:       data.UserId,
 	})
 	if err != nil {
-		logx.Errorw("release coupon by timeout order failed",
+		logx.Errorw("release coupon by cancel order failed",
 			logx.Field("err", err),
 			logx.Field("order_id", data.OrderId),
 			logx.Field("user_id", data.UserId),
@@ -60,7 +59,16 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		return err
 	}
 	if resp != nil && resp.StatusCode != code.Success {
-		logx.Errorw("release coupon by timeout order failed with status",
+		// 优惠券状态无效，记录日志但不返回错误，避免无限重试
+		if resp.StatusCode == code.CouponStatusInvalid {
+			logx.Infow("coupon status invalid, skip release",
+				logx.Field("order_id", data.OrderId),
+				logx.Field("user_id", data.UserId),
+				logx.Field("coupon_id", data.CouponId))
+			return nil
+		}
+		// 非业务状态错误，记录错误日志并返回错误，触发重试机制
+		logx.Errorw("release coupon by cancel order failed with status",
 			logx.Field("order_id", data.OrderId),
 			logx.Field("user_id", data.UserId),
 			logx.Field("coupon_id", data.CouponId),

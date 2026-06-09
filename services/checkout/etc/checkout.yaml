@@ -42,3 +42,30 @@ Telemetry:
   Endpoint: http://localhost:14268/api/traces
   Batcher: jaeger
   Sampler: 0.1 # 采样率，1.0表示全部采集, 0.1表示10%
+
+KafkaMQ:
+  Brokers:
+    - "localhost:9092"
+  Username: ""
+  Password: ""
+  Topics:
+    CancelOrders:
+      Topic: "cancel-orders"
+      Group: "checkout-cancel-order-consumer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false
+    TimeoutOrders:
+      Topic: "timeout-orders"
+      Group: "checkout-timeout-order-consumer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false
