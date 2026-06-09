@@ -1,17 +1,11 @@
-# 🛍️ e-commerce-AI-system - 基于Go-zero的微服务电商系统
+# e-commerce-AI-system - 基于Go-zero的微服务电商系统
 [![Go Version](https://img.shields.io/badge/go-1.20%2B-blue)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 
 
 ## 项目简介
-<div align=center>
-    
-![](https://avatars.githubusercontent.com/u/194924389?s=100&v=10)
-
-</div>
-
-<p align="center">基于Go语言与Go-zero框架开发的轻量级抖音电商系统，支持高并发场景与全链路监控。通过微服务架构实现高扩展性，集成AI客服、分布式事务、缓存预热等功能。
+<p align="center">基于Go语言与Go-zero框架开发的微服务电商系统，支持高并发场景与全链路监控。通过微服务架构实现高扩展性，集成AI客服、分布式事务、缓存预热等功能。
 </p>
   
 ## 🚀 技术栈
@@ -20,7 +14,7 @@
 
 | 类别     | 技术选型     |
 |--------|----------|
-| 开发语言   | Go 1.20+ |
+| 开发语言   | Go 1.24 |
 | RPC 框架 | Go-Zero  |
 | 服务治理   | Consul   |
 | 消息队列   | Kafka |
@@ -38,9 +32,9 @@
 
 | 领域    | 工具链                     |
 |-------|-------------------------|
-| 容器化   | Docker/K8s              |
+| 容器化   | Docker              |
 | 监控    | Prometheus+Grafana      |
-| 日志    | EFK Stack               |
+| 日志    | EFK               |
 | CI | GitHub Actions|
 
 
