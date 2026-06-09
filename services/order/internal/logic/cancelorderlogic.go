@@ -7,7 +7,6 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	order2 "github.com/leventsg/e-commerce-AI-system/dal/model/order"
-	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/event"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
@@ -90,40 +89,8 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 		l.Logger.Errorw("get cancel-orders kafka config failed", logx.Field("err", err))
 		return nil, err
 	}
-	event := &event.CancelOrder{
-		OrderId:    in.OrderId,
-		UserId:     int32(in.UserId),
-		Reason:     in.CancelReason,
-		PreOrderId: orderRes.PreOrderId,
-		CouponId:   orderRes.CouponId,
-	}
-	msg, err := json.Marshal(event)
-	if err != nil {
-		l.Logger.Errorw("json failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
-		return nil, err
-	}
 
-	// 发mq消息，异步处理后续的退款和库存回滚等操作
-	if err := l.svcCtx.Producer.Publish(l.ctx, kafkaCongif.Topic, msg); err != nil {
-		l.Logger.Errorw("publish cancel order event failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
-		return nil, err
-	}
-
-	// TODO: 预订单释放和库存回滚后续也用mq消费
-	// 释放 checkout 资源，优惠券由 cancel-orders MQ 事件异步释放。
-	releaseCheckout, err := l.svcCtx.CheckoutRpc.ReleaseCheckout(l.ctx, &checkout.ReleaseReq{
-		PreOrderId: orderRes.PreOrderId,
-		UserId:     int32(in.UserId),
-	})
-	if err != nil {
-		l.Logger.Errorw("call rpc ReleaseCheckout failed", logx.Field("err", err))
-		return nil, err
-	}
-	if releaseCheckout.StatusCode != code.Success {
-		res.StatusCode = releaseCheckout.StatusCode
-		res.StatusMsg = releaseCheckout.StatusMsg
-		return res, nil
-	}
+	// 查询订单详情
 	orderItems, err := l.svcCtx.OrderItemModel.QueryOrderItemsByOrderID(l.ctx, orderRes.OrderId)
 	if err != nil {
 		l.Logger.Errorw("query order items failed", logx.Field("err", err))
@@ -136,19 +103,26 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 			Quantity:  int32(item.Quantity),
 		}
 	}
-	// 退还库存
-	inventoryResp, err := l.svcCtx.InventoryRpc.ReturnInventory(l.ctx, &inventory.InventoryReq{
-		PreOrderId: orderRes.PreOrderId,
+
+	// 构建取消订单事件
+	event := &event.CancelOrder{
+		OrderId:    in.OrderId,
 		UserId:     int32(in.UserId),
+		Reason:     in.CancelReason,
+		PreOrderId: orderRes.PreOrderId,
+		CouponId:   orderRes.CouponId,
 		Items:      inventoryItems,
-	})
+	}
+	msg, err := json.Marshal(event)
 	if err != nil {
-		l.Logger.Errorw("call rpc ReturnInventory failed", logx.Field("err", err))
+		l.Logger.Errorw("json failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
 		return nil, err
 	}
-	if inventoryResp.StatusCode != code.Success {
-		res.StatusCode = inventoryResp.StatusCode
-		res.StatusMsg = inventoryResp.StatusMsg
+
+	// 发mq消息，异步处理优惠券释放，结算订单更新和库存回滚操作
+	if err := l.svcCtx.Producer.Publish(l.ctx, kafkaCongif.Topic, msg); err != nil {
+		l.Logger.Errorw("publish cancel order event failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
+		return nil, err
 	}
 	return res, nil
 }

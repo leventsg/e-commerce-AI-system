@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/svc"
