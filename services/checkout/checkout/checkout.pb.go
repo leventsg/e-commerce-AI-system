@@ -699,6 +699,7 @@ type ReleaseReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PreOrderId    string                 `protobuf:"bytes,1,opt,name=pre_order_id,json=preOrderId,proto3" json:"pre_order_id,omitempty"`
 	UserId        int32                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Status        CheckoutStatus         `protobuf:"varint,3,opt,name=status,proto3,enum=checkout.CheckoutStatus" json:"status,omitempty"` // 释放后的目标状态：取消传 CANCELLED，其他情况默认过期
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -745,6 +746,13 @@ func (x *ReleaseReq) GetUserId() int32 {
 		return x.UserId
 	}
 	return 0
+}
+
+func (x *ReleaseReq) GetStatus() CheckoutStatus {
+	if x != nil {
+		return x.Status
+	}
+	return CheckoutStatus_RESERVING
 }
 
 type EmptyResp struct {
@@ -974,12 +982,13 @@ const file_checkout_proto_rawDesc = "" +
 	"statusCode\x12\x1d\n" +
 	"\n" +
 	"status_msg\x18\x02 \x01(\tR\tstatusMsg\x12+\n" +
-	"\x04data\x18\x03 \x01(\v2\x17.checkout.CheckoutOrderR\x04data\"G\n" +
+	"\x04data\x18\x03 \x01(\v2\x17.checkout.CheckoutOrderR\x04data\"y\n" +
 	"\n" +
 	"ReleaseReq\x12 \n" +
 	"\fpre_order_id\x18\x01 \x01(\tR\n" +
 	"preOrderId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x05R\x06userId\"K\n" +
+	"\auser_id\x18\x02 \x01(\x05R\x06userId\x120\n" +
+	"\x06status\x18\x03 \x01(\x0e2\x18.checkout.CheckoutStatusR\x06status\"K\n" +
 	"\tEmptyResp\x12\x1f\n" +
 	"\vstatus_code\x18\x01 \x01(\x05R\n" +
 	"statusCode\x12\x1d\n" +
@@ -1040,23 +1049,24 @@ var file_checkout_proto_depIdxs = []int32{
 	13, // 3: checkout.CheckoutReq.order_items:type_name -> checkout.CheckoutReq.OrderItem
 	2,  // 4: checkout.CheckoutListResp.data:type_name -> checkout.CheckoutOrder
 	2,  // 5: checkout.CheckoutDetailResp.data:type_name -> checkout.CheckoutOrder
-	6,  // 6: checkout.CheckoutService.PrepareCheckout:input_type -> checkout.CheckoutReq
-	10, // 7: checkout.CheckoutService.ReleaseCheckout:input_type -> checkout.ReleaseReq
-	5,  // 8: checkout.CheckoutService.GetCheckoutList:input_type -> checkout.CheckoutListReq
-	3,  // 9: checkout.CheckoutService.GetCheckoutDetail:input_type -> checkout.CheckoutDetailReq
-	12, // 10: checkout.CheckoutService.UpdateStatus2Order:input_type -> checkout.UpdateStatusReq
-	12, // 11: checkout.CheckoutService.UpdateStatus2OrderRollback:input_type -> checkout.UpdateStatusReq
-	8,  // 12: checkout.CheckoutService.PrepareCheckout:output_type -> checkout.CheckoutResp
-	11, // 13: checkout.CheckoutService.ReleaseCheckout:output_type -> checkout.EmptyResp
-	7,  // 14: checkout.CheckoutService.GetCheckoutList:output_type -> checkout.CheckoutListResp
-	9,  // 15: checkout.CheckoutService.GetCheckoutDetail:output_type -> checkout.CheckoutDetailResp
-	11, // 16: checkout.CheckoutService.UpdateStatus2Order:output_type -> checkout.EmptyResp
-	11, // 17: checkout.CheckoutService.UpdateStatus2OrderRollback:output_type -> checkout.EmptyResp
-	12, // [12:18] is the sub-list for method output_type
-	6,  // [6:12] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	0,  // 6: checkout.ReleaseReq.status:type_name -> checkout.CheckoutStatus
+	6,  // 7: checkout.CheckoutService.PrepareCheckout:input_type -> checkout.CheckoutReq
+	10, // 8: checkout.CheckoutService.ReleaseCheckout:input_type -> checkout.ReleaseReq
+	5,  // 9: checkout.CheckoutService.GetCheckoutList:input_type -> checkout.CheckoutListReq
+	3,  // 10: checkout.CheckoutService.GetCheckoutDetail:input_type -> checkout.CheckoutDetailReq
+	12, // 11: checkout.CheckoutService.UpdateStatus2Order:input_type -> checkout.UpdateStatusReq
+	12, // 12: checkout.CheckoutService.UpdateStatus2OrderRollback:input_type -> checkout.UpdateStatusReq
+	8,  // 13: checkout.CheckoutService.PrepareCheckout:output_type -> checkout.CheckoutResp
+	11, // 14: checkout.CheckoutService.ReleaseCheckout:output_type -> checkout.EmptyResp
+	7,  // 15: checkout.CheckoutService.GetCheckoutList:output_type -> checkout.CheckoutListResp
+	9,  // 16: checkout.CheckoutService.GetCheckoutDetail:output_type -> checkout.CheckoutDetailResp
+	11, // 17: checkout.CheckoutService.UpdateStatus2Order:output_type -> checkout.EmptyResp
+	11, // 18: checkout.CheckoutService.UpdateStatus2OrderRollback:output_type -> checkout.EmptyResp
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_checkout_proto_init() }

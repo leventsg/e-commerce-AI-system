@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/svc"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -26,7 +27,14 @@ func NewReleaseCheckoutLogic(ctx context.Context, svcCtx *svc.ServiceContext) *R
 	}
 }
 
-// ReleaseCheckout UpdateCheckoutStatus2Success 当订单超时，支付超时，支付退款
+func releaseStatus(status checkout.CheckoutStatus) checkout.CheckoutStatus {
+	if status == checkout.CheckoutStatus_CANCELLED {
+		return checkout.CheckoutStatus_CANCELLED
+	}
+	return checkout.CheckoutStatus_EXPIRED
+}
+
+// ReleaseCheckout UpdateCheckoutStatus2Success 当订单超时，支付超时，支付退款，订单取消
 func (l *ReleaseCheckoutLogic) ReleaseCheckout(in *checkout.ReleaseReq) (*checkout.EmptyResp, error) {
 	err := l.svcCtx.Mysql.Transact(func(session sqlx.Session) error {
 		cacheKey := fmt.Sprintf("checkout:preorder:%d", in.UserId)
@@ -43,7 +51,7 @@ func (l *ReleaseCheckoutLogic) ReleaseCheckout(in *checkout.ReleaseReq) (*checko
 			return nil
 		}
 
-		err = l.svcCtx.CheckoutModel.UpdateStatusWithSession(l.ctx, session, int64(checkout.CheckoutStatus_EXPIRED), in.UserId, in.PreOrderId)
+		err = l.svcCtx.CheckoutModel.UpdateStatusWithSession(l.ctx, session, int64(releaseStatus(in.Status)), in.UserId, in.PreOrderId)
 		if err != nil {
 			l.Logger.Errorw("更新结算状态失败",
 				logx.Field("err", err),

@@ -4,3 +4,8 @@ issues:
       linters:
         - staticcheck
       text: "SA5008: unknown JSON option"
+      
+    - path: ^services/order/internal/config/config\.go$
+      linters:
+        - staticcheck
+      text: "SA5008: unknown JSON option"

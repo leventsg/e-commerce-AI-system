@@ -2,9 +2,13 @@ package logic
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	order2 "github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
@@ -34,10 +38,8 @@ func NewCancelOrderLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Cance
 // CancelOrder 取消订单 由用户发起
 func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.EmptyRes, error) {
 	res := &order.EmptyRes{}
-	var orderRes *order2.Orders
 	if err := l.svcCtx.Model.TransactCtx(l.ctx, func(ctx context.Context, session sqlx.Session) error {
 		oRes, err := l.svcCtx.OrderModel.WithSession(session).GetOrderByOrderIDAndUserIDWithLock(ctx, in.OrderId, int32(in.UserId))
-		orderRes = oRes
 		if err != nil {
 			if errors.Is(err, sqlx.ErrNotFound) {
 				res.StatusCode = code.OrderNotExist
@@ -52,7 +54,7 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 			if err := l.svcCtx.OrderModel.WithSession(session).CancelOrder(ctx, int32(in.UserId), in.OrderId, in.CancelReason); err != nil {
 				return err
 			}
-			return nil
+			return l.saveCancelOrderOutbox(ctx, session, oRes, in)
 		case order.OrderStatus_ORDER_STATUS_PAID:
 			res.StatusCode = code.OrderAlreadyPaid
 			res.StatusMsg = code.OrderAlreadyPaidMsg
@@ -81,20 +83,23 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 			logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
 		return nil, err
 	}
-	if res.StatusCode != code.Success {
-		return res, nil
-	}
-	kafkaCongif, err := l.svcCtx.Config.KafkaMQ.TopicConfig("CancelOrders")
+	return res, nil
+}
+
+func (l *CancelOrderLogic) saveCancelOrderOutbox(ctx context.Context, session sqlx.Session, orderRes *order2.Orders, in *order.CancelOrderRequest) error {
+	kafkaConfig, err := l.svcCtx.Config.KafkaMQ.TopicConfig("CancelOrders")
 	if err != nil {
 		l.Logger.Errorw("get cancel-orders kafka config failed", logx.Field("err", err))
-		return nil, err
+		return err
 	}
 
-	// 查询订单详情
-	orderItems, err := l.svcCtx.OrderItemModel.QueryOrderItemsByOrderID(l.ctx, orderRes.OrderId)
+	orderItems, err := l.svcCtx.OrderItemModel.WithSession(session).QueryOrderItemsByOrderID(ctx, orderRes.OrderId)
 	if err != nil {
 		l.Logger.Errorw("query order items failed", logx.Field("err", err))
-		return nil, err
+		return err
+	}
+	if len(orderItems) == 0 {
+		return fmt.Errorf("cancel order outbox missing order items: order_id=%s user_id=%d", in.OrderId, in.UserId)
 	}
 	inventoryItems := make([]*inventory.InventoryReq_Items, len(orderItems))
 	for i, item := range orderItems {
@@ -116,13 +121,32 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Emp
 	msg, err := json.Marshal(event)
 	if err != nil {
 		l.Logger.Errorw("json failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
-		return nil, err
+		return err
 	}
 
-	// 发mq消息，异步处理优惠券释放，结算订单更新和库存回滚操作
-	if err := l.svcCtx.Producer.Publish(l.ctx, kafkaCongif.Topic, msg); err != nil {
-		l.Logger.Errorw("publish cancel order event failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
-		return nil, err
+	messageID, err := uuid.NewV7()
+	if err != nil {
+		l.Logger.Errorw("generate outbox message id failed", logx.Field("err", err), logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
+		return err
 	}
-	return res, nil
+
+	maxRetry := l.svcCtx.Config.Outbox.MaxRetry
+	if maxRetry <= 0 {
+		maxRetry = 10
+	}
+	_, err = l.svcCtx.OutboxModel.WithSession(session).Insert(ctx, &order2.OutboxMessages{
+		MessageId:     messageID.String(),
+		EventType:     "order.cancelled",
+		Topic:         kafkaConfig.Topic,
+		MessageKey:    in.OrderId,
+		Payload:       string(msg),
+		Status:        order2.OutboxStatusPending,
+		RetryCount:    0,
+		MaxRetryCount: int64(maxRetry),
+		NextRetryAt:   time.Now(),
+		LockedUntil:   sql.NullTime{},
+		LastError:     sql.NullString{},
+		SentAt:        sql.NullTime{},
+	})
+	return err
 }

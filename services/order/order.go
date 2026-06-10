@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 
@@ -41,6 +42,13 @@ func main() {
 		panic(err)
 	}
 	defer s.Stop()
+
+	// 初始化消息投递器，定时扫描并投递消息到mq
+	outboxCtx, cancelOutbox := context.WithCancel(context.Background())
+	defer cancelOutbox()
+	if ctx.Outbox != nil {
+		go ctx.Outbox.Run(outboxCtx)
+	}
 
 	// 注册MQ消费者
 	if err := consumer.Init(c); err != nil {

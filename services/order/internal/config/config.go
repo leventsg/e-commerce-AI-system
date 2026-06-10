@@ -16,4 +16,5 @@ type Config struct {
 	InventoryRpc   zrpc.RpcClientConf
 	RabbitMQConfig config.RabbitMQConfig
 	KafkaMQ        config.KafkaConfig
+	Outbox         config.OutboxConfig `json:",optional"`
 }

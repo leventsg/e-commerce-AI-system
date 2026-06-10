@@ -47,6 +47,7 @@ func (co *CancelOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 	resp, err := co.CheckoutRpc.ReleaseCheckout(ctx, &checkout.ReleaseReq{
 		PreOrderId: data.PreOrderId,
 		UserId:     data.UserId,
+		Status:     checkout.CheckoutStatus_CANCELLED,
 	})
 	if err != nil {
 		logx.Errorw("checkout cancel_order consumer call rpc ReleaseCheckout failed",
