@@ -85,6 +85,7 @@ message CheckoutDetailResp {
 message ReleaseReq {
   string pre_order_id = 1;
   int32 user_id = 2;
+  CheckoutStatus status = 3; // 释放后的目标状态：取消传 CANCELLED，其他情况默认过期
 }
 
 
