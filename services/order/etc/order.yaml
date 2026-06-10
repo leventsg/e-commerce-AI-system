@@ -59,6 +59,13 @@ RabbitMQConfig:
   Pass: "admin"
   VHost: "/"
 
+Outbox:
+  Enabled: true
+  BatchSize: 50
+  ScanIntervalSeconds: 2
+  LockTTLSeconds: 30
+  MaxRetry: 10
+
 KafkaMQ:
   Brokers:
     - "localhost:9092"

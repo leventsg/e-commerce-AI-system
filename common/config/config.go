@@ -17,6 +17,14 @@ type RabbitMQConfig struct {
 	VHost string
 }
 
+type OutboxConfig struct {
+	Enabled             bool
+	BatchSize           int `json:",default=50"`
+	ScanIntervalSeconds int `json:",default=2"`
+	LockTTLSeconds      int `json:",default=30"`
+	MaxRetry            int `json:",default=10"`
+}
+
 type KafkaConfig struct {
 	Brokers  []string
 	Username string `json:",optional"`

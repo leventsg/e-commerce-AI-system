@@ -2,6 +2,7 @@ package svc
 
 import (
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
+	commonoutbox "github.com/leventsg/e-commerce-AI-system/common/outbox"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
@@ -16,6 +17,7 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
+	"time"
 )
 
 type ServiceContext struct {
@@ -31,6 +33,8 @@ type ServiceContext struct {
 	OrderDelayMQ   *delay.OrderDelayMQ
 	OrderNotifyMQ  *notify.OrderNotifyMQ
 	Producer       mq.Producer
+	OutboxModel    order.OutboxMessagesModel
+	Outbox         *commonoutbox.Dispatcher
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -49,12 +53,23 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		logx.Error(err)
 		panic(err)
 	}
+	mysql := sqlx.NewMysql(c.MysqlConfig.DataSource)
+	outboxModel := order.NewOutboxMessagesModel(mysql)
+	var dispatcher *commonoutbox.Dispatcher
+	if c.Outbox.Enabled {
+		dispatcher = commonoutbox.NewDispatcher(commonoutbox.Config{
+			BatchSize:    c.Outbox.BatchSize,
+			ScanInterval: time.Duration(c.Outbox.ScanIntervalSeconds) * time.Second,
+			LockTTL:      time.Duration(c.Outbox.LockTTLSeconds) * time.Second,
+			RetryBase:    time.Second,
+		}, outboxModel, producer)
+	}
 	return &ServiceContext{
 		Config:         c,
-		OrderModel:     order.NewOrdersModel(sqlx.NewMysql(c.MysqlConfig.DataSource)),
-		OrderItemModel: order.NewOrderItemsModel(sqlx.NewMysql(c.MysqlConfig.DataSource)),
-		OrderAddress:   order.NewOrderAddressesModel(sqlx.NewMysql(c.MysqlConfig.DataSource)),
-		Model:          sqlx.NewMysql(c.MysqlConfig.DataSource),
+		OrderModel:     order.NewOrdersModel(mysql),
+		OrderItemModel: order.NewOrderItemsModel(mysql),
+		OrderAddress:   order.NewOrderAddressesModel(mysql),
+		Model:          mysql,
 		CheckoutRpc:    checkoutservice.NewCheckoutService(zrpc.MustNewClient(c.CheckoutRpc)),
 		CouponRpc:      couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc)),
 		UserRpc:        usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
@@ -62,5 +77,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		OrderDelayMQ:   orderDelayMQ,
 		OrderNotifyMQ:  notifyMQ,
 		Producer:       producer,
+		OutboxModel:    outboxModel,
+		Outbox:         dispatcher,
 	}
 }

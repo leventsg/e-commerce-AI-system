@@ -59,3 +59,27 @@ CREATE TABLE order_addresses
     UNIQUE KEY idx_order_address (order_id),
     INDEX idx_recipient_name (recipient_name)
 )
+
+CREATE TABLE outbox_messages
+(
+    id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    message_id      VARCHAR(64)     NOT NULL COMMENT '消息唯一ID',
+    event_type      VARCHAR(64)     NOT NULL COMMENT '事件类型',
+    topic           VARCHAR(128)    NOT NULL COMMENT 'MQ topic',
+    message_key     VARCHAR(128)             DEFAULT '' COMMENT 'MQ message key',
+    payload         JSON            NOT NULL COMMENT '消息体',
+    status          TINYINT         NOT NULL DEFAULT 0 COMMENT '0-pending 1-sending 2-sent 3-failed',
+    retry_count     INT             NOT NULL DEFAULT 0 COMMENT '已重试次数',
+    max_retry_count INT             NOT NULL DEFAULT 10 COMMENT '最大重试次数',
+    next_retry_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '下次可重试时间',
+    locked_until    TIMESTAMP       NULL     DEFAULT NULL COMMENT '发送锁过期时间',
+    last_error      VARCHAR(1024)            DEFAULT NULL COMMENT '最近一次错误',
+    sent_at         TIMESTAMP       NULL     DEFAULT NULL COMMENT '发送成功时间',
+    created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_message_id (message_id),
+    UNIQUE KEY uk_event_key (event_type, message_key),
+    KEY idx_status_retry (status, next_retry_at),
+    KEY idx_locked_until (locked_until)
+) COMMENT ='order服务本地消息表';
