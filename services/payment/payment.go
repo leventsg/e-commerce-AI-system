@@ -5,19 +5,22 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"github.com/smartwalle/alipay/v3"
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
-	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
+	"net/http"
+	"time"
+
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	paymentM "github.com/leventsg/e-commerce-AI-system/dal/model/payment"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/svc"
+	paymenttimeout "github.com/leventsg/e-commerce-AI-system/services/payment/internal/timeout"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/payment"
-	"net/http"
-	"time"
+	"github.com/smartwalle/alipay/v3"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
+	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/service"
@@ -51,6 +54,12 @@ func main() {
 
 	defer s.Stop()
 
+	outboxCtx, cancelOutbox := context.WithCancel(context.Background())
+	defer cancelOutbox()
+	if ctx.Outbox != nil {
+		go ctx.Outbox.Run(outboxCtx)
+	}
+
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()
 }
@@ -80,7 +89,12 @@ func (s *PaymentService) handleAlipayNotification(writer http.ResponseWriter, re
 	case "TRADE_FINISHED":
 	// 交易完成（不可退款）
 	case "TRADE_CLOSED":
+		// 未付款交易超时关闭
 		logx.Infow("Payment closed", logx.Field("order_id", notify.OutTradeNo))
+		if err := s.closeUnpaidPayment(request.Context(), notify.OutTradeNo); err != nil {
+			logx.Errorw("close unpaid payment failed", logx.Field("err", err), logx.Field("order_id", notify.OutTradeNo))
+			return
+		}
 	case "TRADE_SUCCESS":
 		logx.Infow("Payment success", logx.Field("order_id", notify.OutTradeNo))
 		// 使用消息队列使用
@@ -143,6 +157,37 @@ func (s *PaymentService) handleAlipayNotification(writer http.ResponseWriter, re
 	// 返回确认响应给支付宝
 	alipay.ACKNotification(writer)
 
+}
+
+// 支付超时处理
+func (s *PaymentService) closeUnpaidPayment(ctx context.Context, orderID string) error {
+	return s.ctx.Model.TransactCtx(ctx, func(ctx context.Context, session sqlx.Session) error {
+		paymentsModel := s.ctx.PaymentModel.WithSession(session)
+		paymentRes, err := paymentsModel.FindOneByOrderIdWithLock(ctx, orderID)
+		if err != nil {
+			return err
+		}
+		if payment.PaymentStatus(paymentRes.Status) != payment.PaymentStatus_PAYMENT_STATUS_UNPAID {
+			logx.Infow("trade closed skipped",
+				logx.Field("order_id", orderID),
+				logx.Field("payment_status", paymentRes.Status))
+			return nil
+		}
+		// 更新支付单状态为已超时
+		if err := paymentsModel.UpdateStatusByOrderId(ctx, orderID, int64(payment.PaymentStatus_PAYMENT_STATUS_EXPIRED)); err != nil {
+			return err
+		}
+		// 保存超时订单到Outbox消息表
+		return paymenttimeout.SaveOrderTimeoutOutbox(
+			ctx,
+			session,
+			s.ctx.Config,
+			s.ctx.PaymentOutboxModel,
+			paymentRes,
+			biz.PaymentFailedEventType,
+			biz.TimeoutSourcePaymentFailed,
+		)
+	})
 }
 
 // 封装HTTP服务启动

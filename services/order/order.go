@@ -8,6 +8,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/consumer"
 	_ "github.com/leventsg/e-commerce-AI-system/services/order/internal/consumer/timeout_order"
+	"github.com/leventsg/e-commerce-AI-system/services/order/internal/delaytask"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
@@ -49,6 +50,12 @@ func main() {
 	if ctx.Outbox != nil {
 		go ctx.Outbox.Run(outboxCtx)
 	}
+
+	// 初始化订单超时扫描器，定时扫描超时订单并写入Outbox消息表
+	timeoutScannerCtx, cancelTimeoutScanner := context.WithCancel(context.Background())
+	defer cancelTimeoutScanner()
+	timeoutScanner := delaytask.NewOrderTimeoutScanner(c, ctx.RedisClient, ctx.OrderModel, ctx.OrderItemModel, ctx.OutboxModel)
+	go timeoutScanner.Run(timeoutScannerCtx)
 
 	// 注册MQ消费者
 	if err := consumer.Init(c); err != nil {

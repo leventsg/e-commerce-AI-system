@@ -49,6 +49,30 @@ RabbitMQConfig:
   Pass: "admin"
   VHost: "/"
 
+Outbox:
+  Enabled: true
+  BatchSize: 50
+  ScanIntervalSeconds: 1
+  LockTTLSeconds: 15
+  MaxRetry: 10
+
+KafkaMQ:
+  Brokers:
+    - "localhost:9092"
+  Username: ""
+  Password: ""
+  Topics:
+    TimeoutOrders:
+      Topic: "timeout-orders"
+      Group: "payment-timeout-order-producer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false
+
 # 指标监控配置
 DevServer:
   Enabled: true

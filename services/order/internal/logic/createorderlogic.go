@@ -3,19 +3,19 @@ package logic
 import (
 	"context"
 	"database/sql"
+	"time"
+
 	"github.com/google/uuid"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	order2 "github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
-	"github.com/leventsg/e-commerce-AI-system/services/order/internal/mq/delay"
 	"github.com/leventsg/e-commerce-AI-system/services/users/users"
-	"time"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
@@ -102,11 +102,8 @@ func (l *CreateOrderLogic) CreateOrder(in *order.CreateOrderRequest) (*order.Ord
 		return res, nil
 	}
 	// --------------- 订单超时 ---------------
-	if err := l.svcCtx.OrderDelayMQ.Product(&delay.OrderReq{
-		OrderId: dto.OrderID,
-		UserID:  int32(in.UserId),
-	}); err != nil {
-		l.Logger.Errorw("publish order delay message failed", l.logContext(dto)...)
+	if _, err := l.svcCtx.RedisClient.ZaddCtx(l.ctx, biz.OrderTimeoutZSetKey, orderValue.ExpireTime, dto.OrderID); err != nil {
+		l.Logger.Errorw("save order timeout task failed", append(l.logContext(dto), logx.Field("err", err))...)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return res, nil

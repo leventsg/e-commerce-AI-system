@@ -2,9 +2,11 @@ package mq
 
 import (
 	"context"
-	"github.com/streadway/amqp"
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
+	paymentmodel "github.com/leventsg/e-commerce-AI-system/dal/model/payment"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/config"
-	"time"
+	"github.com/streadway/amqp"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 const (
@@ -13,17 +15,21 @@ const (
 	QueueName      = "payment-delay-queue"
 	DelayQueueName = "payment-delay-wait-queue"
 	RoutingKey     = "payment-delay"
-	Delay          = 30 * time.Minute
+	Delay          = biz.PaymentExpireTime
 )
 
 type PaymentDelayMQ struct {
-	conn *amqp.Connection
+	conn     *amqp.Connection
+	config   config.Config
+	model    sqlx.SqlConn
+	payments paymentmodel.PaymentsModel
+	outbox   paymentmodel.PaymentOutboxMessagesModel
 }
 type PaymentReq struct {
 	OrderId string
 }
 
-func Init(c config.Config) (*PaymentDelayMQ, error) {
+func Init(c config.Config, model sqlx.SqlConn, payments paymentmodel.PaymentsModel, outbox paymentmodel.PaymentOutboxMessagesModel) (*PaymentDelayMQ, error) {
 	conn, err := amqp.Dial(c.RabbitMQConfig.Dns())
 	if err != nil {
 		return nil, err
@@ -89,7 +95,11 @@ func Init(c config.Config) (*PaymentDelayMQ, error) {
 	}
 
 	paymentDelay := &PaymentDelayMQ{
-		conn: conn,
+		conn:     conn,
+		config:   c,
+		model:    model,
+		payments: payments,
+		outbox:   outbox,
 	}
 	go paymentDelay.consumer(context.TODO())
 	return paymentDelay, nil

@@ -6,14 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	paymentM "github.com/leventsg/e-commerce-AI-system/dal/model/payment"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/mq"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/payment"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"time"
 )
 
@@ -114,7 +115,7 @@ func (l *CreatePaymentLogic) CreatePayment(in *payment.PaymentReq) (*payment.Pay
 		PaidAmount:     sql.NullInt64{Int64: payableAmount, Valid: true},
 		PaymentMethod:  PaymentMethodToString(in.PaymentMethod),
 		PayUrl:         payUrl,
-		ExpireTime:     time.Now().Add(30 * time.Minute).Unix(),
+		ExpireTime:     time.Now().Add(biz.PaymentExpireTime).Unix(),
 		Status:         int64(payment.PaymentStatus_PAYMENT_STATUS_UNPAID), // 初始状态：待支付
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
