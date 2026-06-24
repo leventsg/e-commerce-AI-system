@@ -6,7 +6,6 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/dal/model/payment"
 	"github.com/leventsg/e-commerce-AI-system/services/order/orderservice"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/config"
-	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/mq"
 	"github.com/smartwalle/alipay/v3"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
@@ -22,7 +21,6 @@ type ServiceContext struct {
 	PaymentOutboxModel payment.PaymentOutboxMessagesModel
 	OrderRpc           orderservice.OrderService
 	Alipay             *alipay.Client
-	PaymentMQ          *mq.PaymentDelayMQ
 	Producer           commonmq.Producer
 	Outbox             *commonoutbox.Dispatcher
 	Model              sqlx.SqlConn
@@ -39,11 +37,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	paymentModel := payment.NewPaymentsModel(mysql)
 	outboxModel := payment.NewPaymentOutboxMessagesModel(mysql)
 
-	delayMQ, err := mq.Init(c, mysql, paymentModel, outboxModel)
-	if err != nil {
-		logx.Errorw("创建延迟队列失败", logx.LogField{Key: "err", Value: err})
-		panic(err)
-	}
 	// 1. 创建支付宝客户端
 	client, err := alipay.New(c.Alipay.AppId, c.Alipay.PrivateKey, false)
 	if err != nil {
@@ -73,7 +66,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		PaymentOutboxModel: outboxModel,
 		OrderRpc:           orderservice.NewOrderService(zrpc.MustNewClient(c.OrderRpc)),
 		Alipay:             client,
-		PaymentMQ:          delayMQ,
 		Producer:           producer,
 		Outbox:             dispatcher,
 		Model:              mysql,

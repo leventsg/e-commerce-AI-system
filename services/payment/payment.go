@@ -13,9 +13,9 @@ import (
 	paymentM "github.com/leventsg/e-commerce-AI-system/dal/model/payment"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/delaytask"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/svc"
-	paymenttimeout "github.com/leventsg/e-commerce-AI-system/services/payment/internal/timeout"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/payment"
 	"github.com/smartwalle/alipay/v3"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -54,11 +54,18 @@ func main() {
 
 	defer s.Stop()
 
+	// 初始化支付超时订单消息投递器，定时扫描并投递消息到mq (mysql -> mq)
 	outboxCtx, cancelOutbox := context.WithCancel(context.Background())
 	defer cancelOutbox()
 	if ctx.Outbox != nil {
 		go ctx.Outbox.Run(outboxCtx)
 	}
+
+	// 初始化支付超时扫描器，定时扫描超时支付单并通知订单服务处理 (redis -> mysql)
+	timeoutScannerCtx, cancelTimeoutScanner := context.WithCancel(context.Background())
+	defer cancelTimeoutScanner()
+	timeoutScanner := delaytask.NewPaymentTimeoutScanner(ctx.Rdb, ctx.Model, ctx.PaymentModel, ctx.OrderRpc)
+	go timeoutScanner.Run(timeoutScannerCtx)
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()
@@ -152,6 +159,9 @@ func (s *PaymentService) handleAlipayNotification(writer http.ResponseWriter, re
 			logx.Errorw("Failed to update order status", logx.Field("err", err))
 			return
 		}
+		if _, err := s.ctx.Rdb.ZremCtx(request.Context(), biz.PaymentTimeoutZSetKey, notify.OutTradeNo); err != nil {
+			logx.Errorw("delete payment timeout task failed", logx.Field("err", err), logx.Field("order_id", notify.OutTradeNo))
+		}
 
 	}
 	// 返回确认响应给支付宝
@@ -161,33 +171,53 @@ func (s *PaymentService) handleAlipayNotification(writer http.ResponseWriter, re
 
 // 支付超时处理
 func (s *PaymentService) closeUnpaidPayment(ctx context.Context, orderID string) error {
-	return s.ctx.Model.TransactCtx(ctx, func(ctx context.Context, session sqlx.Session) error {
+	var paymentRes *paymentM.Payments
+	shouldNotifyOrder := false
+	if err := s.ctx.Model.TransactCtx(ctx, func(ctx context.Context, session sqlx.Session) error {
 		paymentsModel := s.ctx.PaymentModel.WithSession(session)
-		paymentRes, err := paymentsModel.FindOneByOrderIdWithLock(ctx, orderID)
+		pRes, err := paymentsModel.FindOneByOrderIdWithLock(ctx, orderID)
 		if err != nil {
 			return err
 		}
-		if payment.PaymentStatus(paymentRes.Status) != payment.PaymentStatus_PAYMENT_STATUS_UNPAID {
+		paymentRes = pRes
+		switch payment.PaymentStatus(pRes.Status) {
+		case payment.PaymentStatus_PAYMENT_STATUS_UNPAID:
+			// 更新支付单状态为已超时
+			if err := paymentsModel.UpdateStatusByOrderId(ctx, orderID, int64(payment.PaymentStatus_PAYMENT_STATUS_EXPIRED)); err != nil {
+				return err
+			}
+			pRes.Status = int64(payment.PaymentStatus_PAYMENT_STATUS_EXPIRED)
+			shouldNotifyOrder = true
+		case payment.PaymentStatus_PAYMENT_STATUS_EXPIRED:
+			shouldNotifyOrder = true
+		default:
 			logx.Infow("trade closed skipped",
 				logx.Field("order_id", orderID),
-				logx.Field("payment_status", paymentRes.Status))
+				logx.Field("payment_status", pRes.Status))
 			return nil
 		}
-		// 更新支付单状态为已超时
-		if err := paymentsModel.UpdateStatusByOrderId(ctx, orderID, int64(payment.PaymentStatus_PAYMENT_STATUS_EXPIRED)); err != nil {
-			return err
-		}
-		// 保存超时订单到Outbox消息表
-		return paymenttimeout.SaveOrderTimeoutOutbox(
-			ctx,
-			session,
-			s.ctx.Config,
-			s.ctx.PaymentOutboxModel,
-			paymentRes,
-			biz.PaymentFailedEventType,
-			biz.TimeoutSourcePaymentFailed,
-		)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !shouldNotifyOrder || paymentRes == nil {
+		return nil
+	}
+	resp, err := s.ctx.OrderRpc.HandlePaymentTimeoutOrder(ctx, &order.HandlePaymentTimeoutOrderRequest{
+		OrderId: paymentRes.OrderId.String,
+		UserId:  int32(paymentRes.UserId),
+		Source:  biz.TimeoutSourcePaymentFailed,
 	})
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.StatusCode != code.Success {
+		return fmt.Errorf("handle payment failed order failed: status_code=%d status_msg=%s", resp.StatusCode, resp.StatusMsg)
+	}
+	if _, err := s.ctx.Rdb.ZremCtx(ctx, biz.PaymentTimeoutZSetKey, orderID); err != nil {
+		logx.Errorw("delete payment timeout task failed", logx.Field("err", err), logx.Field("order_id", orderID))
+	}
+	return nil
 }
 
 // 封装HTTP服务启动

@@ -46,7 +46,6 @@ func NewTimeoutOrderConsumer(
 func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 	data := event.TimeoutOrder{}
 	var orderRes *order.Orders
-	shouldWriteFullTimeout := false
 	if err := json.Unmarshal(msg, &data); err != nil {
 		return err
 	}
@@ -70,7 +69,6 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 			logx.Infow("timeout order already processed, continue returning pre inventory",
 				logx.Field("order_id", data.OrderId),
 				logx.Field("user_id", data.UserId))
-			shouldWriteFullTimeout = isPaymentTimeoutSource(data.Source)
 			return nil
 		}
 		if !shouldCloseTimeoutOrder(data.Source, orderStatus, paymentStatus) {
@@ -92,16 +90,12 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		); err != nil {
 			return err
 		}
-		shouldWriteFullTimeout = isPaymentTimeoutSource(data.Source)
 		return nil
 	}); err != nil {
 		logx.Errorw("close timeout order failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 		return err
 	}
 
-	if !shouldWriteFullTimeout || orderRes == nil {
-		return nil
-	}
 	return co.saveFullTimeoutOutbox(ctx, orderRes, data.Source)
 }
 
@@ -171,10 +165,6 @@ func shouldCloseTimeoutOrder(source string, orderStatus service_order.OrderStatu
 	default:
 		return false
 	}
-}
-
-func isPaymentTimeoutSource(source string) bool {
-	return source == biz.TimeoutSourcePaymentTimeout || source == biz.TimeoutSourcePaymentFailed
 }
 
 func timeoutEventType(source string) string {

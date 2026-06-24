@@ -44,14 +44,14 @@ func main() {
 	}
 	defer s.Stop()
 
-	// 初始化消息投递器，定时扫描并投递消息到mq
+	// 初始化取消订单消息投递器，定时扫描并投递消息到mq (mysql -> mq)
 	outboxCtx, cancelOutbox := context.WithCancel(context.Background())
 	defer cancelOutbox()
 	if ctx.Outbox != nil {
 		go ctx.Outbox.Run(outboxCtx)
 	}
 
-	// 初始化订单超时扫描器，定时扫描超时订单并写入Outbox消息表
+	// 初始化订单超时扫描器，定时扫描超时订单并写入Outbox消息表（redis -> mysql）
 	timeoutScannerCtx, cancelTimeoutScanner := context.WithCancel(context.Background())
 	defer cancelTimeoutScanner()
 	timeoutScanner := delaytask.NewOrderTimeoutScanner(c, ctx.RedisClient, ctx.OrderModel, ctx.OrderItemModel, ctx.OutboxModel)

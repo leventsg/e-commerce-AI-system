@@ -11,6 +11,7 @@ const (
 
 const (
 	OrderTimeoutZSetKey          = "order:timeout:zset"
+	PaymentTimeoutZSetKey        = "payment:timeout:zset"
 	TimeoutSourceOrder           = "order_timeout"
 	TimeoutSourcePaymentTimeout  = "payment_timeout"
 	TimeoutSourcePaymentFailed   = "payment_failed"

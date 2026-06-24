@@ -96,6 +96,11 @@ message UpdateOrder2PaymentRequest {
   string order_id = 1;
   int32 user_id = 2;
 }
+message HandlePaymentTimeoutOrderRequest {
+  string order_id = 1;
+  int32 user_id = 2;
+  string source = 3;
+}
 message CreateOrderRequest {
   string pre_order_id = 1;       // 必须有效的预订单ID
   uint32 user_id = 2;            // 用户身份验证
@@ -175,5 +180,6 @@ service OrderService {
   //  UpdateOrder2PaymentStatusRollback 补偿操作 更新订单（支付服务回调使用） 创建状态
   rpc UpdateOrder2PaymentStatusRollback(UpdateOrder2PaymentRequest) returns (EmptyRes);
   rpc GetOrder2Payment(GetOrderRequest) returns (OrderDetail2PaymentResponse);
+  rpc HandlePaymentTimeoutOrder(HandlePaymentTimeoutOrderRequest) returns (EmptyRes);
 
 }

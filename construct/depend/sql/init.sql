@@ -166,8 +166,8 @@ CREATE TABLE orders
 
 
     -- 状态管理
-    order_status    TINYINT      NOT NULL COMMENT '订单状态：1-待支付 2-已支付 3-已发货 4-已完成 5-已取消...',
-    payment_status  TINYINT      NOT NULL COMMENT '支付状态：0-未支付 1-支付中 2-已支付 3-已退款...',
+    order_status    TINYINT      NOT NULL COMMENT '订单状态：0-未指定 1-创建 2-待支付 3-已支付 4-已完成 5-已取消 6-已关闭（超时） 7-退款',
+    payment_status  TINYINT      NOT NULL COMMENT '支付状态：0-未指定 1-未支付 2-支付中 3-已支付 4-已过期 5-退款',
 
     reason          VARCHAR(255) COMMENT '取消原因',
     expire_time     BIGINT       NOT NULL COMMENT '过期时间戳',
@@ -279,7 +279,7 @@ CREATE TABLE `user_coupons`
     `id`        int unsigned  NOT NULL AUTO_INCREMENT,
     `user_id`   int unsigned             NOT NULL COMMENT '用户ID',
     `coupon_id` varchar(36)              NOT NULL COMMENT '优惠券ID',
-    `status`    tinyint                  NOT NULL DEFAULT 0 COMMENT '状态：0-未使用 1-正在使用 2-已消耗 3-已过期 4-已失效',
+    `status`    tinyint                  NOT NULL DEFAULT 0 COMMENT '状态：0-未指定/可使用 1-已锁定 2-已使用 3-已过期 4-已作废',
     `order_id`  varchar(36)                       DEFAULT NULL COMMENT '使用的订单ID',
 
     `used_at`   TIMESTAMP                         DEFAULT NULL COMMENT '使用时间',
@@ -371,7 +371,7 @@ CREATE TABLE payments
     pay_url         VARCHAR(512) NOT NULL COMMENT '支付跳转链接',
     expire_time     BIGINT       NOT NULL COMMENT '支付链接过期时间戳（秒）',
 
-    status          TINYINT      NOT NULL COMMENT '支付状态（0-未定义 1-待支付 2-已支付...）',
+    status          TINYINT      NOT NULL COMMENT '支付状态：0-未指定 1-未支付 2-已支付 3-支付失败 4-全额退款 5-已过期',
 
     created_at      TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间（毫秒精度）',
     updated_at      TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',

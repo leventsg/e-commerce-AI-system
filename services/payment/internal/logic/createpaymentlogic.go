@@ -10,7 +10,6 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	paymentM "github.com/leventsg/e-commerce-AI-system/dal/model/payment"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
-	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/mq"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/payment/payment"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -72,6 +71,11 @@ func (l *CreatePaymentLogic) CreatePayment(in *payment.PaymentReq) (*payment.Pay
 		res.StatusCode = code.PaymentExist
 		res.StatusMsg = code.PaymentExistMsg
 		res.Payment = ConvertModelToPaymentItem(existingPayment)
+		if payment.PaymentStatus(existingPayment.Status) == payment.PaymentStatus_PAYMENT_STATUS_UNPAID {
+			if err := l.savePaymentTimeoutTask(in.OrderId, existingPayment.ExpireTime); err != nil {
+				return nil, err
+			}
+		}
 		// 幂等性校验通过，直接返回已存在的支付单
 		return res, nil
 	}
@@ -137,11 +141,9 @@ func (l *CreatePaymentLogic) CreatePayment(in *payment.PaymentReq) (*payment.Pay
 		res.StatusMsg = paymentRes.StatusMsg
 		return res, nil
 	}
-	// 6. 发送支付单到消息队列
-	if err := l.svcCtx.PaymentMQ.Product(&mq.PaymentReq{
-		OrderId: in.OrderId,
-	}); err != nil {
-		l.Logger.Errorw("product payment failed", logx.Field("err", err))
+	// 6. 写入Redis ZSET延时任务
+	if err := l.savePaymentTimeoutTask(in.OrderId, newPayment.ExpireTime); err != nil {
+		l.Logger.Errorw("save payment timeout task failed", logx.Field("err", err), logx.Field("order_id", in.OrderId))
 		return nil, err
 	}
 
@@ -149,6 +151,11 @@ func (l *CreatePaymentLogic) CreatePayment(in *payment.PaymentReq) (*payment.Pay
 	return &payment.PaymentResp{
 		Payment: ConvertModelToPaymentItem(newPayment),
 	}, nil
+}
+
+func (l *CreatePaymentLogic) savePaymentTimeoutTask(orderID string, expireTime int64) error {
+	_, err := l.svcCtx.Rdb.ZaddCtx(l.ctx, biz.PaymentTimeoutZSetKey, expireTime, orderID)
+	return err
 }
 
 // PaymentMethodToString paymentMethodToString 将 proto 枚举转换为数据库存储的字符串
