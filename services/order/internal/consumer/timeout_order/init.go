@@ -5,12 +5,10 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/order"
-	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventoryclient"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/consumer"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
-	"github.com/zeromicro/go-zero/zrpc"
 )
 
 func init() {
@@ -21,7 +19,7 @@ func Init(c config.Config) error {
 	connModel := sqlx.NewMysql(c.MysqlConfig.DataSource)
 	model := order.NewOrdersModel(connModel)
 	orderItemsModel := order.NewOrderItemsModel(connModel)
-	inventoryRpc := inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc))
+	outboxModel := order.NewOutboxMessagesModel(connModel)
 
 	kafkaConf, err := c.KafkaMQ.TopicConfig("TimeoutOrders")
 	if err != nil {
@@ -32,7 +30,7 @@ func Init(c config.Config) error {
 	if err != nil {
 		return err
 	}
-	handler := NewTimeoutOrderConsumer(model, orderItemsModel, inventoryRpc, connModel)
+	handler := NewTimeoutOrderConsumer(c, model, orderItemsModel, outboxModel, connModel)
 
 	startErr := make(chan error, 1)
 	go func() {

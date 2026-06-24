@@ -15,6 +15,11 @@ Consul:
 MysqlConfig:
   datasource: ${MYSQL_DATA_SOURCE}
 
+RedisConf:
+  Host: ${REDIS_HOST}
+  Pass: ${REDIS_PASSWORD}
+  Tls: false
+
 Log:
   ServiceName: "order-rpc"
   Mode: 'file'
@@ -64,3 +69,37 @@ RabbitMQConfig:
   User: ${RABBITMQ_USERNAME}
   Pass: ${RABBITMQ_PASSWORD}
   VHost: ${RABBITMQ_VHOST}
+
+Outbox:
+  Enabled: true
+  BatchSize: 50
+  ScanIntervalSeconds: 2
+  LockTTLSeconds: 30
+  MaxRetry: 10
+
+KafkaMQ:
+  Brokers:
+    - ${KAFKA_BROKER}
+  Username: ${KAFKA_USERNAME}
+  Password: ${KAFKA_PASSWORD}
+  Topics:
+    TimeoutOrders:
+      Topic: "timeout-orders"
+      Group: "order-timeout-order-consumer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false
+    CancelOrders:
+      Topic: "cancel-orders"
+      Group: "order-cancel-order-consumer"
+      Offset: first
+      Conns: 1
+      Consumers: 1
+      Processors: 2
+      MinBytes: 10240
+      MaxBytes: 10485760
+      ForceCommit: false

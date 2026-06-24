@@ -19,7 +19,9 @@ type (
 		Count(ctx context.Context) (int64, error)
 		FindPage(ctx context.Context, userId uint32, offset, limit int) ([]*Payments, error)
 		FindOneByOrderId(ctx context.Context, pre_order_id string) (*Payments, error)
+		FindOneByOrderIdWithLock(ctx context.Context, orderID string) (*Payments, error)
 		CheckExistByOrderId(ctx context.Context, orderID string) (bool, error)
+		UpdateStatusByOrderId(ctx context.Context, orderID string, status int64) error
 	}
 
 	customPaymentsModel struct {
@@ -95,4 +97,24 @@ func (m *defaultPaymentsModel) FindOneByOrderId(ctx context.Context, orderID str
 	default:
 		return nil, err
 	}
+}
+
+func (m *defaultPaymentsModel) FindOneByOrderIdWithLock(ctx context.Context, orderID string) (*Payments, error) {
+	query := fmt.Sprintf("select %s from %s where `order_id` = ? limit 1 for update", paymentsRows, m.table)
+	var resp Payments
+	err := m.conn.QueryRowCtx(ctx, &resp, query, orderID)
+	switch {
+	case err == nil:
+		return &resp, nil
+	case errors.Is(err, sqlx.ErrNotFound):
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultPaymentsModel) UpdateStatusByOrderId(ctx context.Context, orderID string, status int64) error {
+	query := fmt.Sprintf("update %s set `status` = ? where `order_id` = ?", m.table)
+	_, err := m.conn.ExecCtx(ctx, query, status, orderID)
+	return err
 }

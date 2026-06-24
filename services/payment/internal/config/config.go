@@ -1,10 +1,10 @@
 package config
 
 import (
+	"github.com/leventsg/e-commerce-AI-system/common/config"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/zrpc"
 	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
-	"github.com/leventsg/e-commerce-AI-system/common/config"
 )
 
 type Config struct {
@@ -15,6 +15,8 @@ type Config struct {
 	Alipay         AlipayConfig
 	OrderRpc       zrpc.RpcClientConf
 	RabbitMQConfig config.RabbitMQConfig
+	KafkaMQ        config.KafkaConfig
+	Outbox         config.OutboxConfig `json:",optional"`
 }
 
 type AlipayConfig struct {

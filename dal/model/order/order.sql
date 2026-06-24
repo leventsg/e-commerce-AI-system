@@ -60,7 +60,7 @@ CREATE TABLE order_addresses
     INDEX idx_recipient_name (recipient_name)
 )
 
-CREATE TABLE outbox_messages
+CREATE TABLE order_outbox_messages
 (
     id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
     message_id      VARCHAR(64)     NOT NULL COMMENT '消息唯一ID',

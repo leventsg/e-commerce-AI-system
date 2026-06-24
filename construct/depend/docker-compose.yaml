@@ -44,8 +44,6 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: 'root'
       MYSQL_DATABASE: 'mall'
-      MYSQL_USER: 'root'
-      MYSQL_PASSWORD: 'root'
     healthcheck:
       test: [ "CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent" ]
       interval: 10s

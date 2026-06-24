@@ -3,13 +3,15 @@ package logic
 import (
 	"context"
 	"errors"
+
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
+	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
+	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlc"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
-	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 )
 
 type CreateOrderRollbackLogic struct {
@@ -67,5 +69,20 @@ func (l *CreateOrderRollbackLogic) CreateOrderRollback(in *order.CreateOrderRequ
 		return nil, status.Error(codes.Internal, "回滚失败")
 	}
 
+	// 删除订单超时任务
+	cleanupOrderTimeoutTask(l.ctx, orderID, l.svcCtx.RedisClient.ZremCtx)
 	return &order.EmptyRes{}, nil
+}
+
+type removeOrderTimeoutTaskFunc func(ctx context.Context, key string, values ...any) (int, error)
+
+func cleanupOrderTimeoutTask(ctx context.Context, orderID string, remove removeOrderTimeoutTaskFunc) {
+	if orderID == "" || remove == nil {
+		return
+	}
+	if _, err := remove(ctx, biz.OrderTimeoutZSetKey, orderID); err != nil {
+		logx.WithContext(ctx).Errorw("delete order timeout task failed",
+			logx.Field("order_id", orderID),
+			logx.Field("err", err))
+	}
 }

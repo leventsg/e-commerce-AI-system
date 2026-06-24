@@ -10,11 +10,11 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventoryclient"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
-	"github.com/leventsg/e-commerce-AI-system/services/order/internal/mq/delay"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/mq/notify"
 	"github.com/leventsg/e-commerce-AI-system/services/users/users"
 	"github.com/leventsg/e-commerce-AI-system/services/users/usersclient"
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
 	"time"
@@ -30,8 +30,8 @@ type ServiceContext struct {
 	UserRpc        users.UsersClient
 	InventoryRpc   inventory.InventoryClient
 	Model          sqlx.SqlConn
-	OrderDelayMQ   *delay.OrderDelayMQ
 	OrderNotifyMQ  *notify.OrderNotifyMQ
+	RedisClient    *redis.Redis
 	Producer       mq.Producer
 	OutboxModel    order.OutboxMessagesModel
 	Outbox         *commonoutbox.Dispatcher
@@ -39,11 +39,6 @@ type ServiceContext struct {
 
 func NewServiceContext(c config.Config) *ServiceContext {
 	producer, err := mq.NewKafkaProducer(c.KafkaMQ)
-	if err != nil {
-		logx.Error(err)
-		panic(err)
-	}
-	orderDelayMQ, err := delay.Init(c)
 	if err != nil {
 		logx.Error(err)
 		panic(err)
@@ -74,8 +69,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CouponRpc:      couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc)),
 		UserRpc:        usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
 		InventoryRpc:   inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc)),
-		OrderDelayMQ:   orderDelayMQ,
 		OrderNotifyMQ:  notifyMQ,
+		RedisClient:    redis.MustNewRedis(c.RedisConf),
 		Producer:       producer,
 		OutboxModel:    outboxModel,
 		Outbox:         dispatcher,

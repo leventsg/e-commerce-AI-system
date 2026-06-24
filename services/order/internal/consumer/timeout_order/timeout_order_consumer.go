@@ -2,13 +2,17 @@ package timeout_order
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
-	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
+	"github.com/google/uuid"
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
+	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/event"
 	service_order "github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -16,22 +20,25 @@ import (
 )
 
 type TimeoutOrderConsumer struct {
+	Config          config.Config
 	OrdersModel     order.OrdersModel
 	OrderItemsModel order.OrderItemsModel
-	InventoryRpc    inventory.InventoryClient
+	OutboxModel     order.OutboxMessagesModel
 	Model           sqlx.SqlConn
 }
 
 func NewTimeoutOrderConsumer(
+	c config.Config,
 	ordersModel order.OrdersModel,
 	orderItemsModel order.OrderItemsModel,
-	inventoryRpc inventory.InventoryClient,
+	outboxModel order.OutboxMessagesModel,
 	model sqlx.SqlConn,
 ) *TimeoutOrderConsumer {
 	return &TimeoutOrderConsumer{
+		Config:          c,
 		OrdersModel:     ordersModel,
 		OrderItemsModel: orderItemsModel,
-		InventoryRpc:    inventoryRpc,
+		OutboxModel:     outboxModel,
 		Model:           model,
 	}
 }
@@ -39,7 +46,6 @@ func NewTimeoutOrderConsumer(
 func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 	data := event.TimeoutOrder{}
 	var orderRes *order.Orders
-	shouldReturnInventory := true
 	if err := json.Unmarshal(msg, &data); err != nil {
 		return err
 	}
@@ -65,37 +71,113 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 				logx.Field("user_id", data.UserId))
 			return nil
 		}
-		if orderStatus != service_order.OrderStatus_ORDER_STATUS_CREATED {
-			shouldReturnInventory = false
+		if !shouldCloseTimeoutOrder(data.Source, orderStatus, paymentStatus) {
 			logx.Infow("timeout order status skipped",
 				logx.Field("order_id", data.OrderId),
 				logx.Field("user_id", data.UserId),
-				logx.Field("order_status", oRes.OrderStatus))
+				logx.Field("source", data.Source),
+				logx.Field("order_status", oRes.OrderStatus),
+				logx.Field("payment_status", oRes.PaymentStatus))
 			return nil
 		}
 
-		return co.OrdersModel.WithSession(session).UpdateOrderStatusByOrderIDAndUserID(
+		if err := co.OrdersModel.WithSession(session).UpdateOrderStatusByOrderIDAndUserID(
 			ctx,
 			data.OrderId,
 			data.UserId,
 			service_order.OrderStatus_ORDER_STATUS_CLOSED,
 			service_order.PaymentStatus_PAYMENT_STATUS_EXPIRED,
-		)
+		); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
 		logx.Errorw("close timeout order failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 		return err
 	}
 
-	if !shouldReturnInventory || orderRes == nil {
-		return nil
-	}
+	return co.saveFullTimeoutOutbox(ctx, orderRes, data.Source)
+}
 
-	orderItems, err := co.OrderItemsModel.QueryOrderItemsByOrderID(ctx, orderRes.OrderId)
+func (co *TimeoutOrderConsumer) saveFullTimeoutOutbox(ctx context.Context, orderRes *order.Orders, source string) error {
+	kafkaConfig, err := co.Config.KafkaMQ.TopicConfig("TimeoutOrders")
 	if err != nil {
-		logx.Errorw("query timeout order items failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
 		return err
 	}
+	orderItems, err := co.OrderItemsModel.QueryOrderItemsByOrderID(ctx, orderRes.OrderId)
+	if err != nil {
+		logx.Errorw("query timeout order items failed", logx.Field("err", err), logx.Field("order_id", orderRes.OrderId), logx.Field("user_id", orderRes.UserId))
+		return err
+	}
+	if len(orderItems) == 0 {
+		return fmt.Errorf("timeout order outbox missing order items: order_id=%s user_id=%d", orderRes.OrderId, orderRes.UserId)
+	}
 
+	payload, err := json.Marshal(&event.TimeoutOrder{
+		OrderId:    orderRes.OrderId,
+		UserId:     int32(orderRes.UserId),
+		Source:     source,
+		PreOrderId: orderRes.PreOrderId,
+		CouponId:   orderRes.CouponId,
+		Items:      convertToInventoryItems(orderItems),
+	})
+	if err != nil {
+		return err
+	}
+	messageID, err := uuid.NewV7()
+	if err != nil {
+		messageID = uuid.New()
+	}
+	maxRetry := co.Config.Outbox.MaxRetry
+	if maxRetry <= 0 {
+		maxRetry = biz.DefaultOutboxMaxRetry
+	}
+	_, err = co.OutboxModel.Insert(ctx, &order.OutboxMessages{
+		MessageId:     messageID.String(),
+		EventType:     timeoutEventType(source),
+		Topic:         kafkaConfig.Topic,
+		MessageKey:    orderRes.OrderId,
+		Payload:       string(payload),
+		Status:        order.OutboxStatusPending,
+		RetryCount:    0,
+		MaxRetryCount: int64(maxRetry),
+		NextRetryAt:   time.Now(),
+		LockedUntil:   sql.NullTime{},
+		LastError:     sql.NullString{},
+		SentAt:        sql.NullTime{},
+	})
+	return err
+}
+
+func shouldCloseTimeoutOrder(source string, orderStatus service_order.OrderStatus, paymentStatus service_order.PaymentStatus) bool {
+	if source == "" {
+		source = biz.TimeoutSourceOrder
+	}
+	switch source {
+	case biz.TimeoutSourceOrder:
+		// 订单超时
+		return orderStatus == service_order.OrderStatus_ORDER_STATUS_CREATED &&
+			paymentStatus == service_order.PaymentStatus_PAYMENT_STATUS_NOT_PAID
+	case biz.TimeoutSourcePaymentTimeout, biz.TimeoutSourcePaymentFailed:
+		// 支付超时或失败
+		return orderStatus == service_order.OrderStatus_ORDER_STATUS_PENDING_PAYMENT &&
+			paymentStatus == service_order.PaymentStatus_PAYMENT_STATUS_PAYING
+	default:
+		return false
+	}
+}
+
+func timeoutEventType(source string) string {
+	if source == biz.TimeoutSourcePaymentFailed {
+		return biz.PaymentFailedEventType
+	}
+	if source == biz.TimeoutSourcePaymentTimeout {
+		return biz.PaymentTimeoutEventType
+	}
+	return biz.TimeoutOrderEventType
+}
+
+func convertToInventoryItems(orderItems []*order.OrderItems) []*inventory.InventoryReq_Items {
 	inventoryItems := make([]*inventory.InventoryReq_Items, len(orderItems))
 	for i, item := range orderItems {
 		inventoryItems[i] = &inventory.InventoryReq_Items{
@@ -103,23 +185,5 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 			Quantity:  int32(item.Quantity),
 		}
 	}
-
-	resp, err := co.InventoryRpc.ReturnPreInventory(ctx, &inventory.InventoryReq{
-		PreOrderId: orderRes.PreOrderId,
-		UserId:     int32(orderRes.UserId),
-		Items:      inventoryItems,
-	})
-	if err != nil {
-		logx.Errorw("return timeout order pre inventory failed", logx.Field("err", err), logx.Field("order_id", data.OrderId), logx.Field("user_id", data.UserId))
-		return err
-	}
-	if resp.StatusCode != code.Success {
-		logx.Errorw("return timeout order pre inventory failed with status",
-			logx.Field("order_id", data.OrderId),
-			logx.Field("user_id", data.UserId),
-			logx.Field("status_code", resp.StatusCode),
-			logx.Field("status_msg", resp.StatusMsg))
-		return fmt.Errorf("return timeout order pre inventory failed: status_code=%d status_msg=%s", resp.StatusCode, resp.StatusMsg)
-	}
-	return nil
+	return inventoryItems
 }
