@@ -53,13 +53,6 @@ OrderRpc:
   NonBlock: true
   Timeout: 25000
 
-RabbitMQConfig:
-  Host: ${RABBITMQ_HOST}
-  Port: ${RABBITMQ_PORT}
-  User: ${RABBITMQ_USERNAME}
-  Pass: ${RABBITMQ_PASSWORD}
-  VHost: ${RABBITMQ_VHOST}
-
 Outbox:
   Enabled: true
   BatchSize: 50

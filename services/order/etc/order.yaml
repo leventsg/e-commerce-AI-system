@@ -57,13 +57,6 @@ InventoryRpc:
   NonBlock: true
   Timeout: 10000
 
-RabbitMQConfig:
-  Host: "localhost"
-  Port: 5672
-  User: "admin"
-  Pass: "admin"
-  VHost: "/"
-
 Outbox:
   Enabled: true
   BatchSize: 50
