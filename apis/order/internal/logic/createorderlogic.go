@@ -4,8 +4,6 @@ import (
 	"context"
 	"github.com/dtm-labs/client/dtmgrpc"
 	"github.com/google/uuid"
-	"github.com/zeromicro/go-zero/core/logx"
-	xerrors "github.com/zeromicro/x/errors"
 	"github.com/leventsg/e-commerce-AI-system/apis/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/apis/order/internal/types"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
@@ -13,6 +11,8 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
+	"github.com/zeromicro/go-zero/core/logx"
+	xerrors "github.com/zeromicro/x/errors"
 )
 
 type CreateOrderLogic struct {
@@ -82,5 +82,32 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) (resp *types.O
 		l.Logger.Errorw("call rpc Submit failed", logx.Field("err", err))
 		return nil, xerrors.New(code.CreateOrderFailed, code.CreateOrderFailedMsg)
 	}
+	orderDetail, err := l.svcCtx.OrderRpc.GetOrderByPreOrder(l.ctx, &order.GetOrderByPreOrderRequest{
+		PreOrderId: req.PreOrderID,
+		UserId:     userID,
+	})
+	if err != nil {
+		l.Logger.Errorw("call rpc GetOrderByPreOrder failed", logx.Field("err", err))
+		return nil, xerrors.New(code.ServerError, code.ServerErrorMsg)
+	}
+	if orderDetail.StatusCode != code.Success {
+		return nil, xerrors.New(int(orderDetail.StatusCode), orderDetail.StatusMsg)
+	}
+	resp = convertCreatedOrderDetailResp(orderDetail)
 	return
+}
+
+func convertCreatedOrderDetailResp(res *order.OrderDetailResponse) *types.OrderDetailResp {
+	resp := &types.OrderDetailResp{}
+	if res == nil {
+		return resp
+	}
+	if res.Order != nil {
+		resp.Order = convertOrder2Resp(res.Order)
+	}
+	if res.Address != nil {
+		resp.Address = convertOrderAddress2Resp(res.Address)
+	}
+	resp.Items = convertOrderItems2Resp(res.Items)
+	return resp
 }

@@ -1,6 +1,6 @@
 [database]
 cache_store = "redis://:leventsg@redis:6379/0"
-data_store = "mysql://root:root@tcp(mysql:3306)/mall?parseTime=true"
+data_store = "mysql://root:root@tcp(mysql:3306)/gorse?parseTime=true"
 table_prefix = ""
 cache_table_prefix = ""
 data_table_prefix = ""

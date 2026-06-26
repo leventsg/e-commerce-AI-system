@@ -3,7 +3,7 @@ CREATE TABLE orders
     order_id        VARCHAR(36)  NOT NULL COMMENT '订单ID（业务主键）',
     pre_order_id    VARCHAR(36)  NOT NULL COMMENT '预订单ID（关联结算服务）',
     user_id         INT UNSIGNED NOT NULL COMMENT '用户ID',
-    coupon_id       VARCHAR(36)  NOT NULL COMMENT '优惠券ID',
+    coupon_id       VARCHAR(36)  NULL COMMENT '优惠券ID',
 
     -- 支付信息
     payment_method  TINYINT COMMENT '支付方式（1-微信 2-支付宝）',
@@ -33,6 +33,7 @@ CREATE TABLE orders
 
 CREATE TABLE order_items
 (
+    item_id      bigint unsigned auto_increment,
     order_id     VARCHAR(36)  NOT NULL COMMENT '预订单ID',
     product_id   INT UNSIGNED NOT NULL COMMENT '商品ID',
     quantity     INT UNSIGNED NOT NULL COMMENT '数量',
@@ -40,7 +41,7 @@ CREATE TABLE order_items
     product_name VARCHAR(255) NOT NULL COMMENT '商品名称',
     product_desc VARCHAR(255) NOT NULL COMMENT '商品描述',
     created_at   TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (order_id),
+    PRIMARY KEY (item_id),
     INDEX idx_product (product_id)
 ) COMMENT ='订单商品快照';
 # 用户下单地址快照
@@ -58,7 +59,7 @@ CREATE TABLE order_addresses
     PRIMARY KEY (address_id),
     UNIQUE KEY idx_order_address (order_id),
     INDEX idx_recipient_name (recipient_name)
-)
+)COMMENT ='用户下单地址快照';
 
 CREATE TABLE order_outbox_messages
 (

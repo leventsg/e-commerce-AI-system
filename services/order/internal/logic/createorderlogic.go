@@ -71,9 +71,14 @@ func (l *CreateOrderLogic) CreateOrder(in *order.CreateOrderRequest) (*order.Ord
 			l.Logger.Errorw("check order exist failed", append(l.logContext(dto), logx.Field("err", err))...)
 			return err
 		}
+		// 订单已存在
 		if orderRes {
-			res.StatusCode = code.OrderExist
-			res.StatusMsg = code.OrderExistMsg
+			existingOrderID, err := orderSession.GetOrderIDByPreID(ctx, dto.PreOrderID, int32(dto.UserID))
+			if err != nil {
+				l.Logger.Errorw("get existing order id failed", append(l.logContext(dto), logx.Field("err", err))...)
+				return err
+			}
+			res = existingOrderDetailResponse(existingOrderID, dto.PreOrderID, uint32(dto.UserID))
 			return nil
 		}
 		// --------------- insert ---------------
@@ -106,6 +111,7 @@ func (l *CreateOrderLogic) CreateOrder(in *order.CreateOrderRequest) (*order.Ord
 		l.Logger.Errorw("save order timeout task failed", append(l.logContext(dto), logx.Field("err", err))...)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	res = createOrderDetailResponse(dto, orderValue)
 	return res, nil
 }
 func (l *CreateOrderLogic) validateRequest(in *order.CreateOrderRequest) error {
@@ -224,6 +230,31 @@ func (l *CreateOrderLogic) generateOrderID() string {
 	OrderID := uid.String()
 	return OrderID
 }
+
+func createOrderDetailResponse(dto *orderCreateDTO, orderValue *order2.Orders) *order.OrderDetailResponse {
+	resp := &order.OrderDetailResponse{
+		StatusCode: code.Success,
+		StatusMsg:  code.SuccessMsg,
+		Order:      convertToOrderResp(orderValue),
+	}
+	resp.Order.OrderId = dto.OrderID
+	resp.Order.PreOrderId = dto.PreOrderID
+	resp.Order.UserId = uint32(dto.UserID)
+	return resp
+}
+
+func existingOrderDetailResponse(orderID, preOrderID string, userID uint32) *order.OrderDetailResponse {
+	return &order.OrderDetailResponse{
+		StatusCode: code.OrderExist,
+		StatusMsg:  code.OrderExistMsg,
+		Order: &order.Order{
+			OrderId:    orderID,
+			PreOrderId: preOrderID,
+			UserId:     userID,
+		},
+	}
+}
+
 func (l *CreateOrderLogic) logContext(dto *orderCreateDTO) []logx.LogField {
 	return []logx.LogField{
 		logx.Field("user_id", dto.UserID),

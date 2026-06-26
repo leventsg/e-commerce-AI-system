@@ -84,15 +84,6 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 
 			avatar := GetCravatar(in.Email, size, defaultImage, rating, false, nil)
 
-			// 加入布隆过滤器 在插入数据库之前防止数据库注册失败
-			err = l.svcCtx.BF.Add([]byte(in.Email))
-			if err != nil {
-				l.Logger.Errorw("register bloom filter add failed", logx.Field("err", err),
-					logx.Field("email", in.Email))
-				return &users.RegisterResponse{}, err
-
-			}
-
 			// 用户不存在，直接注册
 			result, insertErr := l.svcCtx.UsersModel.Insert(l.ctx, &user.Users{
 				Email:        email,
@@ -101,10 +92,8 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 			})
 
 			if insertErr != nil {
-
 				logx.Errorw("register insert user failed", logx.Field("err", insertErr), logx.Field("user_email", in.Email))
-				return &users.RegisterResponse{}, err
-
+				return registerInsertFailedResponse(insertErr), nil
 			}
 
 			userId, lastInsertErr := result.LastInsertId()
@@ -115,6 +104,14 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 					StatusCode: code.UserInfoRetrievalFailed,
 					StatusMsg:  code.UserInfoRetrievalFailedMsg,
 				}, nil
+
+			}
+			// 加入布隆过滤器。必须在数据库插入成功之后执行，避免注册失败污染过滤器。
+			err = l.svcCtx.BF.Add([]byte(in.Email))
+			if err != nil {
+				l.Logger.Errorw("register bloom filter add failed", logx.Field("err", err),
+					logx.Field("email", in.Email))
+				return &users.RegisterResponse{}, err
 
 			}
 			//加入用户推荐
@@ -177,7 +174,7 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 				l.Logger.Errorw("register update password_hash failed", logx.Field("err", updatepasswordErr),
 					logx.Field("email", in.Email))
 
-				return nil, err
+				return nil, updatepasswordErr
 
 			}
 			auditreq := &audit.CreateAuditLogReq{
@@ -215,4 +212,11 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 
 	return nil, errors.New("register failed")
 
+}
+
+func registerInsertFailedResponse(err error) *users.RegisterResponse {
+	return &users.RegisterResponse{
+		StatusCode: code.UserCreationFailed,
+		StatusMsg:  code.UserCreationFailedMsg,
+	}
 }

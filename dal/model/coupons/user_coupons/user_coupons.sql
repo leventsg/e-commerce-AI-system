@@ -12,7 +12,6 @@ CREATE TABLE `user_coupons`
     updated_at  TIMESTAMP             DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uniq_user_coupon` (`user_id`, `coupon_id`),
-    UNIQUE KEY `uniq_order_id` (`order_id`),
     KEY `idx_user_status` (`user_id`, `status`),
     KEY `idx_order` (`order_id`)
 ) COMMENT ='用户持有优惠券';
