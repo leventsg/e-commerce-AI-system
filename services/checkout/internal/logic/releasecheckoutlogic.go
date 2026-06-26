@@ -3,7 +3,6 @@ package logic
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
@@ -37,7 +36,6 @@ func releaseStatus(status checkout.CheckoutStatus) checkout.CheckoutStatus {
 // ReleaseCheckout UpdateCheckoutStatus2Success 当订单超时，支付超时，支付退款，订单取消
 func (l *ReleaseCheckoutLogic) ReleaseCheckout(in *checkout.ReleaseReq) (*checkout.EmptyResp, error) {
 	err := l.svcCtx.Mysql.Transact(func(session sqlx.Session) error {
-		cacheKey := fmt.Sprintf("checkout:preorder:%d", in.UserId)
 		checkoutRecord, err := l.svcCtx.CheckoutModel.FindOneByUserIdAndPreOrderIdWithSession(l.ctx, session, in.UserId, in.PreOrderId)
 		if err != nil {
 			l.Logger.Errorw("查询结算记录失败",
@@ -59,13 +57,7 @@ func (l *ReleaseCheckoutLogic) ReleaseCheckout(in *checkout.ReleaseReq) (*checko
 			return errors.New(code.UpdateSettlementStatusFailedMsg)
 		}
 
-		if _, err := l.svcCtx.RedisClient.Del(cacheKey); err != nil {
-			l.Logger.Errorw("删除 Redis 锁失败",
-				logx.Field("err", err),
-				logx.Field("user_id", in.UserId))
-		}
-
-		l.Logger.Infof("成功释放订单 %s 并删除结算锁", in.PreOrderId)
+		l.Logger.Infof("成功释放订单 %s", in.PreOrderId)
 		return nil
 	})
 

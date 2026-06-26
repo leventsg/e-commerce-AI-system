@@ -2,9 +2,15 @@ package logic
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	checkout2 "github.com/leventsg/e-commerce-AI-system/dal/model/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
@@ -12,7 +18,6 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/couponsclient"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
 	"github.com/leventsg/e-commerce-AI-system/services/product/product"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -41,6 +46,41 @@ func generatePreOrderID() (string, error) {
 	return u.String(), nil
 }
 
+func checkoutPreOrderCacheKey(in *checkout.CheckoutReq) string {
+	orderItems := make([]*checkout.CheckoutReq_OrderItem, len(in.OrderItems))
+	copy(orderItems, in.OrderItems)
+	// 对 orderItems 进行排序，按 productId 升序排列，如果 productId 相同，则按 quantity 升序排列
+	sort.Slice(orderItems, func(i, j int) bool {
+		if orderItems[i].ProductId == orderItems[j].ProductId {
+			return orderItems[i].Quantity < orderItems[j].Quantity
+		}
+		return orderItems[i].ProductId < orderItems[j].ProductId
+	})
+
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "user_id=%d;coupon_id=%s;items=", in.UserId, in.CouponId)
+	for i, item := range orderItems {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, "%d:%d", item.ProductId, item.Quantity)
+	}
+	// SHA256 哈希：缩短key长度（固定长度）；避免敏感信息直接暴露
+	sum := sha256.Sum256([]byte(builder.String()))
+	return fmt.Sprintf("checkout:preorder:%d:%s", in.UserId, hex.EncodeToString(sum[:]))
+}
+
+func redisString(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case []byte:
+		return string(v), true
+	default:
+		return "", false
+	}
+}
+
 // PrepareCheckout 处理预结算
 func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*checkout.CheckoutResp, error) {
 	// 1. 生成 pre_order_id
@@ -56,14 +96,14 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 	}
 
 	// 2. 使用 Redis 锁来保证幂等性
-	// 通过userid来生成锁的key，确保同一用户在短时间内（5分钟）只能有一个预订单在处理
-	cacheKey := fmt.Sprintf("checkout:preorder:%d", in.UserId)
+	// 通过请求指纹生成锁的key，确保相同结算请求在短时间内（5分钟）只处理一次
+	cacheKey := checkoutPreOrderCacheKey(in)
 	luaScript := `
 		if redis.call("EXISTS", KEYS[1]) == 1 then
-			return 0
+			return redis.call("GET", KEYS[1])
 		else
 			redis.call("SETEX", KEYS[1], ARGV[1], ARGV[2])
-			return 1
+			return ""
 		end
 	`
 	result, err := l.svcCtx.RedisClient.EvalCtx(l.ctx, luaScript, []string{cacheKey}, []any{300, preOrderId})
@@ -77,12 +117,12 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 			PreOrderId: preOrderId,
 		}, nil
 	}
-	if result == int64(0) {
-		l.Logger.Infof("用户 %d 的预订单 %s 已存在，跳过重复结算", in.UserId, preOrderId)
+	if existingPreOrderId, ok := redisString(result); ok && existingPreOrderId != "" {
+		l.Logger.Infof("用户 %d 的预订单 %s 已存在，跳过重复结算", in.UserId, existingPreOrderId)
 		return &checkout.CheckoutResp{
 			StatusCode: code.PreOrderExisted,
 			StatusMsg:  code.PreOrderExistedMsg,
-			PreOrderId: preOrderId,
+			PreOrderId: existingPreOrderId,
 		}, nil
 	}
 
@@ -158,6 +198,7 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 	couponsItems := make([]*couponsclient.Items, len(in.OrderItems))
 	// 预结算订单十分钟过期
 	expireTime := time.Now().Add(10 * time.Minute).Unix()
+	// 计算总金额
 	for i, item := range in.OrderItems {
 		productResp, err := l.svcCtx.ProductRpc.GetProduct(ctx, &product.GetProductReq{
 			Id: uint32(item.ProductId),
@@ -228,6 +269,24 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 	}); err != nil {
 		l.Logger.Errorw("处理结算信息失败",
 			logx.Field("err", err))
+		// 释放 redis 锁
+		if _, err := l.svcCtx.RedisClient.Del(cacheKey); err != nil {
+			l.Logger.Errorw("删除 Redis 锁失败",
+				logx.Field("err", err),
+				logx.Field("user_id", in.UserId))
+		}
+		// 预库存回滚
+		_, errRollback := l.svcCtx.InventoryRpc.ReturnPreInventory(l.ctx, &inventory.InventoryReq{
+			Items:      inventoryItems,
+			PreOrderId: preOrderId,
+			UserId:     int32(in.UserId),
+		})
+		if errRollback != nil {
+			l.Logger.Errorw("库存回滚失败，需要人工介入",
+				logx.Field("err", errRollback),
+				logx.Field("user_id", in.UserId),
+				logx.Field("pre_order_id", preOrderId))
+		}
 		return nil, err
 	}
 	// 6. 返回预结算信息
