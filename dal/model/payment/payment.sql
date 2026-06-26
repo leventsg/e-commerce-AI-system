@@ -24,7 +24,7 @@ CREATE TABLE payments
     INDEX idx_order (order_id),
     INDEX idx_status_method (status, payment_method),
     INDEX idx_create_time (created_at)
-)
+) COMMENT ='支付表';
 
 CREATE TABLE payment_outbox_messages
 (

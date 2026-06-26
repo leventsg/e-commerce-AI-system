@@ -47,6 +47,11 @@ func (s *OrderServiceServer) GetOrder(ctx context.Context, in *order.GetOrderReq
 	return l.GetOrder(in)
 }
 
+func (s *OrderServiceServer) GetOrderByPreOrder(ctx context.Context, in *order.GetOrderByPreOrderRequest) (*order.OrderDetailResponse, error) {
+	l := logic.NewGetOrderByPreOrderLogic(ctx, s.svcCtx)
+	return l.GetOrderByPreOrder(in)
+}
+
 // ListOrders 分页查询订单列表
 func (s *OrderServiceServer) ListOrders(ctx context.Context, in *order.ListOrdersRequest) (*order.ListOrdersResponse, error) {
 	l := logic.NewListOrdersLogic(ctx, s.svcCtx)

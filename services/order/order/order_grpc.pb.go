@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.3
-// source: order.proto
+// source: services/order/order.proto
 
 package order
 
@@ -23,6 +23,7 @@ const (
 	OrderService_CreateOrderRollback_FullMethodName                = "/order.OrderService/CreateOrderRollback"
 	OrderService_CancelOrder_FullMethodName                        = "/order.OrderService/CancelOrder"
 	OrderService_GetOrder_FullMethodName                           = "/order.OrderService/GetOrder"
+	OrderService_GetOrderByPreOrder_FullMethodName                 = "/order.OrderService/GetOrderByPreOrder"
 	OrderService_ListOrders_FullMethodName                         = "/order.OrderService/ListOrders"
 	OrderService_UpdateOrder2PaymentSuccess_FullMethodName         = "/order.OrderService/UpdateOrder2PaymentSuccess"
 	OrderService_UpdateOrder2PaymentSuccessRollback_FullMethodName = "/order.OrderService/UpdateOrder2PaymentSuccessRollback"
@@ -46,6 +47,7 @@ type OrderServiceClient interface {
 	CancelOrder(ctx context.Context, in *CancelOrderRequest, opts ...grpc.CallOption) (*EmptyRes, error)
 	// GetOrder 获取订单详情
 	GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error)
+	GetOrderByPreOrder(ctx context.Context, in *GetOrderByPreOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error)
 	// ListOrders 分页查询订单列表
 	ListOrders(ctx context.Context, in *ListOrdersRequest, opts ...grpc.CallOption) (*ListOrdersResponse, error)
 	// --------------- 支付服务内部接口 ---------------
@@ -105,6 +107,16 @@ func (c *orderServiceClient) GetOrder(ctx context.Context, in *GetOrderRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(OrderDetailResponse)
 	err := c.cc.Invoke(ctx, OrderService_GetOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) GetOrderByPreOrder(ctx context.Context, in *GetOrderByPreOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrderDetailResponse)
+	err := c.cc.Invoke(ctx, OrderService_GetOrderByPreOrder_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +207,7 @@ type OrderServiceServer interface {
 	CancelOrder(context.Context, *CancelOrderRequest) (*EmptyRes, error)
 	// GetOrder 获取订单详情
 	GetOrder(context.Context, *GetOrderRequest) (*OrderDetailResponse, error)
+	GetOrderByPreOrder(context.Context, *GetOrderByPreOrderRequest) (*OrderDetailResponse, error)
 	// ListOrders 分页查询订单列表
 	ListOrders(context.Context, *ListOrdersRequest) (*ListOrdersResponse, error)
 	// --------------- 支付服务内部接口 ---------------
@@ -231,6 +244,9 @@ func (UnimplementedOrderServiceServer) CancelOrder(context.Context, *CancelOrder
 }
 func (UnimplementedOrderServiceServer) GetOrder(context.Context, *GetOrderRequest) (*OrderDetailResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetOrder not implemented")
+}
+func (UnimplementedOrderServiceServer) GetOrderByPreOrder(context.Context, *GetOrderByPreOrderRequest) (*OrderDetailResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetOrderByPreOrder not implemented")
 }
 func (UnimplementedOrderServiceServer) ListOrders(context.Context, *ListOrdersRequest) (*ListOrdersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListOrders not implemented")
@@ -342,6 +358,24 @@ func _OrderService_GetOrder_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrderServiceServer).GetOrder(ctx, req.(*GetOrderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_GetOrderByPreOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOrderByPreOrderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).GetOrderByPreOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_GetOrderByPreOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).GetOrderByPreOrder(ctx, req.(*GetOrderByPreOrderRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -496,6 +530,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OrderService_GetOrder_Handler,
 		},
 		{
+			MethodName: "GetOrderByPreOrder",
+			Handler:    _OrderService_GetOrderByPreOrder_Handler,
+		},
+		{
 			MethodName: "ListOrders",
 			Handler:    _OrderService_ListOrders_Handler,
 		},
@@ -525,5 +563,5 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "order.proto",
+	Metadata: "services/order/order.proto",
 }

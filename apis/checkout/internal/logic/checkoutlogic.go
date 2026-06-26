@@ -2,10 +2,11 @@ package logic
 
 import (
 	"context"
-	xerrors "github.com/zeromicro/x/errors"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
+	xerrors "github.com/zeromicro/x/errors"
 
 	"github.com/leventsg/e-commerce-AI-system/apis/checkout/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/apis/checkout/internal/types"
@@ -38,7 +39,7 @@ func (l *CheckoutLogic) Checkout(req *types.CheckoutReq) (resp *types.CheckoutRe
 		OrderItems: convertCheckoutItem2Req(req.OrderItems),
 	})
 	if err != nil {
-		l.Logger.Errorw("call rpc GetOrder failed", logx.Field("err", err))
+		l.Logger.Errorw("call rpc PrepareCheckout failed", logx.Field("err", err))
 		return nil, xerrors.New(code.ServerError, code.ServerErrorMsg)
 	}
 	if res.StatusCode != code.Success {

@@ -63,7 +63,9 @@ func (l *RegisterLogic) Register(req *types.RegisterRequest) (resp *types.Regist
 
 		l.Logger.Errorw("call rpc register failed", logx.Field("err", err))
 		return nil, errors.New(code.ServerError, err.Error())
-	} else if response.StatusMsg != "" {
+	} else if response == nil {
+		return nil, errors.New(code.ServerError, code.ServerErrorMsg)
+	} else if registerResponseFailed(response) {
 
 		return nil, errors.New(int(response.StatusCode), response.StatusMsg)
 
@@ -88,4 +90,11 @@ func (l *RegisterLogic) Register(req *types.RegisterRequest) (resp *types.Regist
 	}
 
 	return resp, nil
+}
+
+func registerResponseFailed(response *usersclient.RegisterResponse) bool {
+	if response == nil {
+		return true
+	}
+	return response.StatusCode != code.Success || response.StatusMsg != ""
 }

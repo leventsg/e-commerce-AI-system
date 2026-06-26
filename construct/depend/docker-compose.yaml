@@ -21,8 +21,6 @@ services:
     image: redis/redis-stack-server:latest
     environment:
       REDIS_ARGS: "--requirepass leventsg --appendonly yes"
-    ports:
-      - "6379:6379"
     restart: unless-stopped
     networks:
       - go-mall
@@ -122,7 +120,7 @@ services:
       - 8088:8088
     environment:
       GORSE_CACHE_STORE: redis://:leventsg@redis:6379/0
-      GORSE_DATA_STORE: mysql://root:root@tcp(mysql:3306)/mall?parseTime=true
+      GORSE_DATA_STORE: mysql://root:root@tcp(mysql:3306)/gorse?parseTime=true
     command: >
       --log-path /var/log/gorse/master.log
       --cache-path /var/lib/gorse/master

@@ -21,6 +21,7 @@ GRANT ALL PRIVILEGES ON *.* TO 'leventsg'@'%';
 
 -- 创建数据库
 create database if not exists mall character set utf8mb4;
+create database if not exists gorse character set utf8mb4;
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
@@ -152,6 +153,7 @@ CREATE TABLE orders
     order_id        VARCHAR(36)  NOT NULL COMMENT '订单ID（业务主键）',
     pre_order_id    VARCHAR(36)  NOT NULL COMMENT '预订单ID（关联结算服务）',
     user_id         INT UNSIGNED NOT NULL COMMENT '用户ID',
+    coupon_id       VARCHAR(36)  NULL COMMENT '优惠券ID',
 
     -- 支付信息
     payment_method  TINYINT COMMENT '支付方式（1-微信 2-支付宝）',
@@ -187,6 +189,7 @@ DROP TABLE IF EXISTS `order_addresses`;
 CREATE TABLE order_addresses
 (
     address_id       BIGINT UNSIGNED AUTO_INCREMENT,
+    order_id         varchar(36)  not null comment '订单ID',
     recipient_name   VARCHAR(100) NOT NULL COMMENT '收件人姓名',
     phone_number     VARCHAR(50)  DEFAULT NULL COMMENT '联系电话',
     province         VARCHAR(100) DEFAULT NULL COMMENT '州/省',
@@ -195,6 +198,7 @@ CREATE TABLE order_addresses
     created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (address_id),
+    UNIQUE KEY idx_order_address (order_id),
     INDEX idx_recipient_name (recipient_name)
 );
 
@@ -212,7 +216,8 @@ CREATE TABLE order_items
     quantity     INT          NOT NULL COMMENT '购买数量',
     product_name VARCHAR(255) NOT NULL COMMENT '商品名称',
     product_desc TEXT COMMENT '规格描述',
-    unit_price   BIGINT       NOT NULL COMMENT '单价(分)',
+    price   BIGINT       NOT NULL COMMENT '单价(分)',
+    created_at   TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3),
 
     FOREIGN KEY (order_id) REFERENCES orders (order_id),
     INDEX idx_order_product (order_id, product_id)
@@ -342,11 +347,13 @@ create table `audit`
     client_ip    varchar(45)  not null comment 'ip地址',
     trace_id     varchar(36)  not null comment 'traceid', -- 用于关联跟踪 （但是可能不到64字长）
     span_id      varchar(36)  not null comment 'spanid',  -- 用于关联跟踪
+    service_name varchar(64)  not null comment '服务名称',
     created_at   TIMESTAMP default CURRENT_TIMESTAMP COMMENT '创建时间',
 
     primary key (id),
     UNIQUE idx_trace (trace_id),
     INDEX idx_user (user_id),
+    INDEX idx_service (service_name),
     INDEX idx_action (action_type),
     INDEX idx_target (target_table, target_id),
     INDEX idx_time (created_at)
@@ -361,6 +368,7 @@ CREATE TABLE payments
     payment_id      VARCHAR(36)  NOT NULL COMMENT '支付单ID（UUID）',
     pre_order_id    VARCHAR(36)  NOT NULL COMMENT '预订单ID（外键）',
     order_id        VARCHAR(36)  DEFAULT NULL COMMENT '关联订单ID（支付成功后更新）',
+    user_id         INT UNSIGNED NOT NULL COMMENT '用户ID',
 
     original_amount BIGINT       NOT NULL COMMENT '订单原价（单位：分）',
     paid_amount     BIGINT       DEFAULT NULL COMMENT '实付金额（分）',

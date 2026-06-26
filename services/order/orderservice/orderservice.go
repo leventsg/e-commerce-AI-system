@@ -17,6 +17,7 @@ type (
 	CancelOrderRequest                  = order.CancelOrderRequest
 	CreateOrderRequest                  = order.CreateOrderRequest
 	EmptyRes                            = order.EmptyRes
+	GetOrderByPreOrderRequest           = order.GetOrderByPreOrderRequest
 	GetOrderRequest                     = order.GetOrderRequest
 	HandlePaymentTimeoutOrderRequest    = order.HandlePaymentTimeoutOrderRequest
 	ListOrdersRequest                   = order.ListOrdersRequest
@@ -41,6 +42,7 @@ type (
 		CancelOrder(ctx context.Context, in *CancelOrderRequest, opts ...grpc.CallOption) (*EmptyRes, error)
 		// GetOrder 获取订单详情
 		GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error)
+		GetOrderByPreOrder(ctx context.Context, in *GetOrderByPreOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error)
 		// ListOrders 分页查询订单列表
 		ListOrders(ctx context.Context, in *ListOrdersRequest, opts ...grpc.CallOption) (*ListOrdersResponse, error)
 		// --------------- 支付服务内部接口 ---------------
@@ -88,6 +90,11 @@ func (m *defaultOrderService) CancelOrder(ctx context.Context, in *CancelOrderRe
 func (m *defaultOrderService) GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error) {
 	client := order.NewOrderServiceClient(m.cli.Conn())
 	return client.GetOrder(ctx, in, opts...)
+}
+
+func (m *defaultOrderService) GetOrderByPreOrder(ctx context.Context, in *GetOrderByPreOrderRequest, opts ...grpc.CallOption) (*OrderDetailResponse, error) {
+	client := order.NewOrderServiceClient(m.cli.Conn())
+	return client.GetOrderByPreOrder(ctx, in, opts...)
 }
 
 // ListOrders 分页查询订单列表
