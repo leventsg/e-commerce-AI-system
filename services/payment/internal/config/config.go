@@ -9,14 +9,13 @@ import (
 
 type Config struct {
 	zrpc.RpcServerConf
-	Consul         consul.Conf
-	MysqlConfig    config.MysqlConfig
-	RedisConf      redis.RedisConf
-	Alipay         AlipayConfig
-	OrderRpc       zrpc.RpcClientConf
-	RabbitMQConfig config.RabbitMQConfig
-	KafkaMQ        config.KafkaConfig
-	Outbox         config.OutboxConfig `json:",optional"`
+	Consul      consul.Conf
+	MysqlConfig config.MysqlConfig
+	RedisConf   redis.RedisConf
+	Alipay      AlipayConfig
+	OrderRpc    zrpc.RpcClientConf
+	KafkaMQ     config.KafkaConfig
+	Outbox      config.OutboxConfig `json:",optional"`
 }
 
 type AlipayConfig struct {

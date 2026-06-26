@@ -1,6 +1,8 @@
 package svc
 
 import (
+	"time"
+
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	commonoutbox "github.com/leventsg/e-commerce-AI-system/common/outbox"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/order"
@@ -10,14 +12,12 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventory"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventoryclient"
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/config"
-	"github.com/leventsg/e-commerce-AI-system/services/order/internal/mq/notify"
 	"github.com/leventsg/e-commerce-AI-system/services/users/users"
 	"github.com/leventsg/e-commerce-AI-system/services/users/usersclient"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
-	"time"
 )
 
 type ServiceContext struct {
@@ -30,7 +30,6 @@ type ServiceContext struct {
 	UserRpc        users.UsersClient
 	InventoryRpc   inventory.InventoryClient
 	Model          sqlx.SqlConn
-	OrderNotifyMQ  *notify.OrderNotifyMQ
 	RedisClient    *redis.Redis
 	Producer       mq.Producer
 	OutboxModel    order.OutboxMessagesModel
@@ -43,7 +42,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		logx.Error(err)
 		panic(err)
 	}
-	notifyMQ, err := notify.Init(c)
 	if err != nil {
 		logx.Error(err)
 		panic(err)
@@ -69,7 +67,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CouponRpc:      couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc)),
 		UserRpc:        usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
 		InventoryRpc:   inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc)),
-		OrderNotifyMQ:  notifyMQ,
 		RedisClient:    redis.MustNewRedis(c.RedisConf),
 		Producer:       producer,
 		OutboxModel:    outboxModel,

@@ -38,13 +38,5 @@ Telemetry:
   Batcher: jaeger
   Sampler: 0.1 # 采样率，1.0表示全部采集, 0.1表示10%
 
-# RabbitMQ 配置
-RabbitMQ:
-  Host: ${RABBITMQ_HOST}
-  Port: ${RABBITMQ_PORT}
-  User: ${RABBITMQ_USERNAME}
-  Pass: ${RABBITMQ_PASSWORD}
-  VHost: ${RABBITMQ_VHOST}
-
 ElasticSearch:
   Addr: ${ELASTICSEARCH_HOST}

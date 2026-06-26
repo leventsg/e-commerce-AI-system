@@ -159,9 +159,11 @@ func (s *PaymentService) handleAlipayNotification(writer http.ResponseWriter, re
 			logx.Errorw("Failed to update order status", logx.Field("err", err))
 			return
 		}
+		// 删除redis中支付超时任务
 		if _, err := s.ctx.Rdb.ZremCtx(request.Context(), biz.PaymentTimeoutZSetKey, notify.OutTradeNo); err != nil {
 			logx.Errorw("delete payment timeout task failed", logx.Field("err", err), logx.Field("order_id", notify.OutTradeNo))
 		}
+		// TODO：发送支付成功消息到mq
 
 	}
 	// 返回确认响应给支付宝

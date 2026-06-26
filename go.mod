@@ -5,7 +5,6 @@ go 1.23.0
 toolchain go1.24.0
 
 require (
-	github.com/avast/retry-go v2.7.0+incompatible
 	github.com/bytedance/gopkg v0.1.1
 	github.com/dtm-labs/client v1.17.3
 	github.com/dtm-labs/driver-gozero v0.0.7
@@ -17,7 +16,6 @@ require (
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/shopspring/decimal v1.4.0
 	github.com/smartwalle/alipay/v3 v3.2.25
-	github.com/streadway/amqp v1.1.0
 	github.com/stretchr/testify v1.10.0
 	github.com/zeromicro/go-queue v1.2.2
 	github.com/zeromicro/go-zero v1.7.6

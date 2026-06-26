@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"errors"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/svc"
@@ -80,7 +81,7 @@ func (l *LockCouponLogic) LockCoupon(in *coupons.LockCouponReq) (*coupons.EmptyR
 		return nil
 	}); err != nil {
 		logx.Errorw("transact lock coupon error", logx.Field("err", err))
-		// !!!一般数据库不会错误不需要dtm回滚，就让他一直重试
+		// 一般数据库不会错误不需要dtm回滚，就让他一直重试（默认最多重试10次）
 		return nil, status.Error(codes.Internal, code.ServerErrorMsg) // 触发重试
 	}
 	if res.StatusCode != code.Success {

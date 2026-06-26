@@ -3,11 +3,11 @@ package logic
 import (
 	"context"
 	"errors"
+
+	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
-	"github.com/leventsg/e-commerce-AI-system/services/order/internal/mq/notify"
 
 	"github.com/leventsg/e-commerce-AI-system/services/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
@@ -84,18 +84,6 @@ func (l *UpdateOrder2PaymentSuccessLogic) UpdateOrder2PaymentSuccess(in *order.U
 		l.Logger.Infow("UpdateOrder2PaymentSuccess process aborted",
 			logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
 		return nil, status.Error(codes.Aborted, res.StatusMsg)
-	}
-	// 消息队列
-	if err := l.svcCtx.OrderNotifyMQ.Product(&notify.OrderNotifyReq{
-		OrderId:       in.OrderId,
-		UserID:        in.UserId,
-		TransactionId: in.PaymentResult.TransactionId,
-		PaidAmount:    in.PaymentResult.PaidAmount,
-		PaidAt:        in.PaymentResult.PaidAt,
-	}); err != nil {
-		l.Logger.Errorw("send order notify error", logx.Field("err", err),
-			logx.Field("order_id", in.OrderId), logx.Field("user_id", in.UserId))
-		return nil, status.Error(codes.Internal, "发送订单通知失败")
 	}
 	return res, nil
 }
