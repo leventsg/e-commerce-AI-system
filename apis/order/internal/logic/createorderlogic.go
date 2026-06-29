@@ -2,17 +2,21 @@ package logic
 
 import (
 	"context"
+
 	"github.com/dtm-labs/client/dtmgrpc"
 	"github.com/google/uuid"
 	"github.com/leventsg/e-commerce-AI-system/apis/order/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/apis/order/internal/types"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
+	"github.com/leventsg/e-commerce-AI-system/common/utils/bizerr"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/zeromicro/go-zero/core/logx"
 	xerrors "github.com/zeromicro/x/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type CreateOrderLogic struct {
@@ -79,8 +83,13 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) (resp *types.O
 	sagaGrpc.WithGlobalTransRequestTimeout(5000)
 	sagaGrpc.WaitResult = true // 等待结果
 	if err := sagaGrpc.Submit(); err != nil {
-		l.Logger.Errorw("call rpc Submit failed", logx.Field("err", err))
-		return nil, xerrors.New(code.CreateOrderFailed, code.CreateOrderFailedMsg)
+		statusCode, statusMsg := createOrderSubmitErrorResponse(err)
+		fields := []logx.LogField{logx.Field("err", err)}
+		if bizCode, bizMsg, ok := bizerr.Parse(err); ok {
+			fields = append(fields, logx.Field("biz_code", bizCode), logx.Field("biz_msg", bizMsg))
+		}
+		l.Logger.Errorw("call rpc Submit failed", fields...)
+		return nil, xerrors.New(statusCode, statusMsg)
 	}
 	orderDetail, err := l.svcCtx.OrderRpc.GetOrderByPreOrder(l.ctx, &order.GetOrderByPreOrderRequest{
 		PreOrderId: req.PreOrderID,
@@ -95,6 +104,18 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) (resp *types.O
 	}
 	resp = convertCreatedOrderDetailResp(orderDetail)
 	return
+}
+
+// 解析错误类型
+func createOrderSubmitErrorResponse(err error) (int, string) {
+	if statusCode, statusMsg, ok := bizerr.Parse(err); ok {
+		return statusCode, statusMsg
+	}
+	switch status.Code(err) {
+	case codes.Internal, codes.Unavailable, codes.DeadlineExceeded:
+		return code.ServerError, code.ServerErrorMsg
+	}
+	return code.CreateOrderFailed, code.CreateOrderFailedMsg
 }
 
 func convertCreatedOrderDetailResp(res *order.OrderDetailResponse) *types.OrderDetailResp {

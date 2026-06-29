@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
+	"github.com/leventsg/e-commerce-AI-system/common/utils/bizerr"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/svc"
 
@@ -35,7 +36,7 @@ func (l *LockCouponLogic) LockCoupon(in *coupons.LockCouponReq) (*coupons.EmptyR
 	if in.UserId == 0 || len(in.UserCouponId) == 0 || len(in.PreOrderId) == 0 {
 		res.StatusCode = code.NotWithParam
 		res.StatusMsg = code.NotWithParamMsg
-		return nil, status.Error(codes.Aborted, code.NotWithParamMsg)
+		return nil, bizerr.Aborted(code.NotWithParam, code.NotWithParamMsg)
 	}
 
 	// --------------- transact ---------------
@@ -85,7 +86,7 @@ func (l *LockCouponLogic) LockCoupon(in *coupons.LockCouponReq) (*coupons.EmptyR
 		return nil, status.Error(codes.Internal, code.ServerErrorMsg) // 触发重试
 	}
 	if res.StatusCode != code.Success {
-		return nil, status.Error(codes.Aborted, res.StatusMsg)
+		return nil, bizerr.Aborted(int(res.StatusCode), res.StatusMsg)
 	}
 	return &coupons.EmptyResp{}, nil
 }
