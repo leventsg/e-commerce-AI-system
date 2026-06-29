@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 
@@ -11,7 +12,9 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/consumer"
 	_ "github.com/leventsg/e-commerce-AI-system/services/checkout/internal/consumer/cancel_order"
+	_ "github.com/leventsg/e-commerce-AI-system/services/checkout/internal/consumer/checkout_timeout"
 	_ "github.com/leventsg/e-commerce-AI-system/services/checkout/internal/consumer/timeout_order"
+	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/delaytask"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/svc"
 
@@ -49,6 +52,11 @@ func main() {
 		logx.Errorw("init consumer error", logx.Field("err", err))
 		panic(err)
 	}
+
+	timeoutScannerCtx, cancelTimeoutScanner := context.WithCancel(context.Background())
+	defer cancelTimeoutScanner()
+	timeoutScanner := delaytask.NewCheckoutTimeoutScanner(c, ctx.RedisClient, ctx.CheckoutModel, ctx.CheckoutItemsModel, ctx.Producer)
+	go timeoutScanner.Run(timeoutScannerCtx)
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()

@@ -36,12 +36,14 @@ services:
       - "33061:3306"
     #platform: linux/amd64
     volumes:
+      - mysql_data:/var/lib/mysql
       - ./sql:/docker-entrypoint-initdb.d/
     networks:
       - go-mall
     environment:
       MYSQL_ROOT_PASSWORD: 'root'
       MYSQL_DATABASE: 'mall'
+      TZ: Asia/Shanghai
     healthcheck:
       test: [ "CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent" ]
       interval: 10s
@@ -132,5 +134,6 @@ networks:
     #external: true
 
 volumes:
+  mysql_data:
   gorse_data:
   gorse_logs:
