@@ -11,6 +11,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer"
 	_ "github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer/cancel_order"
+	_ "github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer/payment_success"
 	_ "github.com/leventsg/e-commerce-AI-system/services/coupons/internal/consumer/timeout_order"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/internal/svc"
