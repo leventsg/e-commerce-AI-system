@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	checkout2 "github.com/leventsg/e-commerce-AI-system/dal/model/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
@@ -197,7 +198,7 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 	items := make([]*checkout2.CheckoutItems, len(in.OrderItems))
 	couponsItems := make([]*couponsclient.Items, len(in.OrderItems))
 	// 预结算订单十分钟过期
-	expireTime := time.Now().Add(10 * time.Minute).Unix()
+	expireTime := time.Now().Add(biz.CheckoutExpireTime).Unix()
 	// 计算总金额
 	for i, item := range in.OrderItems {
 		productResp, err := l.svcCtx.ProductRpc.GetProduct(ctx, &product.GetProductReq{
@@ -288,6 +289,18 @@ func (l *PrepareCheckoutLogic) PrepareCheckout(in *checkout.CheckoutReq) (*check
 				logx.Field("pre_order_id", preOrderId))
 		}
 		return nil, err
+	}
+	// 预订单超时任务
+	if _, err := l.svcCtx.RedisClient.ZaddCtx(l.ctx, biz.CheckoutTimeoutZSetKey, expireTime, preOrderId); err != nil {
+		l.Logger.Errorw("保存预结算超时任务失败",
+			logx.Field("err", err),
+			logx.Field("user_id", in.UserId),
+			logx.Field("pre_order_id", preOrderId))
+		return &checkout.CheckoutResp{
+			StatusCode: code.InternalFailed,
+			StatusMsg:  code.InternalFailedMsg,
+			PreOrderId: preOrderId,
+		}, nil
 	}
 	// 6. 返回预结算信息
 	return &checkout.CheckoutResp{

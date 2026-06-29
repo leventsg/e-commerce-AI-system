@@ -10,6 +10,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/internal/consumer"
 	_ "github.com/leventsg/e-commerce-AI-system/services/inventory/internal/consumer/cancel_order"
+	_ "github.com/leventsg/e-commerce-AI-system/services/inventory/internal/consumer/checkout_timeout"
 	_ "github.com/leventsg/e-commerce-AI-system/services/inventory/internal/consumer/timeout_order"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/internal/svc"

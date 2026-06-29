@@ -17,3 +17,10 @@ type TimeoutOrder struct {
 	CouponId   string                          `json:"coupon_id,omitempty"`
 	Items      []*inventory.InventoryReq_Items `json:"items"`
 }
+
+type CheckoutTimeout struct {
+	PreOrderId string                          `json:"pre_order_id"`
+	UserId     int32                           `json:"user_id"`
+	Source     string                          `json:"source,omitempty"`
+	Items      []*inventory.InventoryReq_Items `json:"items"`
+}
