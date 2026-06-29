@@ -7,7 +7,7 @@ const (
 )
 const (
 	OrderExpireTime    = time.Minute * 30
-	CheckoutExpireTime = time.Minute * 1
+	CheckoutExpireTime = time.Minute * 10
 )
 
 const (
