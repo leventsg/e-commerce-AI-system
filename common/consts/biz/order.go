@@ -21,6 +21,7 @@ const (
 	TimeoutOrderEventType        = "order.timeout"
 	PaymentTimeoutEventType      = "payment.timeout"
 	PaymentFailedEventType       = "payment.failed"
+	PaymentSuccessEventType      = "payment.success"
 	CheckoutTimeoutEventType     = "checkout.timeout"
 	DefaultOutboxMaxRetry        = 10
 	OrderTimeoutScanBatchSize    = 100
