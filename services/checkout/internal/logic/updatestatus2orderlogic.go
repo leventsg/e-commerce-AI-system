@@ -3,13 +3,17 @@ package logic
 import (
 	"context"
 	"errors"
+
+	"time"
+
+	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
+	"github.com/leventsg/e-commerce-AI-system/common/utils/bizerr"
+	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
+	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
-	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
-	"github.com/leventsg/e-commerce-AI-system/services/checkout/internal/svc"
 )
 
 type UpdateStatus2OrderLogic struct {
@@ -39,6 +43,7 @@ func (l *UpdateStatus2OrderLogic) UpdateStatus2Order(in *checkout.UpdateStatusRe
 			}
 			return err
 		}
+		// 检查结算状态
 		switch checkout.CheckoutStatus(checkoutRecord.Status) {
 		case checkout.CheckoutStatus_CONFIRMED:
 			res.StatusCode = code.OrderhasBeenPaid
@@ -47,6 +52,12 @@ func (l *UpdateStatus2OrderLogic) UpdateStatus2Order(in *checkout.UpdateStatusRe
 
 		case checkout.CheckoutStatus_CANCELLED, checkout.CheckoutStatus_EXPIRED:
 			// 订单已经过期进行回滚
+			res.StatusCode = code.CheckoutOrderExpired
+			res.StatusMsg = code.CheckoutOrderExpiredMsg
+			return nil
+		}
+		// 检查订单是否过期
+		if checkoutRecord.ExpireTime <= time.Now().Unix() {
 			res.StatusCode = code.CheckoutOrderExpired
 			res.StatusMsg = code.CheckoutOrderExpiredMsg
 			return nil
@@ -63,7 +74,7 @@ func (l *UpdateStatus2OrderLogic) UpdateStatus2Order(in *checkout.UpdateStatusRe
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if res.StatusCode != code.Success {
-		return nil, status.Error(codes.Aborted, res.StatusMsg)
+		return nil, bizerr.Aborted(int(res.StatusCode), res.StatusMsg)
 	}
 	l.Logger.Infof("成功更新订单 %s 的结算状态为已确认", in.PreOrderId)
 	return res, nil

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
+	"github.com/leventsg/e-commerce-AI-system/common/utils/bizerr"
 	order2 "github.com/leventsg/e-commerce-AI-system/dal/model/order"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkout"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
@@ -116,7 +117,7 @@ func (l *CreateOrderLogic) CreateOrder(in *order.CreateOrderRequest) (*order.Ord
 }
 func (l *CreateOrderLogic) validateRequest(in *order.CreateOrderRequest) error {
 	if in.PreOrderId == "" || in.UserId == 0 || in.AddressId == 0 || in.PaymentMethod == 0 {
-		return status.Error(codes.Aborted, "参数不合法")
+		return bizerr.Aborted(code.OrderParameterInvalid, code.OrderParameterInvalidMsg)
 	}
 	return nil
 }
@@ -141,10 +142,10 @@ func (l *CreateOrderLogic) collectOrderData(in *order.CreateOrderRequest) (*orde
 		})
 		if err != nil {
 			logx.Errorw("call rpc GetCheckoutDetail failed", append(l.logContext(dto), logx.Field("err", err))...)
-			return status.Error(codes.Aborted, err.Error())
+			return err
 		}
 		if checkoutDetail.StatusCode != code.Success {
-			return status.Error(codes.Aborted, checkoutDetail.StatusMsg)
+			return bizerr.Aborted(int(checkoutDetail.StatusCode), checkoutDetail.StatusMsg)
 		}
 		orderItems = convertToOrderItems(dto.OrderID, checkoutDetail.Data.Items)
 
@@ -163,10 +164,17 @@ func (l *CreateOrderLogic) collectOrderData(in *order.CreateOrderRequest) (*orde
 		})
 		if err != nil {
 			logx.Errorw("call rpc CalculateCoupon failed", append(l.logContext(dto), logx.Field("err", err))...)
-			return status.Error(codes.Aborted, err.Error())
+			return err
 		}
 		if couponResp.StatusCode != code.Success {
-			return status.Error(codes.Aborted, couponResp.StatusMsg)
+			return bizerr.Aborted(int(couponResp.StatusCode), couponResp.StatusMsg)
+		}
+		if !couponResp.IsUsable {
+			msg := couponResp.UnusableReason
+			if msg == "" {
+				msg = code.CouponsNotAvailableMsg
+			}
+			return bizerr.Aborted(code.CouponsNotAvailable, msg)
 		}
 		amounts = &coupons.CalculateCouponResp{
 			OriginAmount:   couponResp.OriginAmount,
@@ -182,10 +190,10 @@ func (l *CreateOrderLogic) collectOrderData(in *order.CreateOrderRequest) (*orde
 		})
 		if err != nil {
 			l.Logger.Errorw("call rpc GetAddress failed", append(l.logContext(dto), logx.Field("err", err))...)
-			return status.Error(codes.Aborted, err.Error())
+			return err
 		}
 		if addressResp.StatusCode != code.Success {
-			return status.Error(codes.Aborted, addressResp.StatusMsg)
+			return bizerr.Aborted(int(addressResp.StatusCode), addressResp.StatusMsg)
 		}
 		address = &order2.OrderAddresses{
 			AddressId:       uint64(in.AddressId),
