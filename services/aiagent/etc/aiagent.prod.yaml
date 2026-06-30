@@ -1,0 +1,104 @@
+Name: aiagent.rpc
+ListenOn: 0.0.0.0:10009
+Mode: pro
+Timeout: 28000
+
+Consul:
+  Host: ${CONSUL_HOST}
+  Key: aiagent.rpc
+  Meta:
+    Protocol: grpc
+  Tag:
+    - "grpc"
+
+Telemetry:
+  Name: aiagent.rpc
+  Endpoint: ${TRACES_ENDPOINT}
+  Batcher: jaeger
+  Sampler: 0.1
+
+DevServer:
+  Enabled: true
+  Host: 0.0.0.0
+  Port: 11009
+  EnablePprof: false
+
+Log:
+  ServiceName: "aiagent-rpc"
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/aiagent-rpc"
+  KeepDays: 30
+  Compress: true
+  Rotation: size
+  MaxSize: 100
+
+MysqlConfig:
+  datasource: ${MYSQL_DATA_SOURCE}
+
+RedisConf:
+  Host: ${REDIS_HOST}
+  Type: node
+  Pass: ${REDIS_PASSWORD}
+  Tls: false
+
+Cache:
+  - Host: ${REDIS_HOST}
+    Type: node
+    Pass: ${REDIS_PASSWORD}
+
+Eino:
+  Provider: ${AI_MODEL_PROVIDER}
+  APIKey: ${AI_MODEL_API_KEY}
+  BaseURL: ${AI_MODEL_BASE_URL}
+  Model: ${AI_MODEL_NAME}
+  Timeout: 30
+  MaxTokens: 2048
+  Temperature: 0.2
+
+ToolTimeout:
+  QuerySeconds: 3
+  WriteSeconds: 5
+
+Confirmation:
+  ExpireSeconds: 300
+
+ProductRpc:
+  Target: consul://${CONSUL_HOST}/products.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
+
+InventoryRpc:
+  Target: consul://${CONSUL_HOST}/inventory.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
+
+OrderRpc:
+  Target: consul://${CONSUL_HOST}/order.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+CheckoutRpc:
+  Target: consul://${CONSUL_HOST}/checkout.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+CartRpc:
+  Target: consul://${CONSUL_HOST}/carts.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+CouponRpc:
+  Target: consul://${CONSUL_HOST}/coupons.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+UserRpc:
+  Target: consul://${CONSUL_HOST}/users.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
+
+AuditRpc:
+  Target: consul://${CONSUL_HOST}/audit.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
