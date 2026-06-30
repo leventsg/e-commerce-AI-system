@@ -29,6 +29,95 @@ SET FOREIGN_KEY_CHECKS = 0;
 USE mall;
 
 -- ----------------------------
+-- Table structure for ai_conversations
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_conversations`;
+CREATE TABLE `ai_conversations` (
+  `id` varchar(64) NOT NULL COMMENT '会话ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `title` varchar(128) NOT NULL DEFAULT '' COMMENT '会话标题',
+  `status` varchar(32) NOT NULL DEFAULT 'active' COMMENT 'active/closed',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_updated` (`user_id`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
+-- Table structure for ai_messages
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_messages`;
+CREATE TABLE `ai_messages` (
+  `id` varchar(64) NOT NULL COMMENT '消息ID',
+  `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `role` varchar(16) NOT NULL COMMENT 'user/assistant/tool',
+  `content` text NOT NULL COMMENT '消息内容',
+  `metadata` json DEFAULT NULL COMMENT '扩展信息',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_user_created` (`user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
+-- Table structure for ai_tool_calls
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_tool_calls`;
+CREATE TABLE `ai_tool_calls` (
+  `id` varchar(64) NOT NULL COMMENT '调用ID',
+  `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `tool_name` varchar(64) NOT NULL COMMENT '工具名称',
+  `arguments` json NOT NULL COMMENT '工具参数',
+  `result_summary` text COMMENT '结果摘要',
+  `status` varchar(16) NOT NULL COMMENT 'success/failed',
+  `error_message` varchar(512) NOT NULL DEFAULT '',
+  `latency_ms` bigint NOT NULL DEFAULT 0,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_user_tool_created` (`user_id`, `tool_name`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
+-- Table structure for ai_confirmations
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_confirmations`;
+CREATE TABLE `ai_confirmations` (
+  `id` varchar(64) NOT NULL COMMENT '确认ID',
+  `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `tool_name` varchar(64) NOT NULL COMMENT '工具名称',
+  `arguments` json NOT NULL COMMENT '待执行参数',
+  `summary` varchar(512) NOT NULL COMMENT '确认摘要',
+  `status` varchar(16) NOT NULL COMMENT 'pending/approved/rejected/expired/executed/failed',
+  `expires_at` datetime NOT NULL COMMENT '过期时间',
+  `executed_at` datetime DEFAULT NULL COMMENT '执行时间',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`),
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
+-- Table structure for ai_user_memories
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_user_memories`;
+CREATE TABLE `ai_user_memories` (
+  `id` varchar(64) NOT NULL COMMENT '记忆ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `memory_type` varchar(32) NOT NULL COMMENT 'preference/category/price',
+  `content` text NOT NULL COMMENT '记忆内容',
+  `confidence` decimal(5,4) NOT NULL DEFAULT 0.0000 COMMENT '置信度',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_type_updated` (`user_id`, `memory_type`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
 -- Table structure for shopping_cart
 -- ----------------------------
 DROP TABLE IF EXISTS `shopping_cart`;
