@@ -255,7 +255,7 @@ Expected: `ok` 或无测试文件但包可编译。
 - Create: `services/aiagent/etc/aiagent.prod.yaml`
 - Create/Generate: `services/aiagent/**`
 
-- [ ] **Step 1: 定义 proto**
+- [x] **Step 1: 定义 proto**
 
 ```proto
 syntax = "proto3";
@@ -310,7 +310,7 @@ service AiAgent {
 }
 ```
 
-- [ ] **Step 2: 生成 RPC 代码**
+- [x] **Step 2: 生成 RPC 代码**
 
 Run:
 
@@ -320,7 +320,7 @@ goctl rpc protoc services/aiagent/aiagent.proto --go_out=services/aiagent --go-g
 
 Expected: 生成 `services/aiagent/internal`、`services/aiagent/aiagent`、`services/aiagent/aiagentclient`。
 
-- [ ] **Step 3: 配置 ServiceContext 依赖**
+- [x] **Step 3: 配置 ServiceContext 依赖**
 
 在 `services/aiagent/internal/config/config.go` 增加：
 
@@ -347,7 +347,7 @@ type ConfirmationConfig struct {
 
 并在 `Config` 中挂载 MySQL、Redis、Eino、工具超时、确认超时、现有业务 RPC。
 
-- [ ] **Step 4: 编译检查**
+- [x] **Step 4: 编译检查**
 
 Run:
 

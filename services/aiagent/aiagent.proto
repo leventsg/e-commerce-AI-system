@@ -1,0 +1,50 @@
+syntax = "proto3";
+package aiagent;
+option go_package = "./aiagent";
+
+message ChatRequest {
+  uint32 user_id = 1;
+  string conversation_id = 2;
+  string message_id = 3;
+  string content = 4;
+  string source = 5;
+}
+
+message AgentEvent {
+  string type = 1;
+  string conversation_id = 2;
+  string message_id = 3;
+  string content = 4;
+  string tool = 5;
+  string status = 6;
+  string data_json = 7;
+  string confirmation_id = 8;
+  string action = 9;
+  string summary = 10;
+  int64 expires_at = 11;
+  bool done = 12;
+}
+
+message ChatResponse {
+  int32 status_code = 1;
+  string status_msg = 2;
+  repeated AgentEvent events = 3;
+}
+
+message ConfirmActionRequest {
+  uint32 user_id = 1;
+  string conversation_id = 2;
+  string confirmation_id = 3;
+  bool approved = 4;
+}
+
+message ConfirmActionResponse {
+  int32 status_code = 1;
+  string status_msg = 2;
+  repeated AgentEvent events = 3;
+}
+
+service AiAgent {
+  rpc Chat(ChatRequest) returns (ChatResponse);
+  rpc ConfirmAction(ConfirmActionRequest) returns (ConfirmActionResponse);
+}

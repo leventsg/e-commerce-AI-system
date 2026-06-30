@@ -1,0 +1,98 @@
+Name: aiagent.rpc
+ListenOn: 0.0.0.0:10009
+Mode: dev
+Timeout: 0
+
+Consul:
+  Host: localhost:8500
+  Key: aiagent.rpc
+  Meta:
+    Protocol: grpc
+
+Telemetry:
+  Name: aiagent.rpc
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 1.0
+
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 11009
+  EnablePprof: false
+
+Log:
+  ServiceName: "aiagent-rpc"
+  Mode: 'console'
+  Encoding: "json"
+  Path: "./logs/aiagent-rpc"
+
+MysqlConfig:
+  datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
+
+RedisConf:
+  Host: localhost:6379
+  Type: node
+  Pass: leventsg
+  Tls: false
+
+Cache:
+  - Host: localhost:6379
+    Type: node
+    Pass: leventsg
+
+Eino:
+  Provider: openai-compatible
+  APIKey: ""
+  BaseURL: ""
+  Model: ""
+  Timeout: 30
+  MaxTokens: 2048
+  Temperature: 0.2
+
+ToolTimeout:
+  QuerySeconds: 3
+  WriteSeconds: 5
+
+Confirmation:
+  ExpireSeconds: 300
+
+ProductRpc:
+  Target: consul://localhost:8500/products.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
+
+InventoryRpc:
+  Target: consul://localhost:8500/inventory.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
+
+OrderRpc:
+  Target: consul://localhost:8500/order.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+CheckoutRpc:
+  Target: consul://localhost:8500/checkout.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+CartRpc:
+  Target: consul://localhost:8500/carts.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+CouponRpc:
+  Target: consul://localhost:8500/coupons.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
+UserRpc:
+  Target: consul://localhost:8500/users.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
+
+AuditRpc:
+  Target: consul://localhost:8500/audit.rpc?wait=14s
+  NonBlock: true
+  Timeout: 3000
