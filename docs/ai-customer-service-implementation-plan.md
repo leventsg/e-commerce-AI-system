@@ -145,7 +145,7 @@ goctl model mysql ddl -src dal/model/ai/user_memories/ai_user_memories.sql -dir 
 - Create: `dal/model/ai/user_memories/ai_user_memories.sql`
 - Modify: `construct/depend/sql/init.sql`
 
-- [ ] **Step 1: 新增会话表**
+- [x] **Step 1: 新增会话表**
 
 ```sql
 CREATE TABLE `ai_conversations` (
@@ -160,7 +160,7 @@ CREATE TABLE `ai_conversations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [ ] **Step 2: 新增消息表**
+- [x] **Step 2: 新增消息表**
 
 ```sql
 CREATE TABLE `ai_messages` (
@@ -177,7 +177,7 @@ CREATE TABLE `ai_messages` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [ ] **Step 3: 新增工具调用表**
+- [x] **Step 3: 新增工具调用表**
 
 ```sql
 CREATE TABLE `ai_tool_calls` (
@@ -197,7 +197,7 @@ CREATE TABLE `ai_tool_calls` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [ ] **Step 4: 新增确认记录表**
+- [x] **Step 4: 新增确认记录表**
 
 ```sql
 CREATE TABLE `ai_confirmations` (
@@ -218,7 +218,7 @@ CREATE TABLE `ai_confirmations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [ ] **Step 5: 新增用户记忆表**
+- [x] **Step 5: 新增用户记忆表**
 
 ```sql
 CREATE TABLE `ai_user_memories` (
@@ -234,7 +234,7 @@ CREATE TABLE `ai_user_memories` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [ ] **Step 6: 生成 go-zero model 并运行编译检查**
+- [x] **Step 6: 生成 go-zero model 并运行编译检查**
 
 Run:
 
