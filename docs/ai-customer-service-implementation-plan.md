@@ -368,7 +368,7 @@ Expected: 所有包可编译。
 - Test: `services/aiagent/internal/eino/model_factory_test.go`
 - Test: `services/aiagent/internal/eino/agent_test.go`
 
-- [ ] **Step 1: 添加 Eino 依赖**
+- [x] **Step 1: 添加 Eino 依赖**
 
 Run:
 
@@ -378,7 +378,7 @@ GOTOOLCHAIN=local go get github.com/cloudwego/eino@latest
 
 Expected: `go.mod` 和 `go.sum` 新增 Eino 依赖。
 
-- [ ] **Step 2: 写 ChatModel 工厂单测**
+- [x] **Step 2: 写 ChatModel 工厂单测**
 
 覆盖：
 
@@ -387,7 +387,7 @@ Expected: `go.mod` 和 `go.sum` 新增 Eino 依赖。
 - `deepseek` 使用 OpenAI-compatible 协议配置。
 - 超时时返回降级错误。
 
-- [ ] **Step 3: 实现 Eino ChatModel 工厂**
+- [x] **Step 3: 实现 Eino ChatModel 工厂**
 
 ```go
 type ModelFactory interface {
@@ -395,7 +395,7 @@ type ModelFactory interface {
 }
 ```
 
-- [ ] **Step 4: 实现消息转换**
+- [x] **Step 4: 实现消息转换**
 
 将 `ai_messages` 历史转换为 Eino message：
 
@@ -403,7 +403,7 @@ type ModelFactory interface {
 - `assistant` -> assistant message
 - `tool` -> tool message 或追加为 assistant 可读上下文
 
-- [ ] **Step 5: 实现 Agent Runner**
+- [x] **Step 5: 实现 Agent Runner**
 
 Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。首期允许内部使用 Eino Chain/Graph 或 ADK Agent，但对外只暴露稳定接口：
 
@@ -414,7 +414,7 @@ type Runner interface {
 }
 ```
 
-- [ ] **Step 6: 实现降级策略**
+- [x] **Step 6: 实现降级策略**
 
 模型不可用时返回业务错误：
 
@@ -422,7 +422,7 @@ type Runner interface {
 ErrModelUnavailable = errors.New("ai model unavailable, please retry later")
 ```
 
-- [ ] **Step 7: 运行测试**
+- [x] **Step 7: 运行测试**
 
 Run:
 

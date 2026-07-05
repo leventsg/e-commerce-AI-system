@@ -42,10 +42,10 @@ Cache:
     Pass: leventsg
 
 Eino:
-  Provider: openai-compatible
-  APIKey: ""
-  BaseURL: ""
-  Model: ""
+  Provider: ${AI_MODEL_PROVIDER}
+  APIKey: ${AI_MODEL_API_KEY}
+  BaseURL: ${AI_MODEL_BASE_URL}
+  Model: ${AI_MODEL_NAME}
   Timeout: 30
   MaxTokens: 2048
   Temperature: 0.2
