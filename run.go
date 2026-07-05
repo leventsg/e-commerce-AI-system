@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type ServiceManager struct {
@@ -145,6 +147,11 @@ func main() {
 	root, err := os.Getwd()
 	if err != nil {
 		panic(err)
+	}
+
+	err = godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
 	}
 
 	var services string
