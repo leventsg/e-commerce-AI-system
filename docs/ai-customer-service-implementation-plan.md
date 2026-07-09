@@ -545,9 +545,25 @@ Expected: Eino Tool 注册、本地白名单、风险等级、超时配置全部
 **Files:**
 
 - Create: `services/aiagent/internal/planner/planner.go`
+- Create: `services/aiagent/internal/prompts/intent.go`
+- Modify: `services/aiagent/internal/config/config.go`
+- Modify: `services/aiagent/etc/aiagent.yaml`
+- Modify: `services/aiagent/etc/aiagent.prod.yaml`
+- Modify: `docs/ai-customer-service-design.md`
 - Test: `services/aiagent/internal/planner/planner_test.go`
+- Test: `services/aiagent/internal/prompts/intent_test.go`
 
-- [ ] **Step 1: 单测核心意图**
+- [ ] **Step 1: 单测 fast LLM 优先与重试**
+
+覆盖：
+
+- fake LLM 返回 `product.recommend` JSON 时优先使用 LLM 结果。
+- fake LLM 返回 `order.cancel` JSON 时确认策略来自 Tool Registry metadata。
+- fake LLM 参数包含 `user_id` 时必须删除。
+- 第一次 LLM 错误或返回非法 JSON，第二次成功时使用第二次结果。
+- 两次 LLM 都失败或都返回未注册工具时回退规则 Planner。
+
+- [ ] **Step 2: 单测核心规则意图**
 
 覆盖中文输入：
 
@@ -557,23 +573,29 @@ Expected: Eino Tool 注册、本地白名单、风险等级、超时配置全部
 - “帮我加入购物车，商品 12 买 2 件” -> `action` + `cart.add`
 - “取消订单 202406300001” -> `action` + `order.cancel` + 需要确认
 
-- [ ] **Step 2: 实现规则兜底 Planner**
+- [ ] **Step 3: 实现 fast LLM + 重试 + 规则兜底 Planner**
 
-首期以 Eino Tool Calling 作为主路径，同时实现关键词/参数抽取兜底。规则 Planner 必须在模型不可用时仍能处理明确工具意图，并把结果交给同一套 Tool Registry 和 Execution Guard。
+首期以 Eino Tool Calling 作为主路径，Intent Planner 内部优先使用 fast LLM 返回结构化 JSON 做意图识别。LLM 调用失败、JSON 解析失败、工具未注册或参数不合格时重试一次；第二次仍失败后使用关键词/参数抽取规则兜底。所有结果必须经过 Tool Registry 校验，且不得保留模型输出中的 `user_id`。
 
-- [ ] **Step 3: 缺参数时返回追问**
+- [ ] **Step 4: 抽离 Prompt 文本**
+
+将 Intent Planner system prompt 放入 `services/aiagent/internal/prompts`，Planner 只引用 prompt 函数，不直接硬编码长 prompt。
+
+- [ ] **Step 5: 缺参数时返回追问**
 
 例如“帮我取消订单”缺少订单号时返回 assistant message，询问用户提供订单号，不创建确认。
 
-- [ ] **Step 4: 运行测试**
+- [ ] **Step 6: 运行测试**
 
 Run:
 
 ```bash
+go test ./services/aiagent/internal/prompts -run Test -count=1
 go test ./services/aiagent/internal/planner -run Test -count=1
+go test ./services/aiagent/... -run Test -count=1
 ```
 
-Expected: 核心意图、工具选择、缺参追问均通过。
+Expected: fast LLM 优先、一次重试、规则兜底、工具选择、缺参追问均通过。
 
 ## 6. 业务工具接入
 

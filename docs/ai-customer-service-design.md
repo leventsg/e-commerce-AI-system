@@ -145,8 +145,10 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 
 实现方式：
 - 首期优先使用 Eino Tool Calling 让模型选择工具。
-- 对明确中文意图保留规则兜底 Planner，模型不可用时仍可处理订单查询、取消订单、加购物车等明确请求。
+- Intent Planner 优先使用 fast LLM 返回结构化 JSON 做意图识别和参数抽取；调用失败或返回非法结果时重试一次。
+- 两次 fast LLM 均不可用或结果不可用时，回退规则 Planner；明确中文意图仍可处理订单查询、取消订单、加购物车等请求。
 - Planner 的输出必须经过 Tool Registry 和 Execution Guard 校验后才能执行。
+- Prompt 文本集中放在 `services/aiagent/internal/prompts`，Planner 和 Eino 编排代码不得直接硬编码长 prompt。
 
 ### 3.5 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
