@@ -35,6 +35,7 @@ type Config struct {
 	RedisConf    redis.RedisConf
 	Cache        cache.CacheConf
 	Eino         EinoConfig
+	IntentModel  EinoConfig
 	ToolTimeout  ToolTimeoutConfig
 	Confirmation ConfirmationConfig
 	ProductRpc   zrpc.RpcClientConf
