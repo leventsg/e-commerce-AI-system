@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -155,14 +156,41 @@ func TestPlannerLLMReceivesBoundedContextBeforeCurrentMessage(t *testing.T) {
 	assertArguments(t, result.Arguments, map[string]any{"product_id": float64(12), "quantity": float64(2)})
 
 	messages := fakeModel.lastMessages
+	if len(messages) != 5 {
+		t.Fatalf("LLM message count = %d, want system/history/current", len(messages))
+	}
+	assertMessage(t, messages[0], schema.System, "意图识别器")
+	assertMessage(t, messages[1], schema.User, "推荐几款学生党手机")
+	assertMessage(t, messages[2], schema.Assistant, "商品 12")
+	assertMessage(t, messages[3], schema.User, "把这个加入购物车")
+	assertMessage(t, messages[4], schema.User, "加两件")
+}
+
+func TestPlannerLLMConvertsToolHistoryToToolMessage(t *testing.T) {
+	planner, fakeModel := newPlannerAndFakeLLM(t, []fakeLLMResponse{
+		{content: `{"intent":"query","tool_name":"cart.list","arguments":{}}`},
+	})
+
+	_, err := planner.Plan(context.Background(), PlanRequest{
+		Message: "看看购物车",
+		History: []*aimessages.AiMessages{
+			newToolHistoryMessage(t, "m1", "cart.list", "call_001", `{"items":[{"product_id":12}]}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+
+	messages := fakeModel.lastMessages
 	if len(messages) != 3 {
-		t.Fatalf("LLM message count = %d, want system/context/current", len(messages))
+		t.Fatalf("LLM message count = %d, want system/tool/current", len(messages))
 	}
-	if !strings.Contains(messages[1].Content, "最近上下文") || !strings.Contains(messages[1].Content, "商品 12") {
-		t.Fatalf("context message does not contain bounded history summary: %q", messages[1].Content)
+	assertMessage(t, messages[1], schema.Tool, "product_id")
+	if messages[1].ToolName != "cart.list" {
+		t.Fatalf("ToolName = %q, want cart.list", messages[1].ToolName)
 	}
-	if messages[2].Content != "加两件" {
-		t.Fatalf("last LLM message = %q, want current user message", messages[2].Content)
+	if messages[1].ToolCallID != "call_001" {
+		t.Fatalf("ToolCallID = %q, want call_001", messages[1].ToolCallID)
 	}
 }
 
@@ -244,10 +272,10 @@ func TestPlannerDoesNotExposeSensitiveHistoryInContextMessage(t *testing.T) {
 		t.Fatalf("Plan returned error: %v", err)
 	}
 
-	contextMessage := fakeModel.lastMessages[1].Content
+	historyMessage := fakeModel.lastMessages[1].Content
 	for _, leaked := range []string{"secret-token", "user_id=999", "session_id=abc", "auth=bearer"} {
-		if strings.Contains(contextMessage, leaked) {
-			t.Fatalf("context message leaked %q: %q", leaked, contextMessage)
+		if strings.Contains(historyMessage, leaked) {
+			t.Fatalf("history message leaked %q: %q", leaked, historyMessage)
 		}
 	}
 }
@@ -459,6 +487,33 @@ func newHistoryMessage(id, role, content string) *aimessages.AiMessages {
 		Content:        content,
 		Metadata:       sql.NullString{},
 		CreatedAt:      time.Now(),
+	}
+}
+
+func newToolHistoryMessage(t *testing.T, id, toolName, toolCallID, content string) *aimessages.AiMessages {
+	t.Helper()
+	metadata, err := json.Marshal(map[string]string{
+		"tool_name":    toolName,
+		"tool_call_id": toolCallID,
+	})
+	if err != nil {
+		t.Fatalf("marshal tool metadata: %v", err)
+	}
+	message := newHistoryMessage(id, "tool", content)
+	message.Metadata = sql.NullString{String: string(metadata), Valid: true}
+	return message
+}
+
+func assertMessage(t *testing.T, message *schema.Message, role schema.RoleType, contains string) {
+	t.Helper()
+	if message == nil {
+		t.Fatal("message is nil")
+	}
+	if message.Role != role {
+		t.Fatalf("Role = %q, want %q", message.Role, role)
+	}
+	if !strings.Contains(message.Content, contains) {
+		t.Fatalf("Content = %q, want to contain %q", message.Content, contains)
 	}
 }
 
