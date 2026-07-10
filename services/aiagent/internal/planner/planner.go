@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
@@ -321,7 +322,7 @@ func (p *Planner) validatedPlan(ctx context.Context, result PlanResult) (PlanRes
 	if result.ToolName == "" {
 		if result.Intent == IntentChat || len(result.MissingParams) > 0 {
 			result.RequireConfirmation = false
-			result.Arguments = sanitizeArguments(result.Arguments)
+			result.Arguments = argx.SanitizeMapKeys(result.Arguments, sensitiveArgumentKeys)
 			return result, true
 		}
 		return PlanResult{}, false
@@ -333,7 +334,7 @@ func (p *Planner) validatedPlan(ctx context.Context, result PlanResult) (PlanRes
 		return PlanResult{}, false
 	}
 
-	args := sanitizeArguments(result.Arguments)
+	args := argx.SanitizeMapKeys(result.Arguments, sensitiveArgumentKeys)
 	if missingRequiredArguments(ctx, p.registry, result.ToolName, args) {
 		return PlanResult{}, false
 	}
@@ -366,47 +367,6 @@ func validIntent(intent Intent) bool {
 	default:
 		return false
 	}
-}
-
-// 清理参数，过滤敏感信息
-func sanitizeArguments(args map[string]any) map[string]any {
-	if len(args) == 0 {
-		return map[string]any{}
-	}
-	cleaned := make(map[string]any, len(args))
-	for key, value := range args {
-		if isSensitiveArgumentKey(key) {
-			continue
-		}
-		cleaned[key] = sanitizeArgumentValue(value)
-	}
-	return cleaned
-}
-
-// 清理参数值，过滤敏感信息
-func sanitizeArgumentValue(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		return sanitizeArguments(v)
-	case []any:
-		cleaned := make([]any, 0, len(v))
-		for _, item := range v {
-			cleaned = append(cleaned, sanitizeArgumentValue(item))
-		}
-		return cleaned
-	default:
-		return value
-	}
-}
-
-// 判断参数是否为敏感参数
-func isSensitiveArgumentKey(key string) bool {
-	for _, sensitiveKey := range sensitiveArgumentKeys {
-		if strings.EqualFold(strings.TrimSpace(key), sensitiveKey) {
-			return true
-		}
-	}
-	return false
 }
 
 // 检查参数是否缺少必填项
