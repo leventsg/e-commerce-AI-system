@@ -606,19 +606,19 @@ Expected: fast LLM 优先、一次重试、规则兜底、工具选择、缺参�
 - Create: `services/aiagent/internal/tools/executor.go`
 - Test: `services/aiagent/internal/tools/executor_test.go`
 
-- [ ] **Step 1: 单测 user_id 注入**
+- [x] **Step 1: 单测 user_id 注入**
 
 模型或 Eino Tool 参数中即使包含 `user_id: 999`，执行前也必须覆盖为登录态 `user_id`。
 
-- [ ] **Step 2: 单测超时策略**
+- [x] **Step 2: 单测超时策略**
 
 查询类工具使用 3 秒超时，写操作使用 5 秒超时。
 
-- [ ] **Step 3: 单测失败话术**
+- [x] **Step 3: 单测失败话术**
 
 RPC 返回错误时，`AgentEvent.status` 必须为 `failed`，assistant message 不允许包含“已成功”。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run:
 
