@@ -92,13 +92,14 @@ func (q *QueryTools) bindEinoTools() {
 	}
 }
 
-// queryInvokableTool 是 eino 标准工具接口的实现，用于将查询工具绑定到 eino 工具注册表中
+// queryInvokableTool 是基于InvokableTool封装的查询业务工具
 type queryInvokableTool struct {
 	name       string
 	base       einotool.InvokableTool
 	queryTools *QueryTools
 }
 
+// 提供工具的元信息，llm 使用这些信息决定是否以及如何调用该工具
 func (t *queryInvokableTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return t.base.Info(ctx)
 }
