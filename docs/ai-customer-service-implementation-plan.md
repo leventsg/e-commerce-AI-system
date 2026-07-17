@@ -731,9 +731,14 @@ Expected: 低风险写操作无需确认，但必须记录审计。
 **Files:**
 
 - Create: `services/aiagent/internal/confirmation/manager.go`
+- Create: `services/aiagent/internal/confirmation/locker.go`
+- Create: `services/aiagent/internal/domain/confirmation.go`
+- Modify: `dal/model/ai/confirmations/aiconfirmationsmodel.go`
+- Modify: `services/aiagent/internal/config/config.go`
+- Modify: `services/aiagent/internal/svc/servicecontext.go`
 - Test: `services/aiagent/internal/confirmation/manager_test.go`
 
-- [ ] **Step 1: 单测创建确认**
+- [x] **Step 1: 单测创建确认**
 
 创建确认返回：
 
@@ -743,19 +748,26 @@ Expected: 低风险写操作无需确认，但必须记录审计。
 - `expires_at`
 - 参数摘要
 
-- [ ] **Step 2: 单测过期确认**
+- [x] **Step 2: 单测过期确认**
 
 超过 `expires_at` 后确认，返回失败，状态更新为 `expired`。
 
-- [ ] **Step 3: 单测重复确认**
+- [x] **Step 3: 单测重复确认**
 
-同一个确认 ID 第二次执行时返回失败，不再次调用业务 RPC。
+同一个确认 ID 第二次领取时返回失败。Redis 短锁合并同时请求，MySQL `pending -> approved` 条件更新保证最终只有一个 winner；Task 11 只允许 winner 调用业务 RPC。
 
-- [ ] **Step 4: 单测跨用户确认**
+- [x] **Step 4: 单测跨用户确认**
 
 用户 A 不能执行用户 B 的确认 ID。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 实现混合幂等状态机**
+
+- Redis 锁 key：`ai:confirmation:lock:<confirmation_id>`，默认 TTL 5 秒。
+- 锁竞争返回 busy 且不访问 MySQL；Redis 错误降级到 MySQL CAS。
+- MySQL 条件更新覆盖 pending、approved、rejected、expired、executed、failed 状态流转。
+- Redis 锁在状态变更后释放，不跨 Task 11 的高风险业务 RPC 持有。
+
+- [x] **Step 6: 运行测试**
 
 Run:
 

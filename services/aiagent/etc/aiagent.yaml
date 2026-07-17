@@ -65,6 +65,7 @@ ToolTimeout:
 
 Confirmation:
   ExpireSeconds: 300
+  LockExpireSeconds: 5
 
 ProductRpc:
   Target: consul://localhost:8500/products.rpc?wait=14s

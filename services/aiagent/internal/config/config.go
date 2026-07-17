@@ -25,7 +25,8 @@ type ToolTimeoutConfig struct {
 }
 
 type ConfirmationConfig struct {
-	ExpireSeconds int64
+	ExpireSeconds     int64
+	LockExpireSeconds int64
 }
 
 type Config struct {

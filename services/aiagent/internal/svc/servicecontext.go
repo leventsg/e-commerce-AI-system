@@ -1,6 +1,8 @@
 package svc
 
 import (
+	"time"
+
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
 	aiconversations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversations"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
@@ -8,6 +10,7 @@ import (
 	aiusermemories "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_memories"
 	aiaudit "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
+	aiconfirmation "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
@@ -24,26 +27,27 @@ import (
 )
 
 type ServiceContext struct {
-	Config             config.Config
-	Mysql              sqlx.SqlConn
-	RedisClient        *redis.Redis
-	ConversationsModel aiconversations.AiConversationsModel
-	MessagesModel      aimessages.AiMessagesModel
-	ToolCallsModel     aitoolcalls.AiToolCallsModel
-	ConfirmationsModel aiconfirmations.AiConfirmationsModel
-	UserMemoriesModel  aiusermemories.AiUserMemoriesModel
-	ProductRpc         productcatalogservice.ProductCatalogService
-	InventoryRpc       inventoryclient.Inventory
-	OrderRpc           orderservice.OrderService
-	CheckoutRpc        checkoutservice.CheckoutService
-	CartRpc            cartsclient.Cart
-	CouponRpc          couponsclient.Coupons
-	UserRpc            usersclient.Users
-	AuditRpc           auditclient.Audit
-	ToolRegistry       *aitools.Registry
-	ToolExecutor       *aitools.Executor
-	QueryTools         *aitools.QueryTools
-	WriteTools         *aitools.WriteTools
+	Config              config.Config
+	Mysql               sqlx.SqlConn
+	RedisClient         *redis.Redis
+	ConversationsModel  aiconversations.AiConversationsModel
+	MessagesModel       aimessages.AiMessagesModel
+	ToolCallsModel      aitoolcalls.AiToolCallsModel
+	ConfirmationsModel  aiconfirmations.AiConfirmationsModel
+	UserMemoriesModel   aiusermemories.AiUserMemoriesModel
+	ProductRpc          productcatalogservice.ProductCatalogService
+	InventoryRpc        inventoryclient.Inventory
+	OrderRpc            orderservice.OrderService
+	CheckoutRpc         checkoutservice.CheckoutService
+	CartRpc             cartsclient.Cart
+	CouponRpc           couponsclient.Coupons
+	UserRpc             usersclient.Users
+	AuditRpc            auditclient.Audit
+	ToolRegistry        *aitools.Registry
+	ToolExecutor        *aitools.Executor
+	QueryTools          *aitools.QueryTools
+	WriteTools          *aitools.WriteTools
+	ConfirmationManager *aiconfirmation.Manager
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -55,7 +59,9 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	cartRPC := cartsclient.NewCart(zrpc.MustNewClient(c.CartRpc))
 	couponRPC := couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc))
 	auditRPC := auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc))
+	redisClient := redis.MustNewRedis(c.RedisConf)
 	toolCallsModel := aitoolcalls.NewAiToolCallsModel(mysql, c.Cache)
+	confirmationsModel := aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache)
 	toolRegistry := aitools.NewRegistry(c.ToolTimeout)
 	toolRecorder := aiaudit.NewRecorder(toolCallsModel, auditRPC)
 	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
@@ -71,27 +77,35 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Cart:   cartRPC,
 		Coupon: couponRPC,
 	})
+	confirmationManager := aiconfirmation.NewManager(
+		confirmationsModel,
+		toolRegistry,
+		aiconfirmation.NewRedisLocker(redisClient),
+		aiconfirmation.WithConfirmationTTL(time.Duration(c.Confirmation.ExpireSeconds)*time.Second),
+		aiconfirmation.WithLockTTL(time.Duration(c.Confirmation.LockExpireSeconds)*time.Second),
+	)
 
 	return &ServiceContext{
-		Config:             c,
-		Mysql:              mysql,
-		RedisClient:        redis.MustNewRedis(c.RedisConf),
-		ConversationsModel: aiconversations.NewAiConversationsModel(mysql, c.Cache),
-		MessagesModel:      aimessages.NewAiMessagesModel(mysql, c.Cache),
-		ToolCallsModel:     toolCallsModel,
-		ConfirmationsModel: aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache),
-		UserMemoriesModel:  aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache),
-		ProductRpc:         productRPC,
-		InventoryRpc:       inventoryRPC,
-		OrderRpc:           orderRPC,
-		CheckoutRpc:        checkoutRPC,
-		CartRpc:            cartRPC,
-		CouponRpc:          couponRPC,
-		UserRpc:            usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
-		AuditRpc:           auditRPC,
-		ToolRegistry:       toolRegistry,
-		ToolExecutor:       toolExecutor,
-		QueryTools:         queryTools,
-		WriteTools:         writeTools,
+		Config:              c,
+		Mysql:               mysql,
+		RedisClient:         redisClient,
+		ConversationsModel:  aiconversations.NewAiConversationsModel(mysql, c.Cache),
+		MessagesModel:       aimessages.NewAiMessagesModel(mysql, c.Cache),
+		ToolCallsModel:      toolCallsModel,
+		ConfirmationsModel:  confirmationsModel,
+		UserMemoriesModel:   aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache),
+		ProductRpc:          productRPC,
+		InventoryRpc:        inventoryRPC,
+		OrderRpc:            orderRPC,
+		CheckoutRpc:         checkoutRPC,
+		CartRpc:             cartRPC,
+		CouponRpc:           couponRPC,
+		UserRpc:             usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
+		AuditRpc:            auditRPC,
+		ToolRegistry:        toolRegistry,
+		ToolExecutor:        toolExecutor,
+		QueryTools:          queryTools,
+		WriteTools:          writeTools,
+		ConfirmationManager: confirmationManager,
 	}
 }

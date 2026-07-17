@@ -66,6 +66,33 @@ func TestSanitizeMapKeysDoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestSanitizeMapKeysRemovesAliasesFromTypedCollections(t *testing.T) {
+	input := map[string]any{
+		"userId": "999",
+		"headers": map[string]string{
+			"Authorization": "Bearer secret",
+			"keep":          "value",
+		},
+		"items": []map[string]any{
+			{"access-token": "secret", "product_id": 12},
+		},
+	}
+
+	cleaned := SanitizeMapKeys(input, []string{"user_id", "authorization", "access_token"})
+	if _, ok := cleaned["userId"]; ok {
+		t.Fatalf("camel-case user ID leaked: %#v", cleaned)
+	}
+	headers := cleaned["headers"].(map[string]any)
+	if _, ok := headers["Authorization"]; ok || headers["keep"] != "value" {
+		t.Fatalf("typed headers = %#v", headers)
+	}
+	items := cleaned["items"].([]any)
+	item := items[0].(map[string]any)
+	if _, ok := item["access-token"]; ok || item["product_id"] != 12 {
+		t.Fatalf("typed items = %#v", items)
+	}
+}
+
 func assertNoKey(t *testing.T, value any, banned string) {
 	t.Helper()
 
