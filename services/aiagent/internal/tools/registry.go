@@ -195,9 +195,8 @@ func defaultToolSpecs(queryTimeout, writeTimeout int64) []toolSpec {
 			numberParam("max_price", "Maximum acceptable price.", false),
 			integerParam("limit", "Maximum number of recommendations.", false),
 		)),
-		queryTool(domain.ToolInventoryGet, "Get current inventory for a product or SKU.", queryTimeout, "Inventory", "GetInventory", params(
-			integerParam("product_id", "Product ID.", false),
-			integerParam("sku_id", "SKU ID.", false),
+		queryTool(domain.ToolInventoryGet, "Get current inventory for a product.", queryTimeout, "Inventory", "GetInventory", params(
+			integerParam("product_id", "Product ID.", true),
 		)),
 		queryTool(domain.ToolOrderGet, "Get one order by order ID.", queryTimeout, "OrderService", "GetOrder", params(
 			stringParam("order_id", "Order ID.", true),
@@ -235,6 +234,7 @@ func defaultToolSpecs(queryTimeout, writeTimeout int64) []toolSpec {
 		queryTool(domain.ToolCouponList, "List available coupons.", queryTimeout, "Coupons", "ListCoupons", params(
 			integerParam("page", "Page number starting from 1.", false),
 			integerParam("page_size", "Number of coupons to return.", false),
+			integerParam("type", "Optional coupon type: 1 full reduction, 2 discount, 3 fixed amount.", false),
 		)),
 		queryTool(domain.ToolCouponDetail, "Get coupon detail by coupon ID.", queryTimeout, "Coupons", "GetCoupon", params(
 			stringParam("coupon_id", "Coupon ID.", true),
@@ -253,7 +253,10 @@ func defaultToolSpecs(queryTimeout, writeTimeout int64) []toolSpec {
 		)),
 		queryTool(domain.ToolCouponCalculate, "Calculate coupon discount for checkout.", queryTimeout, "Coupons", "CalculateCoupon", params(
 			stringParam("coupon_id", "Coupon ID.", true),
-			numberParam("amount", "Order amount before discount.", true),
+			objectArrayParam("items", "Products and quantities used to calculate the discount.", true, params(
+				integerParam("product_id", "Product ID.", true),
+				integerParam("quantity", "Product quantity.", true),
+			)),
 		)),
 		writeTool(domain.ToolOrderCreate, "Create an order from a checkout after confirmation.", domain.RiskHigh, true, writeTimeout, "OrderService", "CreateOrder", params(
 			stringParam("pre_order_id", "Pre-order ID.", true),
@@ -316,6 +319,21 @@ func integerParam(name, desc string, required bool) namedParam {
 
 func numberParam(name, desc string, required bool) namedParam {
 	return parameter(name, schema.Number, desc, required)
+}
+
+func objectArrayParam(name, desc string, required bool, fields map[string]*schema.ParameterInfo) namedParam {
+	return namedParam{
+		name: name,
+		info: &schema.ParameterInfo{
+			Type:     schema.Array,
+			Desc:     desc,
+			Required: required,
+			ElemInfo: &schema.ParameterInfo{
+				Type:      schema.Object,
+				SubParams: fields,
+			},
+		},
+	}
 }
 
 // 构建参数信息

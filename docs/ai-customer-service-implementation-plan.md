@@ -640,7 +640,7 @@ Expected: 用户隔离、超时、失败降级均通过。
 - Create: `services/aiagent/internal/tools/checkout_tools.go`
 - Test: `services/aiagent/internal/tools/query_tools_test.go`
 
-- [ ] **Step 1: 实现商品 Eino Tool handler**
+- [x] **Step 1: 实现商品 Eino Tool handler**
 
 RPC 对应：
 
@@ -648,14 +648,14 @@ RPC 对应：
 - `product.detail` -> `ProductCatalogService.GetProduct`
 - `product.recommend` -> `ProductCatalogService.RecommendProduct`
 
-- [ ] **Step 2: 实现订单 Eino Tool handler**
+- [x] **Step 2: 实现订单 Eino Tool handler**
 
 RPC 对应：
 
 - `order.get` -> `OrderService.GetOrder`
 - `order.list` -> `OrderService.ListOrders`
 
-- [ ] **Step 3: 实现购物车、优惠券、结算 Eino Tool handler**
+- [x] **Step 3: 实现购物车、优惠券、结算 Eino Tool handler**
 
 RPC 对应：
 
@@ -667,7 +667,7 @@ RPC 对应：
 - `coupon.calculate` -> `Coupons.CalculateCoupon`
 - `checkout.detail` -> `CheckoutService.GetCheckoutDetail`
 
-- [ ] **Step 4: 运行工具单测**
+- [x] **Step 4: 运行工具单测**
 
 Run:
 
