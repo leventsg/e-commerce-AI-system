@@ -6,6 +6,7 @@ import (
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
 	aiusermemories "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_memories"
+	aiaudit "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
@@ -42,6 +43,7 @@ type ServiceContext struct {
 	ToolRegistry       *aitools.Registry
 	ToolExecutor       *aitools.Executor
 	QueryTools         *aitools.QueryTools
+	WriteTools         *aitools.WriteTools
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -52,8 +54,11 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	checkoutRPC := checkoutservice.NewCheckoutService(zrpc.MustNewClient(c.CheckoutRpc))
 	cartRPC := cartsclient.NewCart(zrpc.MustNewClient(c.CartRpc))
 	couponRPC := couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc))
+	auditRPC := auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc))
+	toolCallsModel := aitoolcalls.NewAiToolCallsModel(mysql, c.Cache)
 	toolRegistry := aitools.NewRegistry(c.ToolTimeout)
-	toolExecutor := aitools.NewExecutor(toolRegistry)
+	toolRecorder := aiaudit.NewRecorder(toolCallsModel, auditRPC)
+	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
 	queryTools := aitools.NewQueryTools(toolExecutor, aitools.QueryToolClients{
 		Product:   productRPC,
 		Inventory: inventoryRPC,
@@ -62,6 +67,10 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Coupon:    couponRPC,
 		Checkout:  checkoutRPC,
 	})
+	writeTools := aitools.NewWriteTools(toolExecutor, aitools.WriteToolClients{
+		Cart:   cartRPC,
+		Coupon: couponRPC,
+	})
 
 	return &ServiceContext{
 		Config:             c,
@@ -69,7 +78,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		RedisClient:        redis.MustNewRedis(c.RedisConf),
 		ConversationsModel: aiconversations.NewAiConversationsModel(mysql, c.Cache),
 		MessagesModel:      aimessages.NewAiMessagesModel(mysql, c.Cache),
-		ToolCallsModel:     aitoolcalls.NewAiToolCallsModel(mysql, c.Cache),
+		ToolCallsModel:     toolCallsModel,
 		ConfirmationsModel: aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache),
 		UserMemoriesModel:  aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache),
 		ProductRpc:         productRPC,
@@ -79,9 +88,10 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CartRpc:            cartRPC,
 		CouponRpc:          couponRPC,
 		UserRpc:            usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
-		AuditRpc:           auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc)),
+		AuditRpc:           auditRPC,
 		ToolRegistry:       toolRegistry,
 		ToolExecutor:       toolExecutor,
 		QueryTools:         queryTools,
+		WriteTools:         writeTools,
 	}
 }

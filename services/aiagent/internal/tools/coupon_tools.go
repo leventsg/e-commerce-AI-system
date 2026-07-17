@@ -19,6 +19,10 @@ type CouponQueryRPC interface {
 	CalculateCoupon(ctx context.Context, in *couponsclient.CalculateCouponReq, opts ...grpc.CallOption) (*couponsclient.CalculateCouponResp, error)
 }
 
+type CouponWriteRPC interface {
+	ClaimCoupon(ctx context.Context, in *couponsclient.ClaimCouponReq, opts ...grpc.CallOption) (*couponsclient.ClaimCouponResp, error)
+}
+
 func couponQueryHandlers(rpc CouponQueryRPC) map[string]HandlerFunc {
 	if rpc == nil {
 		return nil
@@ -29,6 +33,52 @@ func couponQueryHandlers(rpc CouponQueryRPC) map[string]HandlerFunc {
 		domain.ToolCouponMyList:    couponMyListHandler(rpc),
 		domain.ToolCouponUsageList: couponUsageListHandler(rpc),
 		domain.ToolCouponCalculate: couponCalculateHandler(rpc),
+	}
+}
+
+func couponWriteHandlers(rpc CouponWriteRPC) map[string]HandlerFunc {
+	if rpc == nil {
+		return nil
+	}
+	return map[string]HandlerFunc{
+		domain.ToolCouponClaim: couponClaimHandler(rpc),
+	}
+}
+
+// 优惠券领取工具处理函数
+func couponClaimHandler(rpc CouponWriteRPC) HandlerFunc {
+	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
+		// 解析参数
+		userID, err := authenticatedUserID32(req.UserID)
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		couponID, err := requiredStringArgument(req.Arguments, "coupon_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		// 调用优惠券服务的领取接口
+		resp, err := rpc.ClaimCoupon(ctx, &couponsclient.ClaimCouponReq{UserId: userID, CouponId: couponID})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("coupon.claim rpc: %w", err)
+		}
+		if resp == nil {
+			return HandlerResult{}, fmt.Errorf("coupon.claim returned nil response")
+		}
+		if err := validateRPCResponse("coupon.claim", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return HandlerResult{}, err
+		}
+		if resp.Coupon == nil {
+			return HandlerResult{}, fmt.Errorf("coupon.claim returned empty coupon")
+		}
+		return HandlerResult{
+			Data: map[string]any{
+				"coupon_id": resp.Coupon.Id,
+				"name":      resp.Coupon.Name,
+				"type":      resp.Coupon.Type.String(),
+			},
+			Summary: fmt.Sprintf("已领取优惠券“%s”。", resp.Coupon.Name),
+		}, nil
 	}
 }
 

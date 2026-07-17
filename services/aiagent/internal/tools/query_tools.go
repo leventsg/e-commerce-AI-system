@@ -33,6 +33,7 @@ type ToolExecutionContext struct {
 	UserID         uint64
 	ConversationID string
 	MessageID      string
+	ClientIP       string
 }
 
 type toolExecutionContextKey struct{}
@@ -113,20 +114,27 @@ func (t *queryInvokableTool) InvokableRun(ctx context.Context, arguments string,
 	}
 	args := make(map[string]any)
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", fmt.Errorf("%w: invalid JSON arguments: %v", ErrInvalidToolArguments, err)
+		parseErr := fmt.Errorf("%w: invalid JSON arguments: %v", ErrInvalidToolArguments, err)
+		event := t.queryTools.executor.Reject(ctx, executeRequestFromContext(execution, t.name, nil), parseErr)
+		return event.DataJSON, fmt.Errorf("%w: %s", ErrQueryToolExecution, event.Content)
 	}
 	// 工具执行
-	event := t.queryTools.Execute(ctx, ExecuteRequest{
-		UserID:         execution.UserID,
-		ConversationID: execution.ConversationID,
-		MessageID:      execution.MessageID,
-		ToolName:       t.name,
-		Arguments:      args,
-	})
+	event := t.queryTools.Execute(ctx, executeRequestFromContext(execution, t.name, args))
 	if event.Status != toolStatusSuccess {
 		return event.DataJSON, fmt.Errorf("%w: %s", ErrQueryToolExecution, event.Content)
 	}
 	return event.DataJSON, nil
+}
+
+func executeRequestFromContext(execution ToolExecutionContext, toolName string, arguments map[string]any) ExecuteRequest {
+	return ExecuteRequest{
+		UserID:         execution.UserID,
+		ConversationID: execution.ConversationID,
+		MessageID:      execution.MessageID,
+		ClientIP:       execution.ClientIP,
+		ToolName:       toolName,
+		Arguments:      arguments,
+	}
 }
 
 // 注册查询工具处理函数

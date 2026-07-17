@@ -132,6 +132,30 @@ func TestQueryToolsEinoHandlerRejectsMissingTrustedExecutionContext(t *testing.T
 	}
 }
 
+func TestQueryToolsEinoMalformedJSONIsRecorded(t *testing.T) {
+	productRPC := &fakeProductQueryRPC{}
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+	recorder := &capturingToolCallRecorder{}
+	NewQueryTools(NewExecutor(registry, WithToolCallRecorder(recorder)), QueryToolClients{Product: productRPC})
+	tool, err := registry.Tool(domain.ToolProductDetail)
+	if err != nil {
+		t.Fatalf("product detail tool: %v", err)
+	}
+	ctx := WithToolExecutionContext(context.Background(), ToolExecutionContext{
+		UserID: 42, ConversationID: "conv-1", MessageID: "msg-1",
+	})
+
+	if _, err := tool.InvokableRun(ctx, `{"product_id":`); err == nil {
+		t.Fatal("InvokableRun malformed JSON returned nil error")
+	}
+	if len(recorder.records) != 1 || recorder.records[0].Status != toolStatusFailed {
+		t.Fatalf("malformed query records = %#v", recorder.records)
+	}
+	if productRPC.detailReq != nil {
+		t.Fatalf("GetProduct called for malformed JSON: %#v", productRPC.detailReq)
+	}
+}
+
 func TestQueryToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{
 		queryResp: &productcatalogservice.GetAllProductsResp{
