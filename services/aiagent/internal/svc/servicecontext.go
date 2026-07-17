@@ -7,6 +7,7 @@ import (
 	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
 	aiusermemories "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_memories"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
+	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
@@ -38,10 +39,29 @@ type ServiceContext struct {
 	CouponRpc          couponsclient.Coupons
 	UserRpc            usersclient.Users
 	AuditRpc           auditclient.Audit
+	ToolRegistry       *aitools.Registry
+	ToolExecutor       *aitools.Executor
+	QueryTools         *aitools.QueryTools
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
 	mysql := sqlx.NewMysql(c.MysqlConfig.DataSource)
+	productRPC := productcatalogservice.NewProductCatalogService(zrpc.MustNewClient(c.ProductRpc))
+	inventoryRPC := inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc))
+	orderRPC := orderservice.NewOrderService(zrpc.MustNewClient(c.OrderRpc))
+	checkoutRPC := checkoutservice.NewCheckoutService(zrpc.MustNewClient(c.CheckoutRpc))
+	cartRPC := cartsclient.NewCart(zrpc.MustNewClient(c.CartRpc))
+	couponRPC := couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc))
+	toolRegistry := aitools.NewRegistry(c.ToolTimeout)
+	toolExecutor := aitools.NewExecutor(toolRegistry)
+	queryTools := aitools.NewQueryTools(toolExecutor, aitools.QueryToolClients{
+		Product:   productRPC,
+		Inventory: inventoryRPC,
+		Order:     orderRPC,
+		Cart:      cartRPC,
+		Coupon:    couponRPC,
+		Checkout:  checkoutRPC,
+	})
 
 	return &ServiceContext{
 		Config:             c,
@@ -52,13 +72,16 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ToolCallsModel:     aitoolcalls.NewAiToolCallsModel(mysql, c.Cache),
 		ConfirmationsModel: aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache),
 		UserMemoriesModel:  aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache),
-		ProductRpc:         productcatalogservice.NewProductCatalogService(zrpc.MustNewClient(c.ProductRpc)),
-		InventoryRpc:       inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc)),
-		OrderRpc:           orderservice.NewOrderService(zrpc.MustNewClient(c.OrderRpc)),
-		CheckoutRpc:        checkoutservice.NewCheckoutService(zrpc.MustNewClient(c.CheckoutRpc)),
-		CartRpc:            cartsclient.NewCart(zrpc.MustNewClient(c.CartRpc)),
-		CouponRpc:          couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc)),
+		ProductRpc:         productRPC,
+		InventoryRpc:       inventoryRPC,
+		OrderRpc:           orderRPC,
+		CheckoutRpc:        checkoutRPC,
+		CartRpc:            cartRPC,
+		CouponRpc:          couponRPC,
 		UserRpc:            usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
 		AuditRpc:           auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc)),
+		ToolRegistry:       toolRegistry,
+		ToolExecutor:       toolExecutor,
+		QueryTools:         queryTools,
 	}
 }
