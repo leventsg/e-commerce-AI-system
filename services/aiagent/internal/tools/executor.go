@@ -26,6 +26,7 @@ type ExecuteRequest struct {
 	UserID         uint64
 	ConversationID string
 	MessageID      string
+	ClientIP       string
 	ToolName       string
 	Arguments      map[string]any
 }
@@ -53,6 +54,9 @@ type ToolCallRecord struct {
 	ResultSummary  string
 	ErrorMessage   string
 	Latency        time.Duration
+	ResultData     any
+	ClientIP       string
+	Metadata       domain.Metadata
 }
 
 type ToolCallRecorder interface {
@@ -88,7 +92,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	metadata, err := e.registry.Metadata(req.ToolName)
 	if err != nil {
 		event := failedToolEvent(req, req.ToolName, "工具未注册，无法执行。", err)
-		e.record(ctx, req, map[string]any{}, toolStatusFailed, "", err.Error(), time.Since(startedAt))
+		e.record(ctx, req, domain.Metadata{}, map[string]any{}, toolStatusFailed, "", err.Error(), nil, time.Since(startedAt))
 		return event
 	}
 
@@ -96,7 +100,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	args := argx.SanitizeMapKeys(req.Arguments, sensitiveToolArgumentKeys)
 	if handler == nil {
 		event := failedToolEvent(req, metadata.Name, "工具暂不可用，请稍后重试。", ErrToolHandlerRequired)
-		e.record(ctx, req, args, toolStatusFailed, "", ErrToolHandlerRequired.Error(), time.Since(startedAt))
+		e.record(ctx, req, metadata, args, toolStatusFailed, "", ErrToolHandlerRequired.Error(), nil, time.Since(startedAt))
 		return event
 	}
 
@@ -122,7 +126,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 			content = "工具调用超时，未完成操作，请稍后重试。"
 		}
 		event := failedToolEvent(req, metadata.Name, content, err)
-		e.record(ctx, req, args, toolStatusFailed, "", err.Error(), latency)
+		e.record(ctx, req, metadata, args, toolStatusFailed, "", err.Error(), nil, latency)
 		return event
 	}
 
@@ -138,8 +142,14 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 		Content:        strings.TrimSpace(result.Summary),
 		Done:           true,
 	}
-	e.record(ctx, req, args, toolStatusSuccess, event.Content, "", latency)
+	e.record(ctx, req, metadata, args, toolStatusSuccess, event.Content, "", result.Data, latency)
 	return event
+}
+
+func (e *Executor) Reject(ctx context.Context, req ExecuteRequest, cause error) domain.AgentEvent {
+	return e.Execute(ctx, req, func(context.Context, HandlerRequest) (HandlerResult, error) {
+		return HandlerResult{}, cause
+	})
 }
 
 type handlerResponse struct {
@@ -183,7 +193,7 @@ func failedToolEvent(req ExecuteRequest, toolName, content string, cause error) 
 }
 
 // 记录工具调用的相关信息
-func (e *Executor) record(ctx context.Context, req ExecuteRequest, args map[string]any, status, summary, errMsg string, latency time.Duration) {
+func (e *Executor) record(ctx context.Context, req ExecuteRequest, metadata domain.Metadata, args map[string]any, status, summary, errMsg string, resultData any, latency time.Duration) {
 	if e.recorder == nil {
 		return
 	}
@@ -196,6 +206,9 @@ func (e *Executor) record(ctx context.Context, req ExecuteRequest, args map[stri
 		ResultSummary:  summary,
 		ErrorMessage:   errMsg,
 		Latency:        latency,
+		ResultData:     resultData,
+		ClientIP:       req.ClientIP,
+		Metadata:       metadata,
 	}
 	if err := e.recorder.RecordToolCall(ctx, record); err != nil {
 		logx.Errorw("record ai tool call failed", logx.Field("tool", req.ToolName), logx.Field("err", err))

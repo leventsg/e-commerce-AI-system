@@ -119,6 +119,66 @@ func TestExecutorUnknownToolFailsBeforeHandler(t *testing.T) {
 	}
 }
 
+func TestExecutorRecorderCapturesWriteSuccessFailureAndTimeout(t *testing.T) {
+	registry := NewRegistry(config.ToolTimeoutConfig{WriteSeconds: 1})
+	recorder := &capturingToolCallRecorder{}
+	executor := NewExecutor(registry, WithToolCallRecorder(recorder))
+
+	success := executor.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ConversationID: "conv-1", ClientIP: "203.0.113.8",
+		ToolName:  domain.ToolCartAdd,
+		Arguments: map[string]any{"product_id": 12, "quantity": 2, "user_id": 999},
+	}, func(context.Context, HandlerRequest) (HandlerResult, error) {
+		return HandlerResult{
+			Data:    map[string]any{"cart_item_id": 8},
+			Summary: "购物车已更新。",
+		}, nil
+	})
+	if success.Status != toolStatusSuccess {
+		t.Fatalf("success event = %#v", success)
+	}
+
+	failure := executor.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ConversationID: "conv-1", ToolName: domain.ToolCouponClaim,
+		Arguments: map[string]any{"coupon_id": "coupon-1"},
+	}, func(context.Context, HandlerRequest) (HandlerResult, error) {
+		return HandlerResult{}, errors.New("already claimed")
+	})
+	if failure.Status != toolStatusFailed {
+		t.Fatalf("failure event = %#v", failure)
+	}
+
+	timedOut := executor.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ConversationID: "conv-1", ToolName: domain.ToolCartSub,
+		Arguments: map[string]any{"cart_item_id": 8, "quantity": 1},
+	}, func(ctx context.Context, _ HandlerRequest) (HandlerResult, error) {
+		<-ctx.Done()
+		return HandlerResult{}, ctx.Err()
+	})
+	if timedOut.Status != toolStatusFailed || !strings.Contains(timedOut.Content, "超时") {
+		t.Fatalf("timeout event = %#v", timedOut)
+	}
+
+	if len(recorder.records) != 3 {
+		t.Fatalf("record count = %d, want 3", len(recorder.records))
+	}
+	if !recorder.records[0].Metadata.WriteOperation || recorder.records[0].ClientIP != "203.0.113.8" {
+		t.Fatalf("success record metadata = %#v", recorder.records[0])
+	}
+	if recorder.records[0].ResultData == nil || recorder.records[0].Status != toolStatusSuccess {
+		t.Fatalf("success record result = %#v", recorder.records[0])
+	}
+	if recorder.records[1].ErrorMessage != "already claimed" || recorder.records[1].Status != toolStatusFailed {
+		t.Fatalf("failure record = %#v", recorder.records[1])
+	}
+	if recorder.records[2].ErrorMessage != context.DeadlineExceeded.Error() {
+		t.Fatalf("timeout record = %#v", recorder.records[2])
+	}
+	for _, record := range recorder.records {
+		assertNoSensitiveKey(t, record.Arguments)
+	}
+}
+
 func assertToolDeadline(t *testing.T, executor *Executor, toolName string, want time.Duration) {
 	t.Helper()
 
@@ -161,4 +221,13 @@ func assertNoSensitiveKey(t *testing.T, value any) {
 			assertNoSensitiveKey(t, item)
 		}
 	}
+}
+
+type capturingToolCallRecorder struct {
+	records []ToolCallRecord
+}
+
+func (r *capturingToolCallRecorder) RecordToolCall(_ context.Context, record ToolCallRecord) error {
+	r.records = append(r.records, record)
+	return nil
 }

@@ -1,0 +1,339 @@
+package tools
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
+	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
+	"github.com/leventsg/e-commerce-AI-system/services/coupons/couponsclient"
+	"google.golang.org/grpc"
+)
+
+func TestWriteToolsRegistersLowRiskHandlers(t *testing.T) {
+	writeTools := newTestWriteTools(WriteToolClients{
+		Cart:   &fakeCartWriteRPC{},
+		Coupon: &fakeCouponWriteRPC{},
+	})
+
+	for _, name := range []string{domain.ToolCartAdd, domain.ToolCartSub, domain.ToolCouponClaim} {
+		if _, ok := writeTools.Handler(name); !ok {
+			t.Fatalf("write handler %q was not registered", name)
+		}
+		metadata, err := writeTools.executor.registry.Metadata(name)
+		if err != nil {
+			t.Fatalf("metadata %q: %v", name, err)
+		}
+		if metadata.RequireConfirmation {
+			t.Fatalf("%s unexpectedly requires confirmation", name)
+		}
+		if !metadata.WriteOperation || metadata.TimeoutSeconds != 5 {
+			t.Fatalf("metadata %s = %#v, want 5 second write operation", name, metadata)
+		}
+	}
+}
+
+func TestWriteToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing.T) {
+	rpc := &fakeCartWriteRPC{}
+	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+
+	event := writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID:   42,
+		ToolName: domain.ToolCartAdd,
+		Arguments: map[string]any{
+			"user_id":    999,
+			"product_id": 12,
+			"sku_id":     7,
+			"quantity":   3,
+		},
+	})
+
+	assertWriteToolSuccess(t, event, domain.ToolCartAdd)
+	if len(rpc.createReqs) != 3 {
+		t.Fatalf("CreateCartItem calls = %d, want 3", len(rpc.createReqs))
+	}
+	for _, req := range rpc.createReqs {
+		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 0 {
+			t.Fatalf("CreateCartItem request = %#v, want trusted user and one-unit adapter", req)
+		}
+	}
+	data := decodeEventData(t, event)
+	if data["product_id"] != float64(12) || data["added_quantity"] != float64(3) {
+		t.Fatalf("cart.add data = %#v", data)
+	}
+}
+
+func TestWriteToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
+	rpc := &fakeCartWriteRPC{listResp: &cartsclient.CartItemListResponse{
+		Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 12, Quantity: 4}},
+	}}
+	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+
+	event := writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID:   42,
+		ToolName: domain.ToolCartSub,
+		Arguments: map[string]any{
+			"user_id":      999,
+			"cart_item_id": 8,
+			"quantity":     2,
+		},
+	})
+
+	assertWriteToolSuccess(t, event, domain.ToolCartSub)
+	if rpc.listReq == nil || rpc.listReq.Id != 42 {
+		t.Fatalf("CartItemList request = %#v, want trusted user 42", rpc.listReq)
+	}
+	if len(rpc.subReqs) != 2 {
+		t.Fatalf("SubCartItem calls = %d, want 2", len(rpc.subReqs))
+	}
+	for _, req := range rpc.subReqs {
+		if req.UserId != 42 || req.ProductId != 12 {
+			t.Fatalf("SubCartItem request = %#v, want resolved owned product", req)
+		}
+	}
+	data := decodeEventData(t, event)
+	if data["remaining_quantity"] != float64(2) {
+		t.Fatalf("cart.sub remaining quantity = %#v, want 2", data["remaining_quantity"])
+	}
+
+	rpc.subReqs = nil
+	event = writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ToolName: domain.ToolCartSub,
+		Arguments: map[string]any{"cart_item_id": 8, "quantity": 4},
+	})
+	assertWriteToolFailed(t, event)
+	if len(rpc.subReqs) != 0 {
+		t.Fatalf("SubCartItem was called when request would delete item: %#v", rpc.subReqs)
+	}
+}
+
+func TestWriteToolsCartSubRejectsCartItemOutsideAuthenticatedUser(t *testing.T) {
+	rpc := &fakeCartWriteRPC{listResp: &cartsclient.CartItemListResponse{
+		Data: []*cartsclient.CartInfoResponse{{Id: 9, UserId: 42, ProductId: 18, Quantity: 2}},
+	}}
+	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+
+	event := writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ToolName: domain.ToolCartSub,
+		Arguments: map[string]any{"cart_item_id": 8, "quantity": 1},
+	})
+
+	assertWriteToolFailed(t, event)
+	if len(rpc.subReqs) != 0 {
+		t.Fatalf("SubCartItem called for unowned item: %#v", rpc.subReqs)
+	}
+}
+
+func TestWriteToolsCartBatchPartialFailureIsReportedAsFailure(t *testing.T) {
+	rpc := &fakeCartWriteRPC{createErrAt: 2, createErr: errors.New("cart unavailable")}
+	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+
+	event := writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ToolName: domain.ToolCartAdd,
+		Arguments: map[string]any{"product_id": 12, "quantity": 3},
+	})
+
+	assertWriteToolFailed(t, event)
+	if len(rpc.createReqs) != 2 {
+		t.Fatalf("CreateCartItem calls = %d, want stop at second call", len(rpc.createReqs))
+	}
+	if !strings.Contains(event.DataJSON, "completed 1 of 3") {
+		t.Fatalf("partial failure data = %s, want completed count", event.DataJSON)
+	}
+	if strings.Contains(event.Content, "成功") {
+		t.Fatalf("failure content claims success: %q", event.Content)
+	}
+}
+
+func TestWriteToolsCartSubPartialFailureIsReportedAsFailure(t *testing.T) {
+	rpc := &fakeCartWriteRPC{
+		listResp: &cartsclient.CartItemListResponse{
+			Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 12, Quantity: 4}},
+		},
+		subErrAt: 2,
+		subErr:   errors.New("cart unavailable"),
+	}
+	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+
+	event := writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ToolName: domain.ToolCartSub,
+		Arguments: map[string]any{"cart_item_id": 8, "quantity": 2},
+	})
+
+	assertWriteToolFailed(t, event)
+	if len(rpc.subReqs) != 2 {
+		t.Fatalf("SubCartItem calls = %d, want stop at second call", len(rpc.subReqs))
+	}
+	if !strings.Contains(event.DataJSON, "completed 1 of 2") {
+		t.Fatalf("partial failure data = %s, want completed count", event.DataJSON)
+	}
+}
+
+func TestWriteToolsCouponClaimUsesAuthenticatedUserAndCompactResult(t *testing.T) {
+	rpc := &fakeCouponWriteRPC{resp: &couponsclient.ClaimCouponResp{
+		Coupon: &couponsclient.Coupon{Id: "coupon-1", Name: "新人券", Type: coupons.CouponType_COUPON_TYPE_FIXED_AMOUNT},
+	}}
+	writeTools := newTestWriteTools(WriteToolClients{Coupon: rpc})
+
+	event := writeTools.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ToolName: domain.ToolCouponClaim,
+		Arguments: map[string]any{"coupon_id": "coupon-1", "user_id": 999},
+	})
+
+	assertWriteToolSuccess(t, event, domain.ToolCouponClaim)
+	if rpc.req == nil || rpc.req.UserId != 42 || rpc.req.CouponId != "coupon-1" {
+		t.Fatalf("ClaimCoupon request = %#v", rpc.req)
+	}
+	data := decodeEventData(t, event)
+	if data["coupon_id"] != "coupon-1" || data["name"] != "新人券" {
+		t.Fatalf("coupon.claim data = %#v", data)
+	}
+	if _, ok := data["remaining_count"]; ok {
+		t.Fatalf("coupon.claim leaked unrelated coupon fields: %#v", data)
+	}
+}
+
+func TestWriteToolsCouponClaimRejectsBusinessFailureNilAndRPCError(t *testing.T) {
+	tests := []struct {
+		name string
+		rpc  *fakeCouponWriteRPC
+	}{
+		{name: "business failure", rpc: &fakeCouponWriteRPC{resp: &couponsclient.ClaimCouponResp{StatusCode: 400, StatusMsg: "already claimed"}}},
+		{name: "nil response", rpc: &fakeCouponWriteRPC{}},
+		{name: "rpc error", rpc: &fakeCouponWriteRPC{err: errors.New("coupon unavailable")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := newTestWriteTools(WriteToolClients{Coupon: tt.rpc}).Execute(context.Background(), ExecuteRequest{
+				UserID: 42, ToolName: domain.ToolCouponClaim,
+				Arguments: map[string]any{"coupon_id": "coupon-1"},
+			})
+			assertWriteToolFailed(t, event)
+		})
+	}
+}
+
+func TestWriteToolsEinoHandlerRequiresTrustedExecutionContext(t *testing.T) {
+	rpc := &fakeCouponWriteRPC{resp: &couponsclient.ClaimCouponResp{
+		Coupon: &couponsclient.Coupon{Id: "coupon-1", Name: "新人券"},
+	}}
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+	NewWriteTools(NewExecutor(registry), WriteToolClients{Coupon: rpc})
+	tool, err := registry.Tool(domain.ToolCouponClaim)
+	if err != nil {
+		t.Fatalf("coupon claim tool: %v", err)
+	}
+
+	if _, err := tool.InvokableRun(context.Background(), `{"coupon_id":"coupon-1","user_id":999}`); !errors.Is(err, ErrToolExecutionContext) {
+		t.Fatalf("InvokableRun error = %v, want ErrToolExecutionContext", err)
+	}
+	if rpc.req != nil {
+		t.Fatalf("ClaimCoupon called without trusted context: %#v", rpc.req)
+	}
+
+	ctx := WithToolExecutionContext(context.Background(), ToolExecutionContext{UserID: 42})
+	if _, err := tool.InvokableRun(ctx, `{"coupon_id":"coupon-1","user_id":999}`); err != nil {
+		t.Fatalf("trusted InvokableRun: %v", err)
+	}
+	if rpc.req.UserId != 42 {
+		t.Fatalf("ClaimCoupon user = %d, want trusted user 42", rpc.req.UserId)
+	}
+}
+
+func TestWriteToolsEinoMalformedJSONIsRecorded(t *testing.T) {
+	rpc := &fakeCouponWriteRPC{}
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+	recorder := &capturingToolCallRecorder{}
+	NewWriteTools(NewExecutor(registry, WithToolCallRecorder(recorder)), WriteToolClients{Coupon: rpc})
+	tool, err := registry.Tool(domain.ToolCouponClaim)
+	if err != nil {
+		t.Fatalf("coupon claim tool: %v", err)
+	}
+	ctx := WithToolExecutionContext(context.Background(), ToolExecutionContext{
+		UserID: 42, ConversationID: "conv-1", MessageID: "msg-1",
+	})
+
+	if _, err := tool.InvokableRun(ctx, `{"coupon_id":`); err == nil {
+		t.Fatal("InvokableRun malformed JSON returned nil error")
+	}
+	if len(recorder.records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(recorder.records))
+	}
+	record := recorder.records[0]
+	if record.UserID != 42 || record.ToolName != domain.ToolCouponClaim || record.Status != toolStatusFailed {
+		t.Fatalf("malformed JSON record = %#v", record)
+	}
+	if !strings.Contains(record.ErrorMessage, "invalid JSON arguments") {
+		t.Fatalf("malformed JSON error = %q", record.ErrorMessage)
+	}
+	if rpc.req != nil {
+		t.Fatalf("ClaimCoupon called for malformed JSON: %#v", rpc.req)
+	}
+}
+
+func newTestWriteTools(clients WriteToolClients) *WriteTools {
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+	return NewWriteTools(NewExecutor(registry), clients)
+}
+
+func assertWriteToolSuccess(t *testing.T, event domain.AgentEvent, toolName string) {
+	t.Helper()
+	if event.Status != toolStatusSuccess || event.Tool != toolName {
+		t.Fatalf("event = %#v, want successful %s", event, toolName)
+	}
+}
+
+func assertWriteToolFailed(t *testing.T, event domain.AgentEvent) {
+	t.Helper()
+	if event.Status != toolStatusFailed {
+		t.Fatalf("event = %#v, want failed", event)
+	}
+}
+
+type fakeCartWriteRPC struct {
+	listReq     *cartsclient.UserInfo
+	listResp    *cartsclient.CartItemListResponse
+	listErr     error
+	createReqs  []*cartsclient.CartItemRequest
+	createErrAt int
+	createErr   error
+	subReqs     []*cartsclient.CartItemRequest
+	subErrAt    int
+	subErr      error
+}
+
+func (f *fakeCartWriteRPC) CartItemList(_ context.Context, req *cartsclient.UserInfo, _ ...grpc.CallOption) (*cartsclient.CartItemListResponse, error) {
+	f.listReq = req
+	return f.listResp, f.listErr
+}
+
+func (f *fakeCartWriteRPC) CreateCartItem(_ context.Context, req *cartsclient.CartItemRequest, _ ...grpc.CallOption) (*cartsclient.CreateCartResponse, error) {
+	f.createReqs = append(f.createReqs, req)
+	if f.createErrAt > 0 && len(f.createReqs) == f.createErrAt {
+		return nil, f.createErr
+	}
+	return &cartsclient.CreateCartResponse{Id: 8}, nil
+}
+
+func (f *fakeCartWriteRPC) SubCartItem(_ context.Context, req *cartsclient.CartItemRequest, _ ...grpc.CallOption) (*cartsclient.SubCartResponse, error) {
+	f.subReqs = append(f.subReqs, req)
+	if f.subErrAt > 0 && len(f.subReqs) == f.subErrAt {
+		return nil, f.subErr
+	}
+	return &cartsclient.SubCartResponse{Id: 8}, nil
+}
+
+type fakeCouponWriteRPC struct {
+	req  *couponsclient.ClaimCouponReq
+	resp *couponsclient.ClaimCouponResp
+	err  error
+}
+
+func (f *fakeCouponWriteRPC) ClaimCoupon(_ context.Context, req *couponsclient.ClaimCouponReq, _ ...grpc.CallOption) (*couponsclient.ClaimCouponResp, error) {
+	f.req = req
+	return f.resp, f.err
+}

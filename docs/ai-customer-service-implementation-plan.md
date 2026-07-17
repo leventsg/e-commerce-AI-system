@@ -683,9 +683,14 @@ Expected: Eino Tool 入参转换、用户 ID 注入、RPC 调用、结果摘要�
 
 - Modify: `services/aiagent/internal/tools/cart_tools.go`
 - Modify: `services/aiagent/internal/tools/coupon_tools.go`
+- Modify: `services/aiagent/internal/tools/executor.go`
+- Create: `services/aiagent/internal/tools/write_tools.go`
+- Create: `services/aiagent/internal/audit/recorder.go`
+- Modify: `services/aiagent/internal/svc/servicecontext.go`
 - Test: `services/aiagent/internal/tools/write_tools_test.go`
+- Test: `services/aiagent/internal/audit/recorder_test.go`
 
-- [ ] **Step 1: 实现低风险写操作 Eino Tool handler**
+- [x] **Step 1: 实现低风险写操作 Eino Tool handler**
 
 RPC 对应：
 
@@ -693,7 +698,9 @@ RPC 对应：
 - `cart.sub` -> `Cart.SubCartItem`
 - `coupon.claim` -> `Coupons.ClaimCoupon`
 
-- [ ] **Step 2: 写操作记录审计**
+`Cart.CreateCartItem` 和 `Cart.SubCartItem` 的现有 RPC 语义均为单次增减 1。AI 工具层按 `quantity` 重复调用以适配 Tool schema；`cart.sub` 先通过当前用户的 `CartItemList` 将 `cart_item_id` 转换为 RPC 所需的 `product_id`，并禁止将数量减少到 0，删除操作仍由后续高风险确认流程处理。
+
+- [x] **Step 2: 写操作记录审计**
 
 每次成功或失败都写入 `ai_tool_calls`，并调用审计记录器记录：
 
@@ -704,12 +711,15 @@ RPC 对应：
 - `error_message`
 - `latency_ms`
 
-- [ ] **Step 3: 运行测试**
+Task 9 前置最小可复用 recorder：共享 Executor 的所有工具调用写入 `ai_tool_calls`，metadata 标记为写操作的调用额外写入 audit 服务。Task 14 继续负责覆盖后续高风险工具和完整观测测试。
+
+- [x] **Step 3: 运行测试**
 
 Run:
 
 ```bash
 go test ./services/aiagent/internal/tools -run TestWriteTools -count=1
+go test ./services/aiagent/internal/audit -run TestRecorder -count=1
 ```
 
 Expected: 低风险写操作无需确认，但必须记录审计。
