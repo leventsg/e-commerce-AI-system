@@ -214,6 +214,13 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - executed：已执行
 - failed：执行失败
 
+并发与幂等：
+- 使用 `ai:confirmation:lock:<confirmation_id>` Redis 短锁合并同一确认 ID 的同时请求，默认锁超时 5 秒。
+- Redis 锁只覆盖确认状态读取和更新，不跨业务 RPC 持有。
+- Redis 锁竞争时直接返回稍后重试，不访问 MySQL；Redis 基础设施错误时降级到 MySQL 条件更新。
+- MySQL 使用带 `user_id`、旧状态和过期条件的原子更新，是确认状态与最终幂等的事实来源。
+- `approved` 是高风险操作的一次性执行领取状态；业务成功后更新为 `executed`，失败后更新为 `failed`。
+
 ## 4. 数据库设计
 ### 4.1 ai_conversations
 | 字段 | 说明 |

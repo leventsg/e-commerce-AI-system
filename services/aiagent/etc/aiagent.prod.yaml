@@ -71,6 +71,7 @@ ToolTimeout:
 
 Confirmation:
   ExpireSeconds: 300
+  LockExpireSeconds: 5
 
 ProductRpc:
   Target: consul://${CONSUL_HOST}/products.rpc?wait=14s

@@ -1,6 +1,10 @@
 package argx
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+	"unicode"
+)
 
 // 清理输入数据中的敏感键值对
 func SanitizeMapKeys(input map[string]any, bannedKeys []string) map[string]any {
@@ -20,24 +24,46 @@ func SanitizeMapKeys(input map[string]any, bannedKeys []string) map[string]any {
 }
 
 func sanitizeValue(value any, banned map[string]bool) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		cleaned := make(map[string]any, len(typed))
-		for key, nested := range typed {
+	return sanitizeReflectValue(reflect.ValueOf(value), banned)
+}
+
+// 递归清理反射值中的敏感键值对
+func sanitizeReflectValue(value reflect.Value, banned map[string]bool) any {
+	if !value.IsValid() {
+		return nil
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Map:
+		if value.Type().Key().Kind() != reflect.String {
+			return value.Interface()
+		}
+		cleaned := make(map[string]any, value.Len())
+		iterator := value.MapRange()
+		for iterator.Next() {
+			key := iterator.Key().String()
 			if banned[normalizeKey(key)] {
 				continue
 			}
-			cleaned[key] = sanitizeValue(nested, banned)
+			cleaned[key] = sanitizeReflectValue(iterator.Value(), banned)
 		}
 		return cleaned
-	case []any:
-		cleaned := make([]any, 0, len(typed))
-		for _, item := range typed {
-			cleaned = append(cleaned, sanitizeValue(item, banned))
+	case reflect.Slice, reflect.Array:
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			return value.Interface()
+		}
+		cleaned := make([]any, 0, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			cleaned = append(cleaned, sanitizeReflectValue(value.Index(i), banned))
 		}
 		return cleaned
 	default:
-		return typed
+		return value.Interface()
 	}
 }
 
@@ -53,7 +79,12 @@ func normalizedKeySet(keys []string) map[string]bool {
 	return result
 }
 
-// 去除字符串中的空格并转换为小写
+// 忽略大小写和常见分隔符，统一 snake_case、kebab-case 与 camelCase 键。
 func normalizeKey(key string) string {
-	return strings.ToLower(strings.TrimSpace(key))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, strings.TrimSpace(key))
 }
