@@ -1,0 +1,24 @@
+Name: ai-api
+Host: 0.0.0.0
+Port: 8007
+
+AuthsRpc:
+  Target: consul://localhost:8500/auths.rpc?wait=14s
+  NonBlock: true
+
+AiAgentRpc:
+  Target: consul://localhost:8500/aiagent.rpc?wait=14s
+  NonBlock: true
+  Timeout: 30000
+
+Telemetry:
+  Name: ai-api
+  Endpoint: http://localhost:14268/api/traces
+  Batcher: jaeger
+  Sampler: 1.0
+
+DevServer:
+  Enabled: true
+  Host: localhost
+  Port: 8107
+  EnablePprof: false

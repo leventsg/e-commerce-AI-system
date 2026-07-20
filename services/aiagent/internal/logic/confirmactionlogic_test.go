@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
@@ -18,8 +19,9 @@ func TestConfirmActionRejectsWithoutExecutingTool(t *testing.T) {
 		Status: confirmation.StatusRejected,
 	}}
 	executor := &fakeConfirmedToolExecutor{}
+	messages := &fakeChatMessagesModel{}
 	logic := NewConfirmActionLogic(context.Background(), &svc.ServiceContext{
-		ConfirmationManager: manager, HighRiskTools: executor,
+		ConfirmationManager: manager, HighRiskTools: executor, MessagesModel: messages,
 	})
 
 	resp, err := logic.ConfirmAction(&aiagent.ConfirmActionRequest{
@@ -34,6 +36,9 @@ func TestConfirmActionRejectsWithoutExecutingTool(t *testing.T) {
 	}
 	if len(resp.Events) != 1 || resp.Events[0].Type != domain.EventAssistantMessage || !resp.Events[0].Done {
 		t.Fatalf("response = %#v", resp)
+	}
+	if messages.batchCalls != 1 || messages.insertCalls != 0 || len(messages.inserted) != 1 || messages.inserted[0].Role != "assistant" || messages.inserted[0].ConversationId != "conv-1" {
+		t.Fatalf("batchCalls=%d insertCalls=%d messages=%+v", messages.batchCalls, messages.insertCalls, messages.inserted)
 	}
 }
 
@@ -65,6 +70,31 @@ func TestConfirmActionApprovedExecutesPersistedArgumentsAndMarksExecuted(t *test
 	}
 	if len(resp.Events) != 1 || resp.Events[0].Type != domain.EventToolResult || resp.Events[0].Status != "success" {
 		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestConfirmActionPreservesExecutedResultWhenBatchPersistenceFails(t *testing.T) {
+	manager := &fakeConfirmActionManager{decided: approvedConfirmation()}
+	executor := &fakeConfirmedToolExecutor{event: domain.AgentEvent{
+		Type: domain.EventToolResult, Tool: domain.ToolOrderCancel, Status: "success",
+		DataJSON: `{"order_id":"order-1"}`, Content: "订单已取消。", BusinessExecuted: true, Done: true,
+	}}
+	messages := &fakeChatMessagesModel{err: errors.New("batch insert failed")}
+	logic := NewConfirmActionLogic(context.Background(), &svc.ServiceContext{
+		ConfirmationManager: manager, HighRiskTools: executor, MessagesModel: messages,
+	})
+
+	resp, err := logic.ConfirmAction(&aiagent.ConfirmActionRequest{
+		UserId: 42, ConversationId: "conv-1", ConfirmationId: "confirm-1", Approved: true,
+	})
+	if err != nil || len(resp.Events) != 2 || resp.Events[0].Type != domain.EventToolResult || resp.Events[1].Type != domain.EventError {
+		t.Fatalf("ConfirmAction() resp=%+v err=%v", resp, err)
+	}
+	if messages.batchCalls != 1 || messages.insertCalls != 0 || len(messages.inserted) != 1 {
+		t.Fatalf("batchCalls=%d insertCalls=%d messages=%+v", messages.batchCalls, messages.insertCalls, messages.inserted)
+	}
+	if !strings.Contains(resp.Events[1].DataJson, `"business_executed":true`) {
+		t.Fatalf("persistence error=%+v", resp.Events[1])
 	}
 }
 

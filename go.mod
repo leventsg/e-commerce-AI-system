@@ -13,6 +13,7 @@ require (
 	github.com/elastic/go-elasticsearch/v7 v7.17.10
 	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.0
 	github.com/olivere/elastic/v7 v7.0.32
 	github.com/qiniu/go-sdk/v7 v7.25.2
 	github.com/segmentio/kafka-go v0.4.51
@@ -30,6 +31,7 @@ require (
 )
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect

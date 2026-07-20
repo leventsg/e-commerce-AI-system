@@ -1,0 +1,25 @@
+Name: ai-api
+Host: 0.0.0.0
+Port: 8007
+Mode: pro
+
+AuthsRpc:
+  Target: consul://${CONSUL_HOST}/auths.rpc?wait=14s
+  NonBlock: true
+
+AiAgentRpc:
+  Target: consul://${CONSUL_HOST}/aiagent.rpc?wait=14s
+  NonBlock: true
+  Timeout: 30000
+
+Telemetry:
+  Name: ai-api
+  Endpoint: ${TRACES_ENDPOINT}
+  Batcher: jaeger
+  Sampler: 0.1
+
+DevServer:
+  Enabled: true
+  Host: 0.0.0.0
+  Port: 8107
+  EnablePprof: false

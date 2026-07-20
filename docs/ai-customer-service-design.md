@@ -26,7 +26,7 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 
 接口：
 
-`GET /douyin/ai/chat/ws?conversation_id=optional`
+`GET /douyin/ai/chat?conversation_id=optional`
 
 鉴权：
 

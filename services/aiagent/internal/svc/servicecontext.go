@@ -12,7 +12,10 @@ import (
 	aiaudit "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	aiconfirmation "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/planner"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
@@ -29,13 +32,29 @@ import (
 )
 
 type ConfirmationManager interface {
+	// 用户确认请求的决策处理，返回确认记录
 	Decide(ctx context.Context, req aiconfirmation.DecisionRequest) (*domain.Confirmation, error)
+	// 标记确认请求为已执行状态
 	MarkExecuted(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
+	// 标记确认请求为已失败状态
 	MarkFailed(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
 }
 
 type HighRiskToolExecutor interface {
 	ExecuteConfirmed(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
+}
+
+type ChatToolExecutor interface {
+	Execute(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
+}
+
+type ConfirmationRequester interface {
+	RequestConfirmation(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
+}
+
+type IntentPlanner interface {
+	// 根据用户消息和历史对话进行意图识别和规划，返回计划结果
+	Plan(ctx context.Context, req planner.PlanRequest) (planner.PlanResult, error)
 }
 
 type ServiceContext struct {
@@ -61,6 +80,12 @@ type ServiceContext struct {
 	WriteTools          *aitools.WriteTools
 	ConfirmationManager ConfirmationManager
 	HighRiskTools       HighRiskToolExecutor
+	ConversationManager conversation.Manager
+	IntentPlanner       IntentPlanner
+	AgentRunner         eino.Runner
+	QueryChatTools      ChatToolExecutor
+	WriteChatTools      ChatToolExecutor
+	HighRiskChatTools   ConfirmationRequester
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -104,6 +129,16 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Checkout: checkoutRPC,
 		Coupon:   couponRPC,
 	})
+	conversationManager := conversation.NewManager(
+		aiconversations.NewAiConversationsModel(mysql, c.Cache),
+		aimessages.NewAiMessagesModel(mysql, c.Cache),
+	)
+	modelFactory := eino.NewModelFactory()
+	intentPlanner := planner.New(toolRegistry, planner.WithIntentModel(modelFactory, c.IntentModel))
+	var agentRunner eino.Runner
+	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino); err == nil {
+		agentRunner = eino.NewRunner(chatModel)
+	}
 
 	return &ServiceContext{
 		Config:              c,
@@ -128,5 +163,11 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		WriteTools:          writeTools,
 		ConfirmationManager: confirmationManager,
 		HighRiskTools:       highRiskTools,
+		ConversationManager: conversationManager,
+		IntentPlanner:       intentPlanner,
+		AgentRunner:         agentRunner,
+		QueryChatTools:      queryTools,
+		WriteChatTools:      writeTools,
+		HighRiskChatTools:   highRiskTools,
 	}
 }

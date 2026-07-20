@@ -1,216 +1,245 @@
-# AI Customer Service Handoff
+# AI 智能客服交接文档
 
-## 1. 当前任务与仓库状态
+更新时间：2026-07-20
 
-本仓库正在按 `docs/ai-customer-service-implementation-plan.md` 逐项实现 AI 智能客服。
+当前分支：`feat/add_ai_agent_task12`
 
-当前分支：`feat/add_ai_agent_task11`
+当前基线：`e28059f Feat/add ai agent task11 (#23)`，与 `main` / `origin/main` 一致
 
-当前进度：
+## 1. 我们在做什么
 
-- Task 9（低风险写操作）已完成并进入 `main`。
-- Task 10（Confirmation Manager）已完成并提交在当前分支历史中。
-- 下一项是 Task 11：接入高风险 Eino Tool 和确认后的唯一一次业务执行。
-- 写本交接前工作区是干净的；写完后预期只有 `handoff.md` 被修改。
+仓库正在按 `docs/ai-customer-service-implementation-plan.md` 逐任务实现 AI 智能客服。
 
-相关提交：
+已经完成 Task 1-11。当前准备开始：
 
 ```text
-6f1288a 合并冲突
-5e35bae 实现高风险执行确认管理
-05001a6 Feat/add ai agent task9 (#21)
+Task 12: 新增 apis/ai WebSocket API
 ```
 
-开始工作前必须依次阅读：
+目标入口：
+
+```text
+GET /douyin/ai/chat/ws?conversation_id=optional
+```
+
+职责边界：
+
+- `apis/ai` 负责认证后的 WebSocket 协议、连接和事件转发。
+- `services/aiagent` 负责会话、Planner、Eino 编排、工具执行、确认和审计。
+- 用户 ID 只能来自认证上下文，WebSocket payload 中不能接受或信任 `user_id`。
+- 现有 product、inventory、order、checkout、cart、coupon、users、audit 服务仍是业务事实来源。
+
+新会话开始前必须依次阅读：
 
 1. `AGENTS.md`
 2. `docs/ai-customer-service-prd.md`
 3. `docs/ai-customer-service-design.md`
-4. `docs/ai-customer-service-implementation-plan.md`，重点是 Task 11
+4. `docs/ai-customer-service-implementation-plan.md`，重点 Task 12 和 Task 13
 
-## 2. 已完成内容
+## 2. 已经完成了什么
 
-### Task 9：低风险写操作
+### 2.1 Task 11：高风险 Eino Tool
 
-已实现三个不需要用户确认、但必须审计的 Eino Tool：
+PR #23 已合入 `main`，实现三个高风险工具：
 
-- `cart.add`
-- `cart.sub`
-- `coupon.claim`
+- `cart.delete`
+- `order.create`
+- `order.cancel`
 
-核心文件：
-
-- `services/aiagent/internal/tools/write_tools.go`
-- `services/aiagent/internal/tools/write_tools_test.go`
-- `services/aiagent/internal/tools/cart_tools.go`
-- `services/aiagent/internal/tools/coupon_tools.go`
-- `services/aiagent/internal/tools/executor.go`
-- `services/aiagent/internal/audit/recorder.go`
-- `services/aiagent/internal/audit/recorder_test.go`
-
-已经落实的行为：
-
-- 所有调用继续经过共享 `Executor` / Execution Guard。
-- 模型参数中的身份字段会被递归清除，业务 RPC 只能收到认证上下文中的用户 ID。
-- `cart.add` 的底层 RPC 每次只增加 1，因此工具层按 `quantity` 重复调用，并固定传 `Quantity: 0`。
-- `cart.sub` 先用当前用户的 `CartItemList` 将 `cart_item_id` 解析为 `product_id`，再逐次调用减少 RPC。
-- `cart.sub` 不允许减到 0；清零必须走后续需要确认的 `cart.delete`。
-- 批量操作中途失败会返回 failed，并记录已完成数量，不会生成成功话术。
-- 成功、业务失败、RPC 错误、超时都会写 `ai_tool_calls`。
-- 写工具还会调用 audit RPC；审计失败不会伪装成业务写入未发生，也不会自动重试业务写入。
-
-### Task 10：Confirmation Manager
-
-已实现 Redis 短锁削峰 + MySQL CAS 最终幂等的混合方案。
-
-核心文件：
-
-- `services/aiagent/internal/confirmation/manager.go`
-- `services/aiagent/internal/confirmation/manager_test.go`
-- `services/aiagent/internal/confirmation/locker.go`
-- `services/aiagent/internal/domain/confirmation.go`
-- `dal/model/ai/confirmations/aiconfirmationsmodel.go`
-- `dal/model/ai/confirmations/aiconfirmationsmodel_test.go`
-- `services/aiagent/internal/config/config.go`
-- `services/aiagent/internal/svc/servicecontext.go`
-- `services/aiagent/etc/aiagent.yaml`
-- `services/aiagent/etc/aiagent.prod.yaml`
-
-Manager 已暴露：
-
-- `Create`：创建 `pending` 确认。
-- `Decide`：原子批准或拒绝。
-- `MarkExecuted`：`approved -> executed`。
-- `MarkFailed`：`approved -> failed`。
-
-状态机：
+完整流程：
 
 ```text
-pending -> approved -> executed
-                    -> failed
-pending -> rejected
-pending -> expired
+Eino 首次调用
+-> 校验可信执行上下文和参数
+-> 只创建 pending confirmation
+-> 返回 confirmation_required
+-> 用户调用 ConfirmAction
+-> MySQL CAS 的唯一 winner 获得 approved
+-> 通过共享 Executor / Execution Guard 调业务 RPC
+-> 成功标记 executed，失败标记 failed
 ```
 
-幂等和锁行为：
+关键文件：
 
-- Redis key：`ai:confirmation:lock:<confirmation_id>`。
-- 默认锁 TTL 为 5 秒，确认有效期默认 300 秒。
-- Redis 锁竞争返回 `ErrConfirmationBusy`，并且不访问 MySQL。
-- Redis 获取锁发生连接或超时错误时记录日志，降级到 MySQL CAS。
-- MySQL 条件更新和 `RowsAffected` 是最终 winner 判定，Redis 不是事实来源。
-- Redis 锁只覆盖确认状态变更，Manager 返回前释放，绝不能跨 Task 11 的业务 RPC 持有。
-- 请求 context 已取消时，释放锁使用脱离取消且带 1 秒超时的 context。
-- 释放锁失败只记录错误，依靠 TTL 回收，不覆盖已经成功的 MySQL 结果。
+- `services/aiagent/internal/tools/high_risk_tools.go`
+- `services/aiagent/internal/tools/high_risk_tools_test.go`
+- `services/aiagent/internal/logic/confirmactionlogic.go`
+- `services/aiagent/internal/logic/confirmactionlogic_test.go`
+- `services/aiagent/internal/svc/servicecontext.go`
 
-安全行为：
+已经落实的安全语义：
 
-- `Create` 只接受 metadata 同时满足 high risk、require confirmation、write operation 的工具。
-- `confirmation_id` 格式为 `confirm_<UUIDv7>`。
-- 用户 ID 和 conversation ID 必须与数据库记录完全匹配。
-- 过期、拒绝、已批准、已执行和失败记录都不能再次领取。
-- 参数脱敏支持 snake_case、camelCase、kebab-case、大小写别名，以及 typed map/slice。
-- 已覆盖 `user_id`、token、access/refresh token、session、auth/authorization、cookie、JWT 等认证字段。
+- 普通 Eino 调用绝不直接执行高风险 RPC。
+- 确认记录持久化的是脱敏参数；确认执行不接受客户端重新提交业务参数。
+- `user_id` 在 RPC 前由认证上下文强制注入。
+- 拒绝、过期、重复、跨用户、跨会话、锁竞争均不能执行 RPC。
+- Redis 只保护状态读取/更新，不跨业务 RPC 持锁；最终幂等由 MySQL CAS 保证。
+- RPC 已执行但审计失败时返回 failed，并标记 `BusinessExecuted=true`；确认仍进入 `executed`，防止用户重试造成重复写入。
+- RPC 成功但 confirmation 终态保存失败时保留真实业务结果，并追加明确的 error event，不能伪装成业务未执行。
 
-Custom model 已增加：
+### 2.2 下单和预结算契约
 
-- `FindOneUncached`
-- `ResolvePending`
-- `ExpirePending`
-- `CompleteApproved`
+Tool schema 已与真实 RPC 对齐：
 
-没有修改数据库 schema、AiAgent proto 或 goctl 生成文件。
+- `checkout.prepare` 必填 `order_items[]`；每项含 `product_id`、`quantity`，`coupon_id` 可选。
+- `order.create` 必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选。
+- `payment_method`：1 微信，2 支付宝。
+- 没有 `pre_order_id` 时必须先调用 `checkout.prepare`，不能直接创建订单确认。
+- 创建 `order.create` 确认前会用可信用户查询 checkout detail，确认预订单 owner、金额和商品数量。
+- 使用优惠券时基于 checkout 商品快照调用 `coupon.calculate`；优惠券不可用或计算失败时不创建确认，摘要展示与该优惠券一致的应付金额。
 
-## 3. 已完成验证
+### 2.3 Execution Guard、审计和共享 helper
 
-Task 10 完成时新鲜执行并通过：
+- 所有工具继续走 `services/aiagent/internal/tools/executor.go`。
+- 写操作 RPC 成功但 `ai_tool_calls` 或 audit 持久化失败时，不再报告完整成功。
+- `domain.AgentEvent.BusinessExecuted` 只用于区分“业务已执行但审计失败”和“业务未执行”。
+- handler map 的共享合并函数已改为：
 
-```bash
-go test ./services/aiagent/internal/confirmation -run TestManager -count=1
-go test -race ./services/aiagent/internal/confirmation ./dal/model/ai/confirmations ./common/utils/argx -count=1
-go test ./services/aiagent/... ./dal/model/ai/confirmations ./common/utils/argx -count=1
-go vet ./services/aiagent/... ./dal/model/ai/confirmations ./common/utils/argx
-git diff --check
+```go
+func mergeHandlers(destination, source map[string]HandlerFunc)
 ```
 
-独立 code review 最终没有发现 Critical/Important 问题。
+它位于 `executor.go`，查询、低风险写和高风险工具共同使用。不要再恢复带查询限定的 `registerQueryHandlers`。
 
-注意：这不是对整个仓库 `go test ./...` 的声明。Task 11 完成后先运行其聚焦测试和 `services/aiagent/...`；只有声称整个 AI 客服功能完成时，才按 `AGENTS.md` 跑全仓测试。
+### 2.4 库存高并发死锁修复
 
-## 4. 当前卡点
+Task 11 开发期间发现并修复了库存真实扣减死锁，修复也包含在 PR #23。
 
-没有技术阻塞，Task 11 尚未开始实现。
+旧问题：
 
-当前缺口是把 Confirmation Manager 接到真正的高风险执行链：
+```text
+SELECT COUNT(*) ... FOR UPDATE
+-> 不存在记录产生 gap lock
+-> 并发 INSERT inventory_lock
+-> MySQL 1213 deadlock
+```
 
-- 首次请求只能创建确认并返回 `confirmation_required`，不能调用业务 RPC。
-- 用户确认后，只有 MySQL CAS 的唯一 winner 可以调用一次业务 RPC。
-- 业务成功后调用 `MarkExecuted`；业务失败或超时后调用 `MarkFailed`。
-- Task 10 的 Redis 锁在 Manager 返回前已经释放，Task 11 不应重新设计成长时间持锁。
+当前实现：
 
-计划中的高风险工具：
+- `TryLockOrder` 直接向 `inventory_lock(order_id, user_id)` INSERT，通过唯一索引原子抢占执行权。
+- MySQL 1062 表示同一请求已执行，按幂等成功返回；1213、1205和普通错误继续上抛。
+- 抢占记录与库存扣减在同一事务内，后续失败时幂等记录一起回滚，允许安全重试。
+- 多商品库存行按 `product_id` 固定顺序 `FOR UPDATE`，避免交叉锁顺序。
 
-- `cart.delete` -> `Cart.DeleteCartItem`
-- `order.create` -> `OrderService.CreateOrder`
-- `order.cancel` -> `OrderService.CancelOrder`
+验证场景已覆盖：
 
-额外要求：
+- 单商品 100 并发扣减。
+- 双商品相反输入顺序并发扣减。
+- 库存不足导致事务回滚后，使用相同 `pre_order_id` 可以重试成功。
+- 成功后重复相同幂等键不会再次扣减。
 
-- 创建订单前若没有 `pre_order_id`，先走 `checkout.prepare`，返回结算信息后再创建 `order.create` 确认。
-- `order.create` 使用优惠券时，确认摘要必须展示 coupon ID、应付金额和商品数量。
-- Task 11 的入口文件预计包括：
-  - `services/aiagent/internal/tools/cart_tools.go`
-  - `services/aiagent/internal/tools/order_tools.go`
-  - `services/aiagent/internal/logic/confirmactionlogic.go`
-  - `services/aiagent/internal/logic/confirmactionlogic_test.go`
+关键文件：
 
-## 5. 下一步计划
+- `dal/model/inventory/inventorymodel.go`
+- `dal/model/inventory/inventorymodel_test.go`
+- `test/rpc/inventory/inventory_test.go`
 
-1. 先检查 Task 11 对应的现有生成 logic、proto、Tool Registry metadata 和 cart/order/checkout RPC 的真实请求响应结构。
-2. 先写 `confirmactionlogic_test.go`，覆盖未确认不执行、批准后唯一执行、拒绝、过期、重复、跨用户、跨 conversation、业务失败和超时。
-3. 实现高风险 Tool handler，但所有调用仍必须经过现有 Execution Guard；不要直接从 logic 绕过 Executor 调业务 RPC。
-4. 首次高风险请求调用 `ConfirmationManager.Create`，返回结构化 `confirmation_required`。
-5. 确认请求通过 `Decide(... Approved: true)` 领取唯一执行权；只有成功从 pending 转为 approved 的调用方继续执行。
-6. 在 Redis 故障或锁过期、多请求同时进入时，依赖 MySQL CAS 保证只有一个 winner。
-7. 业务 RPC 完成后标记 executed/failed，并确保失败绝不被总结为成功。
-8. 为高风险写操作复用 Task 9 的 tool-call recorder 和 audit RPC，不另起旁路审计实现。
-9. 更新设计文档和实施计划中的 Task 11 状态。
-10. 至少运行：
+## 3. 当前状态和卡点
+
+### 3.1 工作区
+
+写交接前工作区是干净的。写完后应只有：
+
+```text
+M handoff.md
+```
+
+不要把旧 Task 11 的未提交状态带入新会话；PR #23 已经合并。
+
+### 3.2 Task 12 尚未开始
+
+目前没有技术阻塞，但 WebSocket API 代码尚不存在：
+
+- 仓库中没有 `apis/ai` 目录。
+- `services/aiagent/internal/logic/chatlogic.go` 仍是 goctl 生成的 TODO。
+- `ConfirmActionLogic` 已完成，可供 WebSocket 的 `confirm_action` 消息调用。
+
+因此当前不是“修 Task 11”，而是从 Task 12 的 API 契约和网关骨架开始。
+
+### 3.3 测试环境现状
+
+Task 11 和库存相关聚焦测试曾通过：
 
 ```bash
-go test ./services/aiagent/internal/logic -run TestConfirmAction -count=1
-go test -race ./services/aiagent/internal/logic ./services/aiagent/internal/confirmation -count=1
 go test ./services/aiagent/... -count=1
-go vet ./services/aiagent/...
+go test ./dal/model/inventory/... ./services/inventory/... -count=1
+go test ./test/rpc/inventory \
+  -run 'TestInventoryService_(HighConcurrency|MultiProductLockOrder|IdempotencyClaimRollsBackWithFailedDeduction)$' \
+  -count=3
 git diff --check
 ```
 
-## 6. 绝对不要再踩的坑
+不要声称当前 `go test ./...` 全绿。最后一次全仓执行仍有与 AI Task 11 无关的旧集成测试失败：
 
-1. 不要把 Redis 锁当作最终幂等保障。锁会超时、丢失、故障或同时放行；唯一执行权必须由 MySQL 条件更新决定。
-2. 不要让 Redis 锁跨业务 RPC。长 RPC、超时或进程崩溃会造成无意义阻塞；Task 10 已明确只锁状态变更。
-3. 不要在 Redis 故障时直接失败。既定策略是记录告警并降级到 MySQL CAS；只有锁明确被其他请求占用时返回 busy 且不查 MySQL。
-4. 不要相信任何客户端、模型、tool 参数或 conversation metadata 中的 `user_id`。认证上下文是唯一可信来源。
-5. 不要只删除字面量 `user_id`。身份和认证字段可能是 camel/kebab/snake 命名，也可能藏在 typed map/slice；必须复用 `common/utils/argx`。
-6. 不要把数据库已提交但缓存清理失败误报成写入失败。go-zero cached model 可能返回非 nil `sql.Result` 和 cache error；当前 Create/CAS 路径已专门保留 committed 语义。
-7. 不要使用缓存读取确认状态。确认决策必须 `FindOneUncached`，否则可能基于旧 pending 状态重复执行。
-8. 不要在 CAS `RowsAffected == 0` 后仍调用业务 RPC。它代表已经有其他 winner 或状态已变化，必须停止并返回已处理状态。
-9. 不要允许 approved 之外的状态进入 executed/failed，也不要允许 rejected/expired/failed/executed 再次领取。
-10. 不要只校验 user ID 而忽略 conversation ID；两者都必须完全匹配。
-11. 不要在部分批量写失败后生成成功话术，也不要因为审计失败自动重试已经发生的业务写入。
-12. 不要手改 goctl 生成文件、现有业务 RPC 或数据库 schema；Task 11 是 AI 编排层接入。
-13. 不要复活旧 `handoff.md` 中 Task 6/8 的冲突内容。该文件此前包含 `<<<<<<< HEAD` 冲突标记，已经在本次交接中整体替换。
+- auth 固定用户/token 状态不满足。
+- checkout/order/coupon 测试使用不存在或已失效的固定数据。
+- product 测试依赖失效的七牛账号、Elasticsearch、错误的本地 MySQL 凭据和缺失图片。
+- users 部分测试依赖不存在的用户或前置记录。
 
-## 7. 快速定位
+这些失败不是库存死锁回归；`test/rpc/inventory` 已通过。Task 12 应先跑 `apis/ai/...` 和 `services/aiagent/...` 聚焦测试，最终仍要如实报告全仓测试结果。
 
-- 实施计划：`docs/ai-customer-service-implementation-plan.md`，Task 11 从约第 780 行开始。
-- Confirmation Manager：`services/aiagent/internal/confirmation/manager.go`
-- Redis Locker：`services/aiagent/internal/confirmation/locker.go`
-- MySQL CAS：`dal/model/ai/confirmations/aiconfirmationsmodel.go`
-- ServiceContext 注入：`services/aiagent/internal/svc/servicecontext.go`
-- 高风险 metadata：`services/aiagent/internal/tools/registry.go`
-- Execution Guard：`services/aiagent/internal/tools/executor.go`
-- 写操作审计：`services/aiagent/internal/audit/recorder.go`
-- 参数脱敏：`common/utils/argx/sanitize.go`
+## 4. 下一步计划
 
-新会话应从检查 Task 11 现有代码和 RPC 契约开始，不要重做 Task 9/10。
+1. 阅读现有 API 网关的认证中间件用法，优先参考 `apis/carts`、`apis/order` 等模块的 `WithClientMiddleware` 和 `WrapperAuthMiddleware`。
+2. 核对 `services/aiagent/aiagent.proto` 的 `Chat` / `ConfirmAction` 请求响应，禁止手改生成文件。
+3. 新增 `apis/ai/ai.api`，定义：
+
+```text
+GET /douyin/ai/chat/ws?conversation_id=optional
+```
+
+4. 按仓库 go-zero 生成惯例创建 `apis/ai` 骨架；生成后只在项目允许的自定义文件中实现逻辑。
+5. WebSocket 客户端输入只允许：
+
+- `user_message`
+- `confirm_action`
+
+6. 服务端事件只允许：
+
+- `assistant_message`
+- `tool_result`
+- `confirmation_required`
+- `error`
+
+7. 从 HTTP 认证上下文获取用户 ID，再构造 AiAgent RPC 请求；忽略或拒绝 payload 中任何身份字段。
+8. 为未登录拒绝、普通消息、确认消息、非法类型、断连和 RPC 错误先写测试。
+9. Task 12 完成后再进入 Task 13 WebSocket 集成测试，不要提前混做限流和 Task 14 审计扩展。
+10. 最低验证：
+
+```bash
+go test ./apis/ai/... -count=1
+go test ./services/aiagent/... -count=1
+git diff --check
+```
+
+## 5. 绝对不要再踩的坑
+
+1. 不要信任 WebSocket query、payload、metadata、模型参数中的 `user_id`；认证上下文是唯一可信来源。
+2. 不要让高风险 Eino Tool 直接调用业务 RPC；首次调用只能创建 confirmation。
+3. 不要在确认时接受客户端重新提交 tool name 或 arguments；必须执行数据库确认记录中的内容。
+4. 不要把 Redis 锁当最终幂等保障，也不要让 Redis 锁跨业务 RPC；MySQL CAS 才决定唯一 winner。
+5. 不要在 CAS `RowsAffected == 0` 后继续执行 RPC。
+6. 不要把“业务已经执行但审计失败”报告成完整成功，也不要自动重试已发生的写操作。
+7. 不要把“确认终态保存失败”误报成业务 RPC 失败；返回真实结果并追加 error event。
+8. 不要用 checkout 的旧金额给另一个 coupon 做确认摘要；有 coupon 时必须用相同商品快照调用 `coupon.calculate`。
+9. 不要恢复 `SELECT ... FOR UPDATE` 后 INSERT 的库存幂等模式；不存在记录会产生 gap lock 并在高并发下死锁。
+10. 不要吞掉所有库存 INSERT 错误；只有 MySQL 1062 是幂等命中，1213/1205必须上抛。
+11. 不要把 handler 合并 helper 命名成查询专用；统一使用 `mergeHandlers`。
+12. 不要手改 goctl 生成文件。先改 `.api` / `.proto` 源文件，再按项目惯例生成。
+13. 不要顺手修复全仓旧 RPC fixture、七牛、ES 或用户数据问题；除非任务明确授权，保持 Task 12 改动范围小。
+14. 不要用旧交接中的状态判断进度；以当前分支、实施计划勾选和实际代码为准。
+
+## 6. 快速定位
+
+- Task 12 计划：`docs/ai-customer-service-implementation-plan.md` 约第 837 行。
+- AI RPC 契约：`services/aiagent/aiagent.proto`。
+- Chat TODO：`services/aiagent/internal/logic/chatlogic.go`。
+- ConfirmAction：`services/aiagent/internal/logic/confirmactionlogic.go`。
+- 高风险工具：`services/aiagent/internal/tools/high_risk_tools.go`。
+- Tool Registry：`services/aiagent/internal/tools/registry.go`。
+- Execution Guard：`services/aiagent/internal/tools/executor.go`。
+- Confirmation Manager：`services/aiagent/internal/confirmation/manager.go`。
+- ServiceContext：`services/aiagent/internal/svc/servicecontext.go`。
+- API 认证参考：`apis/carts`、`apis/order`。
+
+新会话的第一件事应是检查 Task 12 的真实认证上下文和 go-zero API 生成模式，然后为 `apis/ai` 制定并执行测试先行的实现方案。不要重做已合并的 Task 11。

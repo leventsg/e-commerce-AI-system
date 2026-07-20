@@ -14,7 +14,7 @@
 
 首期交付 PRD 中的核心闭环：
 
-- WebSocket 实时聊天入口：`GET /douyin/ai/chat/ws?conversation_id=optional`
+- WebSocket 实时聊天入口：`GET /douyin/ai/chat?conversation_id=optional`
 - 多轮会话、消息持久化、工具调用记录。
 - 通过 Eino ChatModel 接入模型，首期配置兼容 OpenAI-compatible API 与 DeepSeek。
 - 查询工具：商品、库存、订单、优惠券、购物车、结算单。
@@ -42,7 +42,7 @@
 - Create: `apis/ai/internal/svc/servicecontext.go`
 - Create: `apis/ai/internal/handler/routes.go`
 - Create: `apis/ai/internal/handler/chathandler.go`
-- Create: `apis/ai/internal/logic/chatwslogic.go`
+- Create: `apis/ai/internal/logic/chatlogic.go`
 - Create: `apis/ai/internal/types/types.go`
 
 职责：
@@ -841,9 +841,11 @@ Expected: 未确认不执行、确认后执行、过期和重复确认被拒绝�
 - Create: `apis/ai/ai.api`
 - Generate/Create: `apis/ai/**`
 - Modify: `apis/ai/internal/handler/routes.go`
-- Modify: `apis/ai/internal/logic/chatwslogic.go`
+- Modify: `apis/ai/internal/logic/chatlogic.go`
+- Modify: `services/aiagent/internal/logic/chatlogic.go`
+- Test: `services/aiagent/internal/logic/chatlogic_test.go`
 
-- [ ] **Step 1: 定义 API**
+- [x] **Step 1: 定义 API**
 
 ```go
 syntax = "v1"
@@ -854,11 +856,11 @@ syntax = "v1"
 )
 service ai-api {
   @handler ChatHandler
-  get /chat/ws
+  get /chat
 }
 ```
 
-- [ ] **Step 2: 生成 API 代码**
+- [x] **Step 2: 生成 API 代码**
 
 Run:
 
@@ -868,7 +870,7 @@ goctl api go -api apis/ai/ai.api -dir apis/ai
 
 Expected: 生成 handler、logic、svc、types 目录。
 
-- [ ] **Step 3: 实现 WebSocket 升级和消息协议**
+- [x] **Step 3: 实现 WebSocket 升级和消息协议**
 
 客户端输入类型：
 
@@ -882,11 +884,13 @@ Expected: 生成 handler、logic、svc、types 目录。
 - `confirmation_required`
 - `error`
 
-- [ ] **Step 4: 强制从登录态读取用户 ID**
+`ChatLogic` 负责会话准备、Intent Planner、Eino Runner 或受控 Tool 分发、事件持久化；API 网关只负责鉴权、协议转换与逐条推送。
+
+- [x] **Step 4: 强制从登录态读取用户 ID**
 
 禁止使用客户端消息体中的 `user_id`。缺少登录态时关闭连接并返回未授权错误。
 
-- [ ] **Step 5: 运行 API 编译检查**
+- [x] **Step 5: 运行 API 编译检查**
 
 Run:
 
@@ -900,11 +904,11 @@ Expected: API 包全部可编译。
 
 **Files:**
 
-- Create: `apis/ai/internal/logic/chatwslogic_test.go`
+- Modify: `apis/ai/internal/logic/chatlogic_test.go`
 
 - [ ] **Step 1: 测试未登录拒绝**
 
-无认证上下文连接 `/douyin/ai/chat/ws`，期望返回 401 或连接关闭。
+无认证上下文连接 `/douyin/ai/chat`，期望返回 401 或连接关闭。
 
 - [ ] **Step 2: 测试普通聊天**
 
@@ -962,7 +966,7 @@ Expected: 成功、失败、超时均有审计记录。
 **Files:**
 
 - Modify: `services/aiagent/internal/tools/executor.go`
-- Modify: `apis/ai/internal/logic/chatwslogic.go`
+- Modify: `apis/ai/internal/logic/chatlogic.go`
 - Test: `services/aiagent/internal/tools/ratelimit_test.go`
 
 - [ ] **Step 1: 用户级限流**

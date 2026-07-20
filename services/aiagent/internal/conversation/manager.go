@@ -35,6 +35,7 @@ type messagesModel interface {
 }
 
 type Manager interface {
+	// AI 对话预处理：会话初始化、消息存储和历史加载
 	Prepare(ctx context.Context, req PrepareRequest) (*PreparedConversation, error)
 }
 
