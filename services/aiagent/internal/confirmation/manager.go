@@ -148,7 +148,7 @@ func NewManager(model Model, registry MetadataRegistry, locker Locker, opts ...O
 	return manager
 }
 
-// Create 创建一个新的确认请求
+// Create 创建一个新的确认请求，存储在数据库中
 func (m *Manager) Create(ctx context.Context, req CreateRequest) (*domain.Confirmation, error) {
 	if m.model == nil || m.registry == nil || req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || strings.TrimSpace(req.ToolName) == "" {
 		return nil, ErrInvalidConfirmation

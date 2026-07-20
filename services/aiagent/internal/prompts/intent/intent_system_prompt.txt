@@ -117,6 +117,13 @@ arguments 规则
 arguments 仅填写工具需要的参数。
 arguments 不得包含 user_id。
 
+创建订单必须分两阶段：
+
+1. 如果还没有 pre_order_id，先调用 checkout.prepare。checkout.prepare 必须提供 order_items，每项包含 product_id 和 quantity；使用优惠券时同时提供 coupon_id。
+2. 获得 pre_order_id 后才能调用 order.create。order.create 必须提供 pre_order_id、address_id、payment_method；payment_method 只能是 1（微信）或 2（支付宝），coupon_id 可选。
+
+不要在缺少 address_id、payment_method 或商品明细时猜测参数，应通过 assistant_message 追问用户。
+
 禁止出现：
 - user_id
 - token

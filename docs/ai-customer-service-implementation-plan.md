@@ -786,7 +786,7 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 - Modify: `services/aiagent/internal/logic/confirmactionlogic.go`
 - Test: `services/aiagent/internal/logic/confirmactionlogic_test.go`
 
-- [ ] **Step 1: 首次请求只创建确认**
+- [x] **Step 1: 首次请求只创建确认**
 
 这些工具首次规划后只返回 `confirmation_required`，不调用业务 RPC：
 
@@ -794,7 +794,7 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 - `order.create`
 - `order.cancel`
 
-- [ ] **Step 2: 用户确认后通过 Execution Guard 执行业务 RPC**
+- [x] **Step 2: 用户确认后通过 Execution Guard 执行业务 RPC**
 
 RPC 对应：
 
@@ -802,7 +802,7 @@ RPC 对应：
 - `order.create` -> `OrderService.CreateOrder`
 - `order.cancel` -> `OrderService.CancelOrder`
 
-- [ ] **Step 3: 创建订单前置结算**
+- [x] **Step 3: 创建订单前置结算**
 
 若用户表达购买意图且没有 `pre_order_id`：
 
@@ -810,11 +810,19 @@ RPC 对应：
 2. 返回结算金额与 `pre_order_id`。
 3. 再创建 `order.create` 确认请求。
 
-- [ ] **Step 4: 使用优惠券下单必须确认**
+工具参数契约同步为真实 RPC 结构：
+
+- `checkout.prepare` 必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
+- `order.create` 必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选。
+- `payment_method` 使用 1（微信）或 2（支付宝）。
+
+- [x] **Step 4: 使用优惠券下单必须确认**
 
 当 `order.create` 参数包含 `coupon_id` 时，确认摘要必须展示优惠券 ID、应付金额和商品数量。
 
-- [ ] **Step 5: 运行测试**
+应付金额通过当前用户、预结算商品快照和该 `coupon_id` 调用 `coupon.calculate` 得到；优惠券不可用或计算失败时不得创建确认。业务 RPC 已执行但审计写入失败时返回明确失败事件并标记 `business_executed=true`，确认记录仍进入 `executed`，防止重复执行。
+
+- [x] **Step 5: 运行测试**
 
 Run:
 

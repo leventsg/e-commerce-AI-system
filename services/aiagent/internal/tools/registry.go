@@ -206,11 +206,12 @@ func defaultToolSpecs(queryTimeout, writeTimeout int64) []toolSpec {
 			integerParam("page_size", "Number of orders to return.", false),
 			stringParam("status", "Optional order status filter.", false),
 		)),
-		writeTool(domain.ToolCheckoutPrepare, "Prepare checkout for cart items or selected products.", domain.RiskLow, false, writeTimeout, "CheckoutService", "PrepareCheckout", params(
-			stringParam("cart_item_ids", "Comma-separated cart item IDs to checkout.", false),
-			integerParam("product_id", "Product ID for direct checkout.", false),
-			integerParam("sku_id", "SKU ID for direct checkout.", false),
-			integerParam("quantity", "Purchase quantity.", false),
+		writeTool(domain.ToolCheckoutPrepare, "Prepare checkout for selected products.", domain.RiskLow, false, writeTimeout, "CheckoutService", "PrepareCheckout", params(
+			objectArrayParam("order_items", "Products and quantities to reserve for checkout.", true, params(
+				integerParam("product_id", "Product ID.", true),
+				integerParam("quantity", "Purchase quantity.", true),
+			)),
+			stringParam("coupon_id", "Coupon ID to apply during checkout.", false),
 		)),
 		queryTool(domain.ToolCheckoutDetail, "Get checkout detail by pre-order ID.", queryTimeout, "CheckoutService", "GetCheckoutDetail", params(
 			stringParam("pre_order_id", "Pre-order ID.", true),
@@ -261,6 +262,8 @@ func defaultToolSpecs(queryTimeout, writeTimeout int64) []toolSpec {
 		writeTool(domain.ToolOrderCreate, "Create an order from a checkout after confirmation.", domain.RiskHigh, true, writeTimeout, "OrderService", "CreateOrder", params(
 			stringParam("pre_order_id", "Pre-order ID.", true),
 			stringParam("coupon_id", "Coupon ID to use for order creation.", false),
+			integerParam("address_id", "Delivery address ID.", true),
+			integerParam("payment_method", "Payment method: 1 WeChat Pay, 2 Alipay.", true),
 		)),
 		writeTool(domain.ToolOrderCancel, "Cancel an order after confirmation.", domain.RiskHigh, true, writeTimeout, "OrderService", "CancelOrder", params(
 			stringParam("order_id", "Order ID.", true),

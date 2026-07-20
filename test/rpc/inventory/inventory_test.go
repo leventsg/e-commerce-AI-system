@@ -269,7 +269,7 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 	initialStock := int32(1000)    // 初始库存
 	concurrentUsers := 100         // 并发用户数
 	deductPerUser := int32(10)     // 每个用户扣减量
-	expectedFinalStock := int32(0) // 预期最终库存
+	expectedFinalStock := int64(0) // 预期最终库存
 
 	// 初始化库存
 	_, err := invClient.UpdateInventory(ctx, &inventory.UpdateInventoryReq{
@@ -281,6 +281,7 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(concurrentUsers)
+	errCh := make(chan error, concurrentUsers)
 
 	// 模拟并发请求
 	for i := 0; i < concurrentUsers; i++ {
@@ -299,7 +300,7 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 				UserId:     userID,
 			})
 			if preErr != nil {
-				t.Logf("用户 %d 预扣失败: %v", userID, preErr)
+				errCh <- fmt.Errorf("用户 %d 预扣失败: %w", userID, preErr)
 				return
 			}
 
@@ -312,7 +313,6 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 				UserId:     userID,
 			})
 			if decErr != nil {
-				t.Logf("用户 %d 扣减失败: %v", userID, decErr)
 				// 失败后归还预扣库存
 				_, retErr := invClient.ReturnPreInventory(ctx, &inventory.InventoryReq{
 					Items: []*inventory.InventoryReq_Items{
@@ -321,7 +321,11 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 					PreOrderId: preOrderID,
 					UserId:     userID,
 				})
-				assert.NoError(t, retErr, "预扣库存归还失败")
+				if retErr != nil {
+					errCh <- fmt.Errorf("用户 %d 扣减失败: %v; 预扣库存归还失败: %w", userID, decErr, retErr)
+					return
+				}
+				errCh <- fmt.Errorf("用户 %d 扣减失败: %w", userID, decErr)
 			}
 		}(int32(i + 400)) // 生成唯一用户ID
 	}
@@ -340,6 +344,10 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 	case <-time.After(50 * time.Second):
 		t.Fatal("测试超时：50秒未完成")
 	}
+	close(errCh)
+	for requestErr := range errCh {
+		t.Error(requestErr)
+	}
 
 	// 验证最终库存
 	finalStockResp, err := invClient.GetInventory(ctx, &inventory.GetInventoryReq{
@@ -355,4 +363,99 @@ func TestInventoryService_HighConcurrency(t *testing.T) {
 
 	// 验证总扣减次数（可选）
 	// 可通过日志系统或监控指标验证实际扣减次数是否为 concurrentUsers
+}
+
+func TestInventoryService_MultiProductLockOrder(t *testing.T) {
+	setupInventoryClient(t)
+	ctx := context.Background()
+	productA := int32(9996)
+	productB := int32(9997)
+	const concurrentRequests = 50
+
+	_, err := invClient.UpdateInventory(ctx, &inventory.UpdateInventoryReq{
+		Items: []*inventory.UpdateInventoryReq_Items{
+			{ProductId: productA, Quantity: 500},
+			{ProductId: productB, Quantity: 500},
+		},
+	})
+	assert.NoError(t, err)
+
+	errCh := make(chan error, concurrentRequests)
+	var wg sync.WaitGroup
+	wg.Add(concurrentRequests)
+	for i := 0; i < concurrentRequests; i++ {
+		go func(index int) {
+			defer wg.Done()
+			items := []*inventory.InventoryReq_Items{
+				{ProductId: productA, Quantity: 10},
+				{ProductId: productB, Quantity: 10},
+			}
+			if index%2 == 1 {
+				items[0], items[1] = items[1], items[0]
+			}
+			_, callErr := invClient.DecreaseInventory(ctx, &inventory.InventoryReq{
+				Items:      items,
+				PreOrderId: fmt.Sprintf("MULTI_PRODUCT_%d_%d", index, time.Now().UnixNano()),
+				UserId:     int32(10000 + index),
+			})
+			if callErr != nil {
+				errCh <- callErr
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for callErr := range errCh {
+		t.Errorf("multi-product deduction failed: %v", callErr)
+	}
+
+	for _, productID := range []int32{productA, productB} {
+		stock, getErr := invClient.GetInventory(ctx, &inventory.GetInventoryReq{ProductId: productID})
+		assert.NoError(t, getErr)
+		assert.Equal(t, int64(0), stock.Inventory)
+	}
+}
+
+func TestInventoryService_IdempotencyClaimRollsBackWithFailedDeduction(t *testing.T) {
+	setupInventoryClient(t)
+	ctx := context.Background()
+	productID := int32(9998)
+	preOrderID := fmt.Sprintf("ROLLBACK_RETRY_%d", time.Now().UnixNano())
+	userID := int32(9001)
+
+	_, err := invClient.UpdateInventory(ctx, &inventory.UpdateInventoryReq{
+		Items: []*inventory.UpdateInventoryReq_Items{{ProductId: productID, Quantity: 5}},
+	})
+	assert.NoError(t, err)
+
+	failed, err := invClient.DecreaseInventory(ctx, &inventory.InventoryReq{
+		Items:      []*inventory.InventoryReq_Items{{ProductId: productID, Quantity: 10}},
+		PreOrderId: preOrderID,
+		UserId:     userID,
+	})
+	assert.NoError(t, err)
+	assert.NotZero(t, failed.StatusCode)
+
+	_, err = invClient.UpdateInventory(ctx, &inventory.UpdateInventoryReq{
+		Items: []*inventory.UpdateInventoryReq_Items{{ProductId: productID, Quantity: 10}},
+	})
+	assert.NoError(t, err)
+
+	_, err = invClient.DecreaseInventory(ctx, &inventory.InventoryReq{
+		Items:      []*inventory.InventoryReq_Items{{ProductId: productID, Quantity: 10}},
+		PreOrderId: preOrderID,
+		UserId:     userID,
+	})
+	assert.NoError(t, err)
+
+	_, err = invClient.DecreaseInventory(ctx, &inventory.InventoryReq{
+		Items:      []*inventory.InventoryReq_Items{{ProductId: productID, Quantity: 10}},
+		PreOrderId: preOrderID,
+		UserId:     userID,
+	})
+	assert.NoError(t, err)
+
+	finalStock, err := invClient.GetInventory(ctx, &inventory.GetInventoryReq{ProductId: productID})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), finalStock.Inventory)
 }

@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"strings"
 
+	"github.com/go-sql-driver/mysql"
 	sqlx1 "github.com/jmoiron/sqlx"
+	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
@@ -22,6 +23,7 @@ type (
 		FindAll(ctx context.Context) ([]*Inventory, error)
 		FindLockOrder(ctx context.Context, session sqlx.Session, order_id string, user_id int64, table string) (bool, error)
 		LockOrder(ctx context.Context, session sqlx.Session, order_id string, user_id int64, table string) error
+		TryLockOrder(ctx context.Context, session sqlx.Session, order_id string, user_id int64, table string) (bool, error)
 		WithSession(session sqlx.Session) InventoryModel
 		UpdateOrCreate(ctx context.Context, inventory Inventory) error
 		BatchReturn(ctx context.Context, session sqlx.Session, productIDs []int32, quantities []int32) error
@@ -189,6 +191,26 @@ func (m *customInventoryModel) LockOrder(
 	return nil
 }
 
+// TryLockOrder atomically claims idempotent execution through the unique
+// (order_id, user_id) index. A duplicate key means the operation was already claimed.
+func (m *customInventoryModel) TryLockOrder(
+	ctx context.Context,
+	session sqlx.Session,
+	orderID string,
+	userID int64,
+	table string,
+) (bool, error) {
+	query := fmt.Sprintf("INSERT INTO %s (order_id, user_id) VALUES (?, ?)", table)
+	if _, err := session.ExecCtx(ctx, query, orderID, userID); err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // FindLockOrder 幂等性检查
 func (m *customInventoryModel) FindLockOrder(
 	ctx context.Context,
@@ -227,26 +249,22 @@ func (m *customInventoryModel) BatchDecreaseInventoryAtom(
 ) error {
 
 	return m.conn.TransactCtx(ctx, func(ctx context.Context, session sqlx.Session) error {
-		// 阶段1: 幂等检查
-		isLocked, err := m.FindLockOrder(ctx, session, orderID, userID, m.lockdecreasetable)
+		// 阶段1: 通过唯一索引原子抢占幂等执行权，避免不存在记录上的 gap lock。
+		acquired, err := m.TryLockOrder(ctx, session, orderID, userID, m.lockdecreasetable)
 		if err != nil {
-			return err
+			return fmt.Errorf("创建锁失败: %w", err)
 		}
-		if isLocked {
+		if !acquired {
 			return nil
 		}
 
-		// 阶段2: 创建锁记录（30分钟有效期）
-		if err := m.LockOrder(ctx, session, orderID, userID, m.lockdecreasetable); err != nil {
-			return fmt.Errorf("创建锁失败: %w", err)
-		}
-
-		// --- 阶段3: 批量锁定库存记录 ---
+		// 阶段2: 按 product_id 的固定顺序批量锁定库存记录。
 		query := fmt.Sprintf(`
-            SELECT product_id, total, sold 
-            FROM %s 
-            WHERE product_id IN (?)
-            FOR UPDATE`, m.table) // 排他锁
+	            SELECT product_id, total, sold
+	            FROM %s
+	            WHERE product_id IN (?)
+	            ORDER BY product_id
+	            FOR UPDATE`, m.table) // 排他锁
 
 		// 处理IN查询参数化
 		query, args, err := sqlx1.In(query, productIDs)
@@ -265,7 +283,7 @@ func (m *customInventoryModel) BatchDecreaseInventoryAtom(
 			inventoryMap[int32(inv.ProductId)] = inv
 		}
 
-		// --- 阶段4: 库存预检查 ---
+		// 阶段3: 库存预检查
 		for i, pid := range productIDs {
 			inv, exists := inventoryMap[pid]
 			if !exists {
@@ -276,7 +294,7 @@ func (m *customInventoryModel) BatchDecreaseInventoryAtom(
 			}
 		}
 
-		// --- 阶段5: 执行批量扣减 ---
+		// 阶段4: 执行批量扣减
 		if err := m.Batchdecrease(ctx, session, productIDs, quantities); err != nil {
 			return fmt.Errorf("batch decrease failed: %w", err)
 		}

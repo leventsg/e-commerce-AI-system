@@ -119,6 +119,25 @@ func TestExecutorUnknownToolFailsBeforeHandler(t *testing.T) {
 	}
 }
 
+func TestExecutorWriteAuditFailureDoesNotReportBusinessWriteAsSuccess(t *testing.T) {
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+	executor := NewExecutor(registry, WithToolCallRecorder(errorToolCallRecorder{err: errors.New("audit unavailable")}))
+
+	event := executor.Execute(context.Background(), ExecuteRequest{
+		UserID: 42, ToolName: domain.ToolOrderCancel, Arguments: map[string]any{"order_id": "order-1"},
+	}, func(context.Context, HandlerRequest) (HandlerResult, error) {
+		return HandlerResult{Data: map[string]any{"order_id": "order-1"}, Summary: "订单已取消。"}, nil
+	})
+
+	if event.Status != toolStatusFailed || !event.BusinessExecuted {
+		t.Fatalf("event = %#v", event)
+	}
+	data := decodeEventData(t, event)
+	if data["business_executed"] != true || data["audit_error"] != "audit unavailable" {
+		t.Fatalf("event data = %#v", data)
+	}
+}
+
 func TestExecutorRecorderCapturesWriteSuccessFailureAndTimeout(t *testing.T) {
 	registry := NewRegistry(config.ToolTimeoutConfig{WriteSeconds: 1})
 	recorder := &capturingToolCallRecorder{}
@@ -226,6 +245,10 @@ func assertNoSensitiveKey(t *testing.T, value any) {
 type capturingToolCallRecorder struct {
 	records []ToolCallRecord
 }
+
+type errorToolCallRecorder struct{ err error }
+
+func (r errorToolCallRecorder) RecordToolCall(context.Context, ToolCallRecord) error { return r.err }
 
 func (r *capturingToolCallRecorder) RecordToolCall(_ context.Context, record ToolCallRecord) error {
 	r.records = append(r.records, record)

@@ -16,6 +16,11 @@ type OrderQueryRPC interface {
 	ListOrders(ctx context.Context, in *orderservice.ListOrdersRequest, opts ...grpc.CallOption) (*orderservice.ListOrdersResponse, error)
 }
 
+type OrderHighRiskRPC interface {
+	CreateOrder(ctx context.Context, in *orderservice.CreateOrderRequest, opts ...grpc.CallOption) (*orderservice.OrderDetailResponse, error)
+	CancelOrder(ctx context.Context, in *orderservice.CancelOrderRequest, opts ...grpc.CallOption) (*orderservice.EmptyRes, error)
+}
+
 func orderQueryHandlers(rpc OrderQueryRPC) map[string]HandlerFunc {
 	if rpc == nil {
 		return nil
@@ -23,6 +28,114 @@ func orderQueryHandlers(rpc OrderQueryRPC) map[string]HandlerFunc {
 	return map[string]HandlerFunc{
 		domain.ToolOrderGet:  orderGetHandler(rpc),
 		domain.ToolOrderList: orderListHandler(rpc),
+	}
+}
+
+func orderHighRiskHandlers(rpc OrderHighRiskRPC) map[string]HandlerFunc {
+	if rpc == nil {
+		return nil
+	}
+	return map[string]HandlerFunc{
+		domain.ToolOrderCreate: orderCreateHandler(rpc),
+		domain.ToolOrderCancel: orderCancelHandler(rpc),
+	}
+}
+
+// 创建订单工具处理函数
+func orderCreateHandler(rpc OrderHighRiskRPC) HandlerFunc {
+	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
+		// 解析参数
+		userID, err := authenticatedUserID32(req.UserID)
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		preOrderID, err := requiredStringArgument(req.Arguments, "pre_order_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		couponID, err := optionalStringArgument(req.Arguments, "coupon_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		addressValue, err := requiredInt64Argument(req.Arguments, "address_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		addressID, err := positiveInt32(addressValue, "address_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		paymentValue, err := requiredInt64Argument(req.Arguments, "payment_method")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		paymentMethod := order.PaymentMethod(paymentValue)
+		if paymentMethod != order.PaymentMethod_WECHAT_PAY && paymentMethod != order.PaymentMethod_ALIPAY {
+			return HandlerResult{}, invalidArgument("payment_method", "must be 1 or 2")
+		}
+		// 调用 RPC 创建订单
+		resp, err := rpc.CreateOrder(ctx, &orderservice.CreateOrderRequest{
+			PreOrderId:    preOrderID,
+			UserId:        uint32(userID),
+			CouponId:      couponID,
+			AddressId:     addressID,
+			PaymentMethod: paymentMethod,
+		})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("order.create rpc: %w", err)
+		}
+		if resp == nil {
+			return HandlerResult{}, fmt.Errorf("order.create returned nil response")
+		}
+		if err := validateRPCResponse("order.create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return HandlerResult{}, err
+		}
+		if resp.Order == nil {
+			return HandlerResult{}, fmt.Errorf("order.create returned empty order")
+		}
+		return HandlerResult{
+			Data: map[string]any{
+				"order": compactOrder(resp.Order),
+				"items": compactOrderItems(resp.Items),
+			},
+			Summary: fmt.Sprintf("订单 %s 已创建。", resp.Order.OrderId),
+		}, nil
+	}
+}
+
+func orderCancelHandler(rpc OrderHighRiskRPC) HandlerFunc {
+	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
+		userID, err := authenticatedUserID32(req.UserID)
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		orderID, err := requiredStringArgument(req.Arguments, "order_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		reason, err := optionalStringArgument(req.Arguments, "reason")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		resp, err := rpc.CancelOrder(ctx, &orderservice.CancelOrderRequest{
+			OrderId:      orderID,
+			UserId:       uint32(userID),
+			CancelReason: reason,
+			Initiative:   true,
+		})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("order.cancel rpc: %w", err)
+		}
+		if resp == nil {
+			return HandlerResult{}, fmt.Errorf("order.cancel returned nil response")
+		}
+		if err := validateRPCResponse("order.cancel", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return HandlerResult{}, err
+		}
+		return HandlerResult{
+			Data:    map[string]any{"order_id": orderID, "reason": reason},
+			Summary: fmt.Sprintf("订单 %s 已取消。", orderID),
+		}, nil
 	}
 }
 

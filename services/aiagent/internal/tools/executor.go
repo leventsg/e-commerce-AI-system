@@ -45,6 +45,13 @@ type HandlerResult struct {
 
 type HandlerFunc func(context.Context, HandlerRequest) (HandlerResult, error)
 
+// 注册工具处理函数到destination中
+func mergeHandlers(destination, source map[string]HandlerFunc) {
+	for name, handler := range source {
+		destination[name] = handler
+	}
+}
+
 type ToolCallRecord struct {
 	ConversationID string
 	UserID         uint64
@@ -92,7 +99,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	metadata, err := e.registry.Metadata(req.ToolName)
 	if err != nil {
 		event := failedToolEvent(req, req.ToolName, "工具未注册，无法执行。", err)
-		e.record(ctx, req, domain.Metadata{}, map[string]any{}, toolStatusFailed, "", err.Error(), nil, time.Since(startedAt))
+		_ = e.record(ctx, req, domain.Metadata{}, map[string]any{}, toolStatusFailed, "", err.Error(), nil, time.Since(startedAt))
 		return event
 	}
 
@@ -100,7 +107,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	args := argx.SanitizeMapKeys(req.Arguments, sensitiveToolArgumentKeys)
 	if handler == nil {
 		event := failedToolEvent(req, metadata.Name, "工具暂不可用，请稍后重试。", ErrToolHandlerRequired)
-		e.record(ctx, req, metadata, args, toolStatusFailed, "", ErrToolHandlerRequired.Error(), nil, time.Since(startedAt))
+		_ = e.record(ctx, req, metadata, args, toolStatusFailed, "", ErrToolHandlerRequired.Error(), nil, time.Since(startedAt))
 		return event
 	}
 
@@ -126,23 +133,32 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 			content = "工具调用超时，未完成操作，请稍后重试。"
 		}
 		event := failedToolEvent(req, metadata.Name, content, err)
-		e.record(ctx, req, metadata, args, toolStatusFailed, "", err.Error(), nil, latency)
+		_ = e.record(ctx, req, metadata, args, toolStatusFailed, "", err.Error(), nil, latency)
 		return event
 	}
 
 	// 构建工具结果事件
 	dataJSON := marshalToolData(result.Data)
 	event := domain.AgentEvent{
-		Type:           domain.EventToolResult,
-		ConversationID: req.ConversationID,
-		MessageID:      req.MessageID,
-		Tool:           metadata.Name,
-		Status:         toolStatusSuccess,
-		DataJSON:       dataJSON,
-		Content:        strings.TrimSpace(result.Summary),
-		Done:           true,
+		Type:             domain.EventToolResult,
+		ConversationID:   req.ConversationID,
+		MessageID:        req.MessageID,
+		Tool:             metadata.Name,
+		Status:           toolStatusSuccess,
+		DataJSON:         dataJSON,
+		Content:          strings.TrimSpace(result.Summary),
+		Done:             true,
+		BusinessExecuted: metadata.WriteOperation,
 	}
-	e.record(ctx, req, metadata, args, toolStatusSuccess, event.Content, "", result.Data, latency)
+	if recordErr := e.record(ctx, req, metadata, args, toolStatusSuccess, event.Content, "", result.Data, latency); recordErr != nil && metadata.WriteOperation {
+		event.Status = toolStatusFailed
+		event.Content = "操作已完成，但审计记录失败，请联系支持。"
+		event.DataJSON = marshalToolData(map[string]any{
+			"business_executed": true,
+			"audit_error":       recordErr.Error(),
+			"result":            result.Data,
+		})
+	}
 	return event
 }
 
@@ -193,9 +209,9 @@ func failedToolEvent(req ExecuteRequest, toolName, content string, cause error) 
 }
 
 // 记录工具调用的相关信息
-func (e *Executor) record(ctx context.Context, req ExecuteRequest, metadata domain.Metadata, args map[string]any, status, summary, errMsg string, resultData any, latency time.Duration) {
+func (e *Executor) record(ctx context.Context, req ExecuteRequest, metadata domain.Metadata, args map[string]any, status, summary, errMsg string, resultData any, latency time.Duration) error {
 	if e.recorder == nil {
-		return
+		return nil
 	}
 	record := ToolCallRecord{
 		ConversationID: req.ConversationID,
@@ -212,7 +228,9 @@ func (e *Executor) record(ctx context.Context, req ExecuteRequest, metadata doma
 	}
 	if err := e.recorder.RecordToolCall(ctx, record); err != nil {
 		logx.Errorw("record ai tool call failed", logx.Field("tool", req.ToolName), logx.Field("err", err))
+		return err
 	}
+	return nil
 }
 
 func marshalToolData(data any) string {
