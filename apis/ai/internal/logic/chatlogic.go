@@ -60,7 +60,10 @@ func (l *ChatLogic) ServeHTTP(w http.ResponseWriter, r *http.Request, req *types
 			return
 		}
 		if messageType != websocket.TextMessage {
-			l.writeEvent(conn, errorEvent(conversationID, "仅支持 JSON 文本消息"))
+			if err := l.writeEvent(conn, errorEvent(conversationID, "仅支持 JSON 文本消息")); err != nil {
+				l.Errorf("write websocket event failded: %v", err)
+				return
+			}
 			continue
 		}
 		// 处理消息
