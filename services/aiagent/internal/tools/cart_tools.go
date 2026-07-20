@@ -19,6 +19,11 @@ type CartWriteRPC interface {
 	SubCartItem(ctx context.Context, in *cartsclient.CartItemRequest, opts ...grpc.CallOption) (*cartsclient.SubCartResponse, error)
 }
 
+type CartHighRiskRPC interface {
+	CartItemList(ctx context.Context, in *cartsclient.UserInfo, opts ...grpc.CallOption) (*cartsclient.CartItemListResponse, error)
+	DeleteCartItem(ctx context.Context, in *cartsclient.CartItemRequest, opts ...grpc.CallOption) (*cartsclient.EmptyCartResponse, error)
+}
+
 func cartQueryHandlers(rpc CartQueryRPC) map[string]HandlerFunc {
 	if rpc == nil {
 		return nil
@@ -35,6 +40,65 @@ func cartWriteHandlers(rpc CartWriteRPC) map[string]HandlerFunc {
 	return map[string]HandlerFunc{
 		domain.ToolCartAdd: cartAddHandler(rpc),
 		domain.ToolCartSub: cartSubHandler(rpc),
+	}
+}
+
+func cartHighRiskHandlers(rpc CartHighRiskRPC) map[string]HandlerFunc {
+	if rpc == nil {
+		return nil
+	}
+	return map[string]HandlerFunc{
+		domain.ToolCartDelete: cartDeleteHandler(rpc),
+	}
+}
+
+// 删除购物车条目工具处理函数
+func cartDeleteHandler(rpc CartHighRiskRPC) HandlerFunc {
+	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
+		userID, err := authenticatedUserID32(req.UserID)
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		cartItemValue, err := requiredInt64Argument(req.Arguments, "cart_item_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		cartItemID, err := positiveInt32(cartItemValue, "cart_item_id")
+		if err != nil {
+			return HandlerResult{}, err
+		}
+		listResp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("cart.delete list rpc: %w", err)
+		}
+		if listResp == nil {
+			return HandlerResult{}, fmt.Errorf("cart.delete list returned nil response")
+		}
+		if err := validateRPCResponse("cart.delete list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
+			return HandlerResult{}, err
+		}
+		item := ownedCartItem(listResp.Data, cartItemID, userID)
+		if item == nil {
+			return HandlerResult{}, invalidArgument("cart_item_id", "does not belong to authenticated user")
+		}
+		resp, err := rpc.DeleteCartItem(ctx, &cartsclient.CartItemRequest{
+			Id:        cartItemID,
+			UserId:    userID,
+			ProductId: item.ProductId,
+		})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("cart.delete rpc: %w", err)
+		}
+		if resp == nil {
+			return HandlerResult{}, fmt.Errorf("cart.delete returned nil response")
+		}
+		if err := validateRPCResponse("cart.delete", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return HandlerResult{}, err
+		}
+		return HandlerResult{
+			Data:    map[string]any{"cart_item_id": cartItemID, "product_id": item.ProductId},
+			Summary: fmt.Sprintf("购物车条目 %d 已删除。", cartItemID),
+		}, nil
 	}
 }
 

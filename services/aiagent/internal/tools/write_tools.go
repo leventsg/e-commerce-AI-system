@@ -14,8 +14,9 @@ import (
 var ErrWriteToolExecution = errors.New("write tool execution failed")
 
 type WriteToolClients struct {
-	Cart   CartWriteRPC
-	Coupon CouponWriteRPC
+	Cart     CartWriteRPC
+	Coupon   CouponWriteRPC
+	Checkout CheckoutWriteRPC
 }
 
 type WriteTools struct {
@@ -25,8 +26,9 @@ type WriteTools struct {
 
 func NewWriteTools(executor *Executor, clients WriteToolClients) *WriteTools {
 	handlers := make(map[string]HandlerFunc)
-	registerQueryHandlers(handlers, cartWriteHandlers(clients.Cart))
-	registerQueryHandlers(handlers, couponWriteHandlers(clients.Coupon))
+	mergeHandlers(handlers, cartWriteHandlers(clients.Cart))
+	mergeHandlers(handlers, couponWriteHandlers(clients.Coupon))
+	mergeHandlers(handlers, checkoutWriteHandlers(clients.Checkout))
 	writeTools := &WriteTools{executor: executor, handlers: handlers}
 	writeTools.bindEinoTools()
 	return writeTools

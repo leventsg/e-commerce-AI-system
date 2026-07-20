@@ -1,6 +1,7 @@
 package svc
 
 import (
+	"context"
 	"time"
 
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
@@ -11,6 +12,7 @@ import (
 	aiaudit "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	aiconfirmation "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
@@ -25,6 +27,16 @@ import (
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
 )
+
+type ConfirmationManager interface {
+	Decide(ctx context.Context, req aiconfirmation.DecisionRequest) (*domain.Confirmation, error)
+	MarkExecuted(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
+	MarkFailed(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
+}
+
+type HighRiskToolExecutor interface {
+	ExecuteConfirmed(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
+}
 
 type ServiceContext struct {
 	Config              config.Config
@@ -47,7 +59,8 @@ type ServiceContext struct {
 	ToolExecutor        *aitools.Executor
 	QueryTools          *aitools.QueryTools
 	WriteTools          *aitools.WriteTools
-	ConfirmationManager *aiconfirmation.Manager
+	ConfirmationManager ConfirmationManager
+	HighRiskTools       HighRiskToolExecutor
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -74,8 +87,9 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Checkout:  checkoutRPC,
 	})
 	writeTools := aitools.NewWriteTools(toolExecutor, aitools.WriteToolClients{
-		Cart:   cartRPC,
-		Coupon: couponRPC,
+		Cart:     cartRPC,
+		Coupon:   couponRPC,
+		Checkout: checkoutRPC,
 	})
 	confirmationManager := aiconfirmation.NewManager(
 		confirmationsModel,
@@ -84,6 +98,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		aiconfirmation.WithConfirmationTTL(time.Duration(c.Confirmation.ExpireSeconds)*time.Second),
 		aiconfirmation.WithLockTTL(time.Duration(c.Confirmation.LockExpireSeconds)*time.Second),
 	)
+	highRiskTools := aitools.NewHighRiskTools(toolExecutor, confirmationManager, aitools.HighRiskToolClients{
+		Cart:     cartRPC,
+		Order:    orderRPC,
+		Checkout: checkoutRPC,
+		Coupon:   couponRPC,
+	})
 
 	return &ServiceContext{
 		Config:              c,
@@ -107,5 +127,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		QueryTools:          queryTools,
 		WriteTools:          writeTools,
 		ConfirmationManager: confirmationManager,
+		HighRiskTools:       highRiskTools,
 	}
 }

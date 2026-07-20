@@ -184,6 +184,14 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 - 结果转换逻辑。
 - Eino Tool schema。
 
+首期下单工具契约：
+
+- `checkout.prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
+- `order.create` 接收必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选；`payment_method` 使用现有 RPC 枚举值 1（微信）或 2（支付宝）。
+- 高风险 Tool 的普通 Eino 调用只创建确认记录。只有 `ConfirmAction` 成功领取 `pending -> approved` 后，才能通过同一个 Execution Guard 调用业务 RPC。
+- 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon.calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
+- 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
+
 ### 3.6 Execution Guard / Engine
 职责：
 - 校验工具参数。
@@ -312,12 +320,12 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 
 ### 5.4 创建订单流程
 1. 用户表达购买意图。
-2. AI 确认商品、数量、优惠券、地址、支付方式。
-3. 调用 checkout.prepare 创建预结算。
-4. 返回结算金额。
-5. 创建订单确认请求。
-6. 用户确认后调用 order.create。
-7. 返回订单详情。
+2. AI 确认商品、数量、优惠券、地址、支付方式；缺少参数时先追问，不猜测。
+3. 没有 `pre_order_id` 时调用 `checkout.prepare` 创建预结算。
+4. 使用当前用户身份查询预结算详情，取得应付金额和商品数量。
+5. 创建 `order.create` 确认请求；使用优惠券时先调用 `coupon.calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
+6. 用户确认后，由确认状态机的唯一 winner 通过 Execution Guard 调用 `order.create`。
+7. 成功标记确认记录为 `executed`，失败标记为 `failed`，并返回真实订单结果。
 
 ## 6. 测试方案
 ### 6.1 单元测试

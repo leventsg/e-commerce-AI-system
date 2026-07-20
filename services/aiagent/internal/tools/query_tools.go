@@ -59,12 +59,12 @@ type QueryTools struct {
 
 func NewQueryTools(executor *Executor, clients QueryToolClients) *QueryTools {
 	handlers := make(map[string]HandlerFunc)
-	registerQueryHandlers(handlers, productQueryHandlers(clients.Product))
-	registerQueryHandlers(handlers, inventoryQueryHandlers(clients.Inventory))
-	registerQueryHandlers(handlers, orderQueryHandlers(clients.Order))
-	registerQueryHandlers(handlers, cartQueryHandlers(clients.Cart))
-	registerQueryHandlers(handlers, couponQueryHandlers(clients.Coupon))
-	registerQueryHandlers(handlers, checkoutQueryHandlers(clients.Checkout))
+	mergeHandlers(handlers, productQueryHandlers(clients.Product))
+	mergeHandlers(handlers, inventoryQueryHandlers(clients.Inventory))
+	mergeHandlers(handlers, orderQueryHandlers(clients.Order))
+	mergeHandlers(handlers, cartQueryHandlers(clients.Cart))
+	mergeHandlers(handlers, couponQueryHandlers(clients.Coupon))
+	mergeHandlers(handlers, checkoutQueryHandlers(clients.Checkout))
 	queryTools := &QueryTools{executor: executor, handlers: handlers}
 	queryTools.bindEinoTools()
 	return queryTools
@@ -134,13 +134,6 @@ func executeRequestFromContext(execution ToolExecutionContext, toolName string, 
 		ClientIP:       execution.ClientIP,
 		ToolName:       toolName,
 		Arguments:      arguments,
-	}
-}
-
-// 注册查询工具处理函数
-func registerQueryHandlers(target, source map[string]HandlerFunc) {
-	for name, handler := range source {
-		target[name] = handler
 	}
 }
 

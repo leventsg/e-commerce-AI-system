@@ -171,6 +171,62 @@ func TestRegistryPlaceholderToolReturnsNotImplemented(t *testing.T) {
 	}
 }
 
+func TestRegistryHighRiskOrderAndCheckoutSchemasMatchRPCContracts(t *testing.T) {
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+
+	checkoutTool, err := registry.Tool(domain.ToolCheckoutPrepare)
+	if err != nil {
+		t.Fatalf("checkout.prepare tool: %v", err)
+	}
+	checkoutInfo, err := checkoutTool.Info(context.Background())
+	if err != nil {
+		t.Fatalf("checkout.prepare info: %v", err)
+	}
+	checkoutSchema, err := checkoutInfo.ParamsOneOf.ToJSONSchema()
+	if err != nil {
+		t.Fatalf("checkout.prepare schema: %v", err)
+	}
+	if !containsString(checkoutSchema.Required, "order_items") {
+		t.Fatalf("checkout.prepare required = %#v, want order_items", checkoutSchema.Required)
+	}
+	if _, ok := checkoutSchema.Properties.Get("order_items"); !ok {
+		t.Fatal("checkout.prepare schema missing order_items")
+	}
+	if _, ok := checkoutSchema.Properties.Get("user_id"); ok {
+		t.Fatal("checkout.prepare schema must not expose user_id")
+	}
+
+	orderTool, err := registry.Tool(domain.ToolOrderCreate)
+	if err != nil {
+		t.Fatalf("order.create tool: %v", err)
+	}
+	orderInfo, err := orderTool.Info(context.Background())
+	if err != nil {
+		t.Fatalf("order.create info: %v", err)
+	}
+	orderSchema, err := orderInfo.ParamsOneOf.ToJSONSchema()
+	if err != nil {
+		t.Fatalf("order.create schema: %v", err)
+	}
+	for _, name := range []string{"pre_order_id", "address_id", "payment_method"} {
+		if !containsString(orderSchema.Required, name) {
+			t.Fatalf("order.create required = %#v, want %s", orderSchema.Required, name)
+		}
+	}
+	if _, ok := orderSchema.Properties.Get("user_id"); ok {
+		t.Fatal("order.create schema must not expose user_id")
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func assertTimeout(t *testing.T, registry *Registry, name string, want int64) {
 	t.Helper()
 	metadata, err := registry.Metadata(name)

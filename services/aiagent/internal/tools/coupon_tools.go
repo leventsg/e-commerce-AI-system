@@ -19,6 +19,10 @@ type CouponQueryRPC interface {
 	CalculateCoupon(ctx context.Context, in *couponsclient.CalculateCouponReq, opts ...grpc.CallOption) (*couponsclient.CalculateCouponResp, error)
 }
 
+type CouponCalculateRPC interface {
+	CalculateCoupon(ctx context.Context, in *couponsclient.CalculateCouponReq, opts ...grpc.CallOption) (*couponsclient.CalculateCouponResp, error)
+}
+
 type CouponWriteRPC interface {
 	ClaimCoupon(ctx context.Context, in *couponsclient.ClaimCouponReq, opts ...grpc.CallOption) (*couponsclient.ClaimCouponResp, error)
 }
