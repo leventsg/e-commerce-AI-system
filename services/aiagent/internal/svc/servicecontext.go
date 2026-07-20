@@ -2,6 +2,7 @@ package svc
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
@@ -26,6 +27,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/product/productcatalogservice"
 	"github.com/leventsg/e-commerce-AI-system/services/users/usersclient"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
@@ -138,6 +140,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	var agentRunner eino.Runner
 	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino); err == nil {
 		agentRunner = eino.NewRunner(chatModel)
+	} else {
+		logx.Errorw("ai chat model initialization failed", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("reason", "model_init_failed"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model), logx.Field("base_url_host", modelBaseURLHost(c.Eino.BaseURL)), logx.Field("err", err))
 	}
 
 	return &ServiceContext{
@@ -170,4 +174,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		WriteChatTools:      writeTools,
 		HighRiskChatTools:   highRiskTools,
 	}
+}
+
+func modelBaseURLHost(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return "<invalid>"
+	}
+	return parsed.Hostname()
 }

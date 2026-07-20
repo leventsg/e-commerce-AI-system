@@ -24,14 +24,14 @@ func TestChatWebSocketForwardsTrustedUserAndEvents(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	if err := conn.WriteJSON(map[string]any{"type": "user_message", "message_id": "client-1", "content": "你好"}); err != nil {
+	if err := conn.WriteJSON(map[string]any{"type": "user_message", "content": "你好"}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	var event types.ServerEvent
 	if err := conn.ReadJSON(&event); err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if rpc.chatReq == nil || rpc.chatReq.UserId != 42 || rpc.chatReq.Source != "web" {
+	if rpc.chatReq == nil || rpc.chatReq.UserId != 42 || rpc.chatReq.Source != "web" || rpc.chatReq.MessageId != "" {
 		t.Fatalf("rpc request=%+v", rpc.chatReq)
 	}
 	if event.Type != "assistant_message" || event.ConversationID != "conv-1" || event.Content != "你好" {
@@ -48,13 +48,34 @@ func TestChatWebSocketRejectsPayloadUserID(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	_ = conn.WriteJSON(map[string]any{"type": "user_message", "message_id": "client-1", "content": "你好", "user_id": 999})
+	_ = conn.WriteJSON(map[string]any{"type": "user_message", "message_id": "legacy-client-id", "content": "你好", "user_id": 999})
 	var event types.ServerEvent
 	if err := conn.ReadJSON(&event); err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if event.Type != "error" || rpc.chatReq != nil {
 		t.Fatalf("event=%+v rpc=%+v", event, rpc.chatReq)
+	}
+}
+
+func TestChatWebSocketIgnoresLegacyMessageID(t *testing.T) {
+	rpc := &fakeAiAgent{chatResp: &aiagent.ChatResponse{Events: []*aiagent.AgentEvent{{Type: "assistant_message", ConversationId: "conv-1", Content: "你好", Done: true}}}}
+	server := websocketTestServer(rpc)
+	defer server.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/douyin/ai/chat", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(map[string]any{"type": "user_message", "message_id": "legacy-client-id", "content": "你好"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var event types.ServerEvent
+	if err := conn.ReadJSON(&event); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if rpc.chatReq == nil || rpc.chatReq.MessageId != "" || event.Type != "assistant_message" {
+		t.Fatalf("rpc request=%+v event=%+v", rpc.chatReq, event)
 	}
 }
 

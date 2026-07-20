@@ -38,7 +38,6 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 ```json
 {
   "type": "user_message",
-  "message_id": "client-msg-001",
   "content": "帮我查一下订单 202406300001",
   "metadata": {
     "source": "web"

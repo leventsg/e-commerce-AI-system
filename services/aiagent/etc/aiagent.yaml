@@ -1,5 +1,5 @@
 Name: aiagent.rpc
-ListenOn: 0.0.0.0:10009
+ListenOn: 0.0.0.0:10012
 Mode: dev
 Timeout: 0
 

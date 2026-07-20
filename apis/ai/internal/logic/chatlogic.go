@@ -100,14 +100,14 @@ func (l *ChatLogic) handleMessage(ctx context.Context, userID uint32, conversati
 	switch input.Type {
 	// 用户消息类型
 	case types.ClientEventUserMessage:
-		if strings.TrimSpace(input.MessageID) == "" || strings.TrimSpace(input.Content) == "" {
-			return []types.ServerEvent{errorEvent(conversationID, "message_id 和 content 为必填字段")}, ""
+		if strings.TrimSpace(input.Content) == "" {
+			return []types.ServerEvent{errorEvent(conversationID, "content 为必填字段")}, ""
 		}
 		source := strings.TrimSpace(input.Metadata.Source)
 		if source == "" {
 			source = "web"
 		}
-		resp, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{UserId: userID, ConversationId: conversationID, MessageId: input.MessageID, Content: input.Content, Source: source})
+		resp, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{UserId: userID, ConversationId: conversationID, MessageId: "", Content: input.Content, Source: source})
 		if err != nil || resp == nil {
 			return []types.ServerEvent{errorEvent(conversationID, "AI 服务暂时不可用，请稍后重试")}, ""
 		}
