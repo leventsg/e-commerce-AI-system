@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type RunRequest struct {
@@ -41,6 +43,9 @@ func (r *runner) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
+	if response == nil || strings.TrimSpace(response.Content) == "" {
+		return nil, ErrEmptyModelResponse
+	}
 	return []domain.AgentEvent{assistantEvent(req, response.Content, true)}, nil
 }
 
@@ -64,6 +69,7 @@ func (r *runner) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agen
 				return
 			}
 			if recvErr != nil {
+				logx.WithContext(ctx).Errorw("ai chat model stream failed", logx.Field("component", "chat_model"), logx.Field("stage", "stream"), logx.Field("reason", ErrorReason(recvErr)), logx.Field("err", recvErr))
 				out <- domain.AgentEvent{
 					Type:           domain.EventError,
 					ConversationID: req.ConversationID,

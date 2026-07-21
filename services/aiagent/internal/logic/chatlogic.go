@@ -117,11 +117,17 @@ func (l *ChatLogic) executePlan(in *aiagent.ChatRequest, prepared *conversation.
 	}
 	if strings.TrimSpace(plan.ToolName) == "" {
 		if l.svcCtx.AgentRunner == nil {
+			l.Errorw("ai chat runner unavailable", logx.Field("component", "chat_model"), logx.Field("stage", "execute"), logx.Field("reason", "runner_unavailable"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId))
 			return []domain.AgentEvent{{Type: domain.EventError, ConversationID: prepared.ConversationID, Content: "AI 服务暂时不可用，请稍后重试", Done: true}}
 		}
 		// Prepare 已持久化当前消息，History 中无需再次追加同一条用户输入。
 		events, err := l.svcCtx.AgentRunner.Run(l.ctx, eino.RunRequest{ConversationID: prepared.ConversationID, MessageID: newChatMessageID(), History: prepared.History})
-		if err != nil || len(events) == 0 {
+		if err != nil {
+			l.Errorw("ai chat model execution failed", logx.Field("component", "chat_model"), logx.Field("stage", "execute"), logx.Field("reason", eino.ErrorReason(err)), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
+			return []domain.AgentEvent{{Type: domain.EventError, ConversationID: prepared.ConversationID, Content: "AI 服务暂时不可用，请稍后重试", Done: true}}
+		}
+		if len(events) == 0 {
+			l.Errorw("ai chat model returned no events", logx.Field("component", "chat_model"), logx.Field("stage", "execute"), logx.Field("reason", "model_empty_response"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId))
 			return []domain.AgentEvent{{Type: domain.EventError, ConversationID: prepared.ConversationID, Content: "AI 服务暂时不可用，请稍后重试", Done: true}}
 		}
 		return events

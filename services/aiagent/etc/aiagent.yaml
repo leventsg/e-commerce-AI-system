@@ -1,5 +1,5 @@
 Name: aiagent.rpc
-ListenOn: 0.0.0.0:10009
+ListenOn: 0.0.0.0:10012
 Mode: dev
 Timeout: 0
 
@@ -55,7 +55,7 @@ IntentModel:
   APIKey: ${AI_INTENT_MODEL_API_KEY}
   BaseURL: ${AI_INTENT_MODEL_BASE_URL}
   Model: ${AI_INTENT_MODEL_NAME}
-  Timeout: 5
+  Timeout: 10
   MaxTokens: 512
   Temperature: 0
 

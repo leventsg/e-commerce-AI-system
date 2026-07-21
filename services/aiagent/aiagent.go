@@ -10,8 +10,10 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/service"
 	"github.com/zeromicro/go-zero/zrpc"
+	"github.com/zeromicro/zero-contrib/zrpc/registry/consul"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -33,6 +35,11 @@ func main() {
 		}
 	})
 	defer s.Stop()
+
+	if err := consul.RegisterService(c.ListenOn, c.Consul); err != nil {
+		logx.Errorw("register service error", logx.Field("err", err))
+		panic(err)
+	}
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()

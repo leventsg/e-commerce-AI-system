@@ -915,7 +915,7 @@ Expected: API 包全部可编译。
 发送：
 
 ```json
-{"type":"user_message","message_id":"client-msg-001","content":"你好","metadata":{"source":"web"}}
+{"type":"user_message","content":"你好","metadata":{"source":"web"}}
 ```
 
 期望收到 `assistant_message`，`done=true`。

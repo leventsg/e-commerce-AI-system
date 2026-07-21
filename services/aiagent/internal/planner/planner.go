@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	intentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/intent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type Intent string
@@ -101,11 +103,13 @@ func (p *Planner) planWithLLM(ctx context.Context, text string, history []*aimes
 	for attempt := 0; attempt < p.maxLLMAttempts; attempt++ {
 		result, err := p.callLLMPlannerOnce(ctx, text, history)
 		if err != nil {
+			logx.WithContext(ctx).Errorw("ai intent planner attempt failed", logx.Field("component", "intent_planner"), logx.Field("attempt", attempt+1), logx.Field("stage", plannerErrorStage(err)), logx.Field("reason", plannerErrorReason(err)), logx.Field("err", err))
 			continue
 		}
 		if planned, ok := p.validatedPlan(ctx, result); ok {
 			return planned, true
 		}
+		logx.WithContext(ctx).Errorw("ai intent planner response invalid", logx.Field("component", "intent_planner"), logx.Field("attempt", attempt+1), logx.Field("stage", "validate"), logx.Field("reason", "planner_response_invalid"))
 	}
 	return PlanResult{}, false
 }
@@ -113,22 +117,22 @@ func (p *Planner) planWithLLM(ctx context.Context, text string, history []*aimes
 func (p *Planner) callLLMPlannerOnce(ctx context.Context, text string, history []*aimessages.AiMessages) (PlanResult, error) {
 	chatModel, err := p.modelFactory.NewChatModel(ctx, p.intentModelConfig)
 	if err != nil {
-		return PlanResult{}, err
+		return PlanResult{}, fmt.Errorf("initialize intent model: %w", err)
 	}
 
 	// 调用llm进行意图识别
 	response, err := chatModel.Generate(ctx, buildLLMPlannerMessages(text, history))
 	if err != nil {
-		return PlanResult{}, err
+		return PlanResult{}, fmt.Errorf("generate intent plan: %w", err)
 	}
 	if response == nil || strings.TrimSpace(response.Content) == "" {
-		return PlanResult{}, errors.New("llm planner returned empty content")
+		return PlanResult{}, fmt.Errorf("generate intent plan: %w", eino.ErrEmptyModelResponse)
 	}
 
 	// 解析llm返回的json字符串
 	var output llmPlanResult
 	if err := json.Unmarshal([]byte(response.Content), &output); err != nil {
-		return PlanResult{}, err
+		return PlanResult{}, fmt.Errorf("invalid intent planner response: %w", err)
 	}
 
 	return PlanResult{
@@ -138,6 +142,26 @@ func (p *Planner) callLLMPlannerOnce(ctx context.Context, text string, history [
 		AssistantMessage: output.AssistantMessage,
 		MissingParams:    output.MissingParams,
 	}, nil
+}
+
+func plannerErrorStage(err error) string {
+	if strings.HasPrefix(err.Error(), "initialize intent model:") {
+		return "initialize"
+	}
+	if strings.HasPrefix(err.Error(), "generate intent plan:") {
+		return "generate"
+	}
+	return "validate"
+}
+
+func plannerErrorReason(err error) string {
+	if errors.Is(err, eino.ErrEmptyModelResponse) {
+		return "model_empty_response"
+	}
+	if strings.HasPrefix(err.Error(), "invalid intent planner response:") {
+		return "planner_response_invalid"
+	}
+	return eino.ErrorReason(err)
 }
 
 type llmPlanResult struct {
