@@ -149,7 +149,7 @@ func main() {
 		panic(err)
 	}
 
-	err = godotenv.Load()
+	err = godotenv.Load(filepath.Join(root, ".env"))
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}

@@ -9,7 +9,7 @@ AuthsRpc:
 AiAgentRpc:
   Target: consul://localhost:8500/aiagent.rpc?wait=14s
   NonBlock: true
-  Timeout: 30000
+  Timeout: 40000
 
 Telemetry:
   Name: ai-api

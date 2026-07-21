@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type APIManager struct {
@@ -145,6 +147,9 @@ func main() {
 	root, err := os.Getwd()
 	if err != nil {
 		panic(err)
+	}
+	if err := godotenv.Load(filepath.Join(root, ".env")); err != nil {
+		log.Fatalf("Error loading .env file: %v", err)
 	}
 
 	var apis string
