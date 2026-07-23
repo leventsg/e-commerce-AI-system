@@ -123,10 +123,47 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 职责：
 - 创建会话。
 - 恢复历史会话。
-- 保存用户消息、AI 消息和工具调用摘要。
-- 控制上下文长度。
-- 维护用户长期偏好，例如常买分类、价格偏好
-### 3.4 Intent Planner
+- 保存完整的用户消息、AI 消息和工具事件。
+- 校验会话属于当前登录用户。
+- 为 Context Manager 提供原始消息读取能力。
+
+Conversation Manager 不再直接决定模型上下文。原始消息是不可变事实记录；模型输入由独立 Context Manager 根据调用场景临时组装。
+
+### 3.4 Context Manager
+
+Context Manager 是 Planner 和 Agent ChatModel 的统一上下文入口，详细方案见 `docs/ai-agent-context-optimization.md`。
+
+职责：
+
+- 组合 system prompt、当前用户输入、当前任务状态、待确认动作、近期消息、会话摘要、长期记忆、最小用户画像和必要工具上下文。
+- 生成 `IntentContext` 和 `AgentContext` 两种领域无关的临时 ContextMessages。
+- 通过滚动摘要和固定近期窗口从源头节省 token：默认保留最近 20 条未压缩消息；未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
+- 每条消息只进入摘要或近期原文之一，不重复注入。
+- 工具结果只直接保留最近一次完整结果；其他历史工具调用只注入固定数量的 ToolCallRef，需要完整结果时按 `tool_call_id` 受控读取。
+- 记录上下文来源、摘要覆盖水位、近期消息范围、最近工具调用、工具引用数量、Token 估算和构建耗时。
+- 摘要、记忆或画像不可用时按策略降级，不阻塞基础聊天。
+
+上下文优先级：
+
+1. 系统安全指令和工具协议。
+2. 当前用户输入。
+3. 当前任务状态和待确认动作。
+4. 经过校验的结构化工具事实。
+5. 近期对话。
+6. 会话摘要。
+7. 长期用户记忆和最小用户画像。
+
+安全约束：
+
+- Context Manager 的 user ID 只能来自认证上下文。
+- 所有上下文 Store 必须同时按 user ID 和 conversation ID 查询。
+- UserMemory、ConversationSummary、ToolFact 和 UserProfile 都是不可信数据，不能覆盖 system prompt、工具白名单、确认规则和 Execution Guard。
+- 动态 ToolFact 过期后只用于理解历史，写操作前必须重新调用业务 RPC 校验。
+- Context Manager 不包含 Eino 类型；Intent Planner 依赖无 Eino 类型的 `IntentModel` 接口，只有 `internal/eino` 的 IntentModel/Runner 适配器可以把领域消息转换为 `schema.Message`。
+
+当前方案已收敛为轻量 Context Manager：Planner 和 Agent Runner 默认消费临时组装的 ContextMessages；不持久化模型输入，不做运行时 token 上限裁剪。Conversation Manager 继续负责会话归属校验和原始消息持久化，不再决定模型输入窗口。
+
+### 3.5 Intent Planner
 职责：
 - 判断用户意图。
 - 生成工具调用计划。
@@ -148,8 +185,9 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 - 两次 fast LLM 均不可用或结果不可用时，回退规则 Planner；明确中文意图仍可处理订单查询、取消订单、加购物车等请求。
 - Planner 的输出必须经过 Tool Registry 和 Execution Guard 校验后才能执行。
 - Prompt 文本集中放在 `services/aiagent/internal/prompts`，Planner 和 Eino 编排代码不得直接硬编码长 prompt。
+- Planner 迁移后只消费轻量 `IntentContext`，不再自行执行固定 8 条、单条 300 字符的历史裁剪。
 
-### 3.5 Tool Registry
+### 3.6 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
 首期工具：
 - product.search
@@ -191,7 +229,7 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon.calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
 
-### 3.6 Execution Guard / Engine
+### 3.7 Execution Guard / Engine
 职责：
 - 校验工具参数。
 - 强制注入当前登录用户 ID。
@@ -203,7 +241,7 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 
 Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器中。任何 Eino 工具实际调用 RPC 前，都必须先经过该 Guard。
 
-### 3.7 Confirmation Manager
+### 3.8 Confirmation Manager
 高风险操作必须进入确认流程。
 职责：
 - 创建确认记录。
@@ -283,9 +321,49 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 |---|---|
 | id | 记忆 ID |
 | user_id | 用户 ID |
-| memory_type | 记忆类型 |
+| memory_key | 用户内稳定记忆键 |
+| memory_type | instruction / preference / price / profile_fact |
 | content | 记忆内容 |
 | confidence | 置信度 |
+| source | explicit / inferred |
+| source_message_id | 来源消息 ID |
+| status | active / superseded / deleted / expired |
+| expires_at | 过期时间 |
+| last_confirmed_at | 最近确认时间 |
+| created_at | 创建时间 |
+| updated_at | 更新时间 |
+
+长期记忆采用“显式 + 受控推断”策略。用户明确要求记住的内容可直接保存；推断偏好必须经过置信度、来源、敏感信息和 TTL 策略校验。模型只能生成候选，不能直接写库。
+
+### 4.6 ai_conversation_summaries
+
+| 字段 | 说明 |
+|---|---|
+| id | 摘要 ID |
+| conversation_id | 会话 ID |
+| user_id | 用户 ID |
+| covered_until_created_at | 已覆盖消息时间水位 |
+| covered_until_message_id | 已覆盖消息 ID 水位 |
+| summary | 会话摘要 |
+| key_facts | 稳定关键事实 JSON |
+| open_tasks | 未完成事项 JSON |
+| token_count | 摘要 Token 估算 |
+| created_at | 创建时间 |
+| updated_at | 更新时间 |
+
+### 4.7 ai_agent_runs
+
+| 字段 | 说明 |
+|---|---|
+| id | Agent Run ID |
+| conversation_id | 会话 ID |
+| user_id | 用户 ID |
+| status | running / waiting_confirmation / completed / failed / expired |
+| current_step | 当前步骤 |
+| task_state | 结构化任务状态 JSON |
+| checkpoint_id | Eino/Redis checkpoint ID |
+| idempotency_key | 运行幂等键 |
+| expires_at | 过期时间 |
 | created_at | 创建时间 |
 | updated_at | 更新时间 |
 
@@ -326,6 +404,20 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 6. 用户确认后，由确认状态机的唯一 winner 通过 Execution Guard 调用 `order.create`。
 7. 成功标记确认记录为 `executed`，失败标记为 `failed`，并返回真实订单结果。
 
+### 5.5 上下文构建流程
+
+1. Conversation Manager 校验会话归属并保存当前用户原始消息。
+2. Context Manager 根据调用方选择 `IntentContext` 或 `AgentContext`。
+3. 加载最新会话摘要、水位后的近期原文、有效长期记忆、活跃 TaskState、pending confirmation、最近一次完整工具结果和历史 ToolCallRef。
+4. 如果未压缩消息达到 30 条，异步将最早 10 条与旧摘要合并成新摘要，之后仍保留最近 20 条原文。
+5. IntentContext 只包含当前用户输入、最近对话、当前 TaskState 和长期记忆摘要。
+6. AgentContext 包含摘要、近期 20 条原文、最近一次完整工具结果、历史工具引用、TaskState、UserMemory 和可选 UserProfile。
+7. Planner 通过领域 `IntentModel` 接口调用 `internal/eino` 适配器，AgentRunner 同样在 `internal/eino` 边界转换消息后调用 ChatModel。
+8. 工具和 assistant 结果持久化后更新 TaskState，并异步评估是否需要生成新摘要或长期记忆候选。
+9. 摘要、记忆或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
+
+工具结果持久化采用双字段兼容：`metadata.tool_result` 保存结构化机器 envelope，`metadata.data_json` 保留投影后的业务 JSON 供现有 WebSocket/旧消费者使用。Context Manager 优先读取 envelope，旧记录才回退读取 `data_json`。
+
 ## 6. 测试方案
 ### 6.1 单元测试
 - Intent Planner 意图识别。
@@ -334,6 +426,11 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - Execution Guard 用户 ID 注入和参数校验。
 - Eino ChatModel 创建、超时和降级逻辑。
 - Eino 工具调用事件到审计记录的转换。
+- Context Manager 的 Intent/Agent 组装来源。
+- ToolFact 的完整 JSON 恢复和关键 ID 保留。
+- 摘要复合水位推进和失败降级。
+- 长期记忆的显式写入、受控推断、冲突、过期、删除和用户隔离。
+- TaskState 状态条件更新和 checkpoint 恢复。
 
 ### 6.2 集成测试
 - WebSocket 建连成功。
@@ -351,6 +448,9 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 过期确认不能执行。
 - 重复确认不能重复执行。
 - 工具调用失败时不能返回成功话术。
+- 用户不能读取其他用户的摘要、记忆、TaskState、工具结果或工具引用。
+- 记忆和摘要中的提示注入文本不能覆盖 system prompt 或确认策略。
+- 过期动态 ToolFact 不能直接驱动写操作。
 
 ## 7. 实施建议
 建议分阶段实现：
@@ -377,8 +477,10 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 完成风控测试。
 
 第五阶段：增强能力  
-- 会话记忆。
-- 用户偏好。
+- 按 `docs/ai-agent-context-optimization.md` 分阶段接入 Context Manager。
+- 轻量 Context Manager、滚动摘要和 Token 估算日志。
+- 会话增量摘要、长期记忆和最小用户画像。
+- Agent Run、TaskState 和可恢复 checkpoint。
 - 运营配置。
 - 模型切换。
 - 限流和监控。
