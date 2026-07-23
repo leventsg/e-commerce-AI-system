@@ -13,6 +13,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/contextmanager"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
@@ -192,11 +193,11 @@ func agentEventToMessage(userID uint64, event domain.AgentEvent) (*aimessages.Ai
 	metadata := sql.NullString{}
 	if event.Type == domain.EventToolResult || event.Type == domain.EventConfirmationRequired {
 		role = conversation.RoleTool
-		raw, err := json.Marshal(map[string]any{"tool_name": event.Tool, "status": event.Status, "confirmation_id": event.ConfirmationID, "data_json": event.DataJSON})
+		raw, err := contextmanager.BuildToolResultMetadata(event.MessageID, event.Tool, event.Status, event.ConfirmationID, event.DataJSON, event.Content)
 		if err != nil {
 			return nil, err
 		}
-		metadata = sql.NullString{String: string(raw), Valid: true}
+		metadata = sql.NullString{String: raw, Valid: true}
 	}
 	return &aimessages.AiMessages{Id: event.MessageID, ConversationId: event.ConversationID, UserId: userID, Role: role, Content: event.Content, Metadata: metadata, CreatedAt: time.Now()}, nil
 }

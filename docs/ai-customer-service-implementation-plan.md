@@ -571,6 +571,7 @@ Expected: Eino Tool 注册、本地白名单、风险等级、超时配置全部
 - “推荐几款适合学生党的手机” -> `recommend` + `product.recommend`
 - “查一下订单 202406300001” -> `query` + `order.get`
 - “帮我加入购物车，商品 12 买 2 件” -> `action` + `cart.add`
+- “购物车条目 8 减少 2 件” -> `action` + `cart.sub`
 - “取消订单 202406300001” -> `action` + `order.cancel` + 需要确认
 
 - [ ] **Step 3: 实现 fast LLM + 重试 + 规则兜底 Planner**
@@ -1027,7 +1028,228 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 覆盖伪造 `user_id`、跨用户确认、过期确认、重复确认、工具失败不伪造成功。
 
-## 11. 推荐实施顺序
+## 11. 上下文工程优化
+
+上下文优化的目标设计见 `docs/ai-agent-context-optimization.md`。原始消息继续由 Conversation Manager 完整保存；Planner 和 Agent 的模型输入统一由轻量 Context Manager 临时组装。首期不引入向量数据库，不持久化模型输入，不做运行时 token 上限裁剪，也不在这些任务中重构 ReAct 循环。
+
+**实现状态（2026-07-23）：** 上下文方案已从重型治理收敛为轻量 Context Manager。后续实现优先保留 ToolResult envelope、滚动摘要、ToolCallRef、按需读取工具结果、TaskState 和长期记忆；删除或避免继续扩展独立上下文快照持久化、复杂预算打包和超限阻断。
+
+### Task 17: 工具结果引用和按需读取
+
+**Files:**
+
+- Create/Modify: `services/aiagent/internal/contextmanager/tool_results.go`
+- Modify: `services/aiagent/internal/tools/result_projector.go`
+- Modify: `services/aiagent/internal/logic/chatlogic.go`
+- Test: `services/aiagent/internal/contextmanager/tool_results_test.go`
+- Test: `services/aiagent/internal/tools/result_projector_test.go`
+
+- [ ] **Step 1: 先写 ToolCallRef 与按需读取测试**
+
+覆盖：
+
+- 成功工具结果完整保存到 `ai_messages.metadata.tool_result`。
+- ToolCallRef 包含 `tool_call_id`、`tool_name`、`status`、`summary`、`created_at` 和关键 entity ID。
+- 最近一次成功工具结果可完整进入 AgentContext。
+- 更早工具调用只以 ToolCallRef 进入上下文。
+- 按 `tool_call_id` 读取完整结果必须同时校验 user ID 和 conversation ID。
+- 失败、非法 JSON、未知工具名、跨用户或跨会话结果不得返回给模型。
+
+- [ ] **Step 2: 实现 ToolResultStore**
+
+ToolResultStore 从 `ai_messages.metadata.tool_result` 读取完整 envelope；旧记录兼容读取 `metadata.data_json`，但旧数据只能用于生成有限 ToolCallRef，不能伪造成完整成功 envelope。
+
+- [ ] **Step 3: 实现 ToolCallRef projector**
+
+按工具注册 allowlist projector，只输出后续推理需要的关键 ID、状态、摘要和时间字段。projector 只删除无关字段，不截断 ID、订单号、数量和状态。
+
+- [ ] **Step 4: 运行测试**
+
+```bash
+go test ./services/aiagent/internal/contextmanager -run 'TestToolResult|TestToolCallRef' -count=1
+go test ./services/aiagent/internal/tools -run TestResultProjector -count=1
+```
+
+Expected: ToolResult envelope 可恢复，ToolCallRef 不丢关键 ID，按需读取强制用户和会话隔离。
+
+### Task 18: 轻量 Context Manager 正式接入
+
+**Files:**
+
+- Create/Modify: `services/aiagent/internal/contextmanager/manager.go`
+- Create/Modify: `services/aiagent/internal/domain/context.go`
+- Modify: `services/aiagent/internal/logic/chatlogic.go`
+- Modify: `services/aiagent/internal/planner/planner.go`
+- Modify: `services/aiagent/internal/eino/agent.go`
+- Test: `services/aiagent/internal/contextmanager/manager_test.go`
+- Test: `services/aiagent/internal/planner/planner_test.go`
+- Test: `services/aiagent/internal/eino/agent_test.go`
+- Test: `services/aiagent/internal/logic/chatlogic_test.go`
+
+- [ ] **Step 1: 先写 Context 组装测试**
+
+覆盖：
+
+- IntentContext 只包含当前输入、最近对话、当前 TaskState 和长期记忆摘要。
+- AgentContext 包含摘要、最近 20 条未压缩消息、最近一次完整工具结果、历史 ToolCallRef、TaskState、UserMemory 和可选 UserProfile。
+- Context Manager 只返回临时 `[]domain.ContextMessage` 和轻量 build metadata，不落库模型输入。
+- token 估算只记录在 build metadata 或日志中，不参与裁剪，不返回错误。
+
+- [ ] **Step 2: 定义轻量 Context 类型**
+
+使用 `ContextMode`、`BuildContextRequest`、`ContextMessage` 和 `BuildContextResult`。`BuildContextResult` 至少包含 messages、summary covered watermark、recent message range、latest tool call ID、tool ref count 和 estimated input tokens。
+
+- [ ] **Step 3: Planner 接入 IntentContext**
+
+Planner 只接收 Context Manager 已组装的 IntentContext，不再自行做固定 8 条或单条 300 字符裁剪。缺少历史工具完整结果时，Planner 返回澄清问题或读取工具结果的计划，不猜测参数。
+
+- [ ] **Step 4: AgentRunner 接入 AgentContext**
+
+Runner 接收 AgentContext 的 `[]domain.ContextMessage`，由 `internal/eino/messages.go` 转换为 Eino `schema.Message`，不再直接把 `[]*AiMessages` 转换为模型输入。
+
+- [ ] **Step 5: 运行测试**
+
+```bash
+go test ./services/aiagent/internal/contextmanager -run TestManager -count=1
+go test ./services/aiagent/internal/planner -run Test -count=1
+go test ./services/aiagent/internal/eino -run Test -count=1
+go test ./services/aiagent/internal/logic -run TestChat -count=1
+```
+
+Expected: Planner 和 Runner 均消费轻量 Context Manager 输出；Context 组装不会因 token 估算触发裁剪或错误。
+
+### Task 19: 滚动摘要与长期记忆
+
+**Files:**
+
+- Create/Modify: `dal/model/ai/conversation_summaries/ai_conversation_summaries.sql`
+- Create/Modify: `dal/model/ai/conversation_summaries/**`
+- Modify: `dal/model/ai/user_memories/ai_user_memories.sql`
+- Regenerate: `dal/model/ai/user_memories/**`
+- Modify: `construct/depend/sql/init.sql`
+- Modify: `construct/depend/sql/migrations/20260722_ai_context_engineering.sql`
+- Create/Modify: `services/aiagent/internal/contextmanager/summary.go`
+- Create/Modify: `services/aiagent/internal/contextmanager/memory_policy.go`
+- Create/Modify: `services/aiagent/internal/contextmanager/user_profile.go`
+- Test: `services/aiagent/internal/contextmanager/summary_test.go`
+- Test: `services/aiagent/internal/contextmanager/memory_policy_test.go`
+
+- [ ] **Step 1: 先写 30 -> 10 + 20 摘要测试**
+
+覆盖：
+
+- 未压缩消息少于 30 条时不生成新摘要。
+- 未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
+- 摘要成功后水位推进，剩余 20 条仍作为近期原文。
+- 同一条消息不会同时出现在摘要和近期原文。
+- 摘要失败或非法 JSON 时保留上一版摘要，近期原文继续保留。
+- 显式记忆可以保存、更新、删除和过期。
+- 推断记忆只有 `confidence >= 0.85`、存在来源消息、非敏感且有 TTL 时才写入。
+
+- [ ] **Step 2: 新增或保留摘要表并扩展记忆表**
+
+按设计文档保留 `ai_conversation_summaries`，扩展 `ai_user_memories` 的 memory key、source、source message、status、expires 和 last confirmed 字段。生成 go-zero model；生成文件不手改。
+
+```bash
+goctl model mysql ddl -src dal/model/ai/conversation_summaries/ai_conversation_summaries.sql -dir dal/model/ai/conversation_summaries -c
+goctl model mysql ddl -src dal/model/ai/user_memories/ai_user_memories.sql -dir dal/model/ai/user_memories -c
+```
+
+- [ ] **Step 3: 实现滚动摘要服务**
+
+摘要模型无工具权限，输入上一版摘要和本次要压缩的 10 条消息，输出 `summary/key_facts/open_tasks` 严格 JSON。保存前校验 JSON、字段长度和引用实体 ID。
+
+- [ ] **Step 4: 实现显式和受控推断 MemoryPolicy**
+
+模型只能产生候选，MemoryPolicy 负责脱敏、置信度、来源、TTL、冲突和 upsert。禁止保存认证信息、支付凭据、完整地址、瞬时库存和单次订单状态。
+
+- [ ] **Step 5: 接入最小 UserProfile**
+
+通过现有 users RPC 加载当前任务需要的 allowlist 字段，并与有效 UserMemory 组合。users RPC 失败时跳过画像，不阻塞聊天。
+
+- [ ] **Step 6: 运行测试**
+
+```bash
+go test ./dal/model/ai/...
+go test ./services/aiagent/internal/contextmanager -run 'TestSummary|TestMemory|TestUserProfile' -count=1
+```
+
+Expected: 摘要窗口、消息去重、记忆生命周期、用户隔离、失败降级和提示注入防护全部通过。
+
+### Task 20: Agent Run、TaskState 与 Checkpoint
+
+**Files:**
+
+- Create/Modify: `dal/model/ai/agent_runs/ai_agent_runs.sql`
+- Create/Modify: `dal/model/ai/agent_runs/**`
+- Modify: `construct/depend/sql/init.sql`
+- Modify: `construct/depend/sql/migrations/20260722_ai_context_engineering.sql`
+- Create/Modify: `services/aiagent/internal/contextmanager/task_state.go`
+- Create/Modify: `services/aiagent/internal/contextmanager/checkpoint_store.go`
+- Modify: `services/aiagent/internal/tools/high_risk_tools.go`
+- Modify: `services/aiagent/internal/logic/confirmactionlogic.go`
+- Test: `services/aiagent/internal/contextmanager/task_state_test.go`
+- Test: `services/aiagent/internal/logic/confirmactionlogic_test.go`
+
+- [ ] **Step 1: 先写状态和恢复测试**
+
+覆盖 running、waiting_confirmation、completed、failed、expired 状态；TaskState CAS 冲突；Redis 丢失后从 MySQL 恢复；跨用户和跨会话恢复拒绝；重复 checkpoint 恢复不重复调用写 RPC。
+
+- [ ] **Step 2: 新增或保留 AgentRun model**
+
+按设计文档建立 `ai_agent_runs`，使用唯一 `idempotency_key` 防止重复运行。生成 model 后在自定义 model 文件增加带 user ID、conversation ID 和旧状态条件的状态更新方法。
+
+- [ ] **Step 3: 接入高风险确认状态**
+
+创建 confirmation 时把 tool name、脱敏参数和 confirmation ID 写入 TaskState，并把 Run 标记为 waiting_confirmation。ConfirmAction 恢复时重新校验用户、会话、确认状态、参数、过期时间和幂等键，然后仍通过原有 Confirmation Manager 与 Execution Guard 执行。
+
+- [ ] **Step 4: 实现 Redis 热 checkpoint**
+
+Redis 只缓存可从 MySQL 重建的状态；Redis 故障或丢失时恢复语义不变。
+
+- [ ] **Step 5: 运行测试**
+
+```bash
+go test ./services/aiagent/internal/contextmanager -run 'TestTaskState|TestCheckpoint' -count=1
+go test ./services/aiagent/internal/logic -run TestConfirmAction -count=1
+```
+
+Expected: 等待确认可以跨实例恢复，重复或越权恢复不能执行业务 RPC。
+
+### Task 21: 观测、清理和旧路径收敛
+
+**Files:**
+
+- Modify: `services/aiagent/internal/contextmanager/metrics.go`
+- Modify: `services/aiagent/internal/logic/chatlogic.go`
+- Modify: `services/aiagent/internal/eino/agent.go`
+- Modify: `docs/ai-agent-context-optimization.md`
+- Test: `services/aiagent/internal/contextmanager/manager_test.go`
+- Test: `services/aiagent/internal/logic/chatlogic_test.go`
+
+- [ ] **Step 1: 增加轻量观测**
+
+记录 context 构建耗时、估算 token、摘要命中、ToolCallRef 数量、按需读取工具结果次数、降级原因、记忆候选决策和 checkpoint 恢复结果。估算 token 只进入日志和指标，不参与裁剪。
+
+- [ ] **Step 2: 删除重型上下文设计**
+
+删除独立上下文快照持久化、相关表/model/recorder、复杂预算打包和超限阻断。保留原始消息、ToolResult envelope、摘要、记忆、TaskState 和结构化日志。
+
+- [ ] **Step 3: 收敛旧逻辑**
+
+删除 Planner 和 Runner 的旧直接历史构建逻辑。Planner 和 AgentRunner 只消费轻量 Context Manager 输出；Conversation Manager 保留会话归属和原始消息持久化职责。
+
+- [ ] **Step 4: 运行验收**
+
+```bash
+go test ./services/aiagent/...
+go test ./apis/ai/...
+go test ./...
+```
+
+Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部通过。
+
+## 12. 推荐实施顺序
 
 1. 数据库与 model：Task 1。
 2. Agent RPC 骨架与配置：Task 2。
@@ -1037,6 +1259,11 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 6. 确认流程与高风险工具：Task 10-11。
 7. WebSocket API：Task 12-13。
 8. 限流、超时、端到端验收：Task 15-16。
+9. 工具结果引用和按需读取：Task 17。
+10. 轻量 Context Manager 正式接入：Task 18。
+11. 滚动摘要和长期记忆：Task 19。
+12. Agent Run 与 Checkpoint：Task 20。
+13. 观测、清理和旧路径收敛：Task 21。
 
 每完成一个阶段执行：
 
@@ -1050,7 +1277,7 @@ go test ./services/aiagent/... ./apis/ai/...
 go test ./...
 ```
 
-## 12. 风险与处理策略
+## 13. 风险与处理策略
 
 - 模型结果不稳定：首期保留规则 Planner 兜底，明确意图不依赖模型。
 - WebSocket 流式与 RPC 非流式不匹配：首期 RPC 返回事件数组，API 网关逐条推送；后续再升级为服务端流式 RPC。
@@ -1059,8 +1286,13 @@ go test ./...
 - 确认重复执行：确认状态更新与执行需要在事务或 Redis 锁保护下完成。
 - 业务服务返回字段不完整：工具结果转换层只暴露 PRD 要求字段，缺失字段返回空值并记录日志。
 - 模型不可用：返回“AI 服务暂时不可用，请稍后重试”，查询/写操作不自动编造结果。
+- 上下文过长：不做运行时裁剪；通过 30 -> 10 + 20 滚动摘要、近期 20 条原文和历史工具引用从源头节省 token，并记录估算 token 便于排查。
+- 工具结果过大：只把最近一次完整工具结果放入上下文，历史工具调用保留 ToolCallRef；需要完整结果时按 `tool_call_id` 重新读取。
+- 摘要或记忆错误：原始消息始终保留；摘要、记忆和画像失败降级到近期消息，不阻塞基础聊天。
+- 记忆污染和提示注入：模型只能提交候选，MemoryPolicy 负责来源、置信度、敏感信息、TTL 和冲突校验；记忆不能覆盖 system prompt。
+- checkpoint 丢失：Redis 只做热缓存，MySQL AgentRun、confirmation 和 tool call 记录可重建执行状态。
 
-## 13. 完成标准
+## 14. 完成标准
 
 - `apis/ai` 可通过 WebSocket 完成连续对话。
 - `services/aiagent` 可基于 Eino 编排模型、工具调用、确认和审计。
@@ -1069,3 +1301,11 @@ go test ./...
 - 所有写操作有审计记录。
 - `go test ./services/aiagent/... ./apis/ai/...` 通过。
 - 风控场景在 `test/ai-customer-service-e2e.md` 中有明确验收记录。
+- Planner 和 Agent 的模型输入统一由轻量 Context Manager 临时组装。
+- token 估算只进入日志和指标，不参与裁剪、不阻塞模型调用。
+- 结构化工具结果不因上下文裁剪损坏，动态事实写操作前重新校验。
+- 超出近期 20 条原文窗口的关键事实可通过会话摘要恢复。
+- 历史工具调用以 ToolCallRef 保留，完整结果只能通过 user ID + conversation ID + tool_call_id 按需读取。
+- 长期记忆具备来源、置信度、冲突、过期、删除和用户隔离。
+- waiting_confirmation 可以跨实例恢复，重复恢复不会重复执行写 RPC。
+- 每次模型调用可以通过结构化日志追踪摘要覆盖水位、近期消息范围、最近工具结果和历史工具引用数量。
