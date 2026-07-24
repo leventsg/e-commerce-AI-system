@@ -13,6 +13,7 @@ import (
 	aiaudit "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	aiconfirmation "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/contextmanager"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
@@ -83,6 +84,7 @@ type ServiceContext struct {
 	ConfirmationManager ConfirmationManager
 	HighRiskTools       HighRiskToolExecutor
 	ConversationManager conversation.Manager
+	ContextManager      contextmanager.Manager
 	IntentPlanner       IntentPlanner
 	AgentRunner         eino.Runner
 	QueryChatTools      ChatToolExecutor
@@ -131,12 +133,18 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Checkout: checkoutRPC,
 		Coupon:   couponRPC,
 	})
+	conversationsModel := aiconversations.NewAiConversationsModel(mysql, c.Cache)
+	messagesModel := aimessages.NewAiMessagesModel(mysql, c.Cache)
 	conversationManager := conversation.NewManager(
-		aiconversations.NewAiConversationsModel(mysql, c.Cache),
-		aimessages.NewAiMessagesModel(mysql, c.Cache),
+		conversationsModel,
+		messagesModel,
+	)
+	contextManager := contextmanager.NewManager(
+		contextmanager.NewMessageStore(messagesModel),
+		contextmanager.NewToolResultStore(messagesModel),
 	)
 	modelFactory := eino.NewModelFactory()
-	intentPlanner := planner.New(toolRegistry, planner.WithIntentModel(modelFactory, c.IntentModel))
+	intentPlanner := planner.New(toolRegistry, planner.WithIntentModel(eino.NewIntentModelFactory(modelFactory), c.IntentModel))
 	var agentRunner eino.Runner
 	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino); err == nil {
 		agentRunner = eino.NewRunner(chatModel)
@@ -148,8 +156,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Config:              c,
 		Mysql:               mysql,
 		RedisClient:         redisClient,
-		ConversationsModel:  aiconversations.NewAiConversationsModel(mysql, c.Cache),
-		MessagesModel:       aimessages.NewAiMessagesModel(mysql, c.Cache),
+		ConversationsModel:  conversationsModel,
+		MessagesModel:       messagesModel,
 		ToolCallsModel:      toolCallsModel,
 		ConfirmationsModel:  confirmationsModel,
 		UserMemoriesModel:   aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache),
@@ -168,6 +176,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ConfirmationManager: confirmationManager,
 		HighRiskTools:       highRiskTools,
 		ConversationManager: conversationManager,
+		ContextManager:      contextManager,
 		IntentPlanner:       intentPlanner,
 		AgentRunner:         agentRunner,
 		QueryChatTools:      queryTools,

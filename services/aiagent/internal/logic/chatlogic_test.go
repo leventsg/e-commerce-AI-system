@@ -23,6 +23,7 @@ func TestChatRunsAssistantAndPersistsResponse(t *testing.T) {
 	messages := &fakeChatMessagesModel{}
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
 		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentChat}},
 		AgentRunner: fakeAgentRunner{events: []domain.AgentEvent{{
 			Type: domain.EventAssistantMessage, ConversationID: "conv-1", Content: "你好", Done: true,
@@ -47,6 +48,7 @@ func TestChatDispatchesHighRiskToolToConfirmation(t *testing.T) {
 	messages := &fakeChatMessagesModel{}
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
 		IntentPlanner: fakeIntentPlanner{result: planner.PlanResult{
 			Intent: planner.IntentAction, ToolName: domain.ToolOrderCancel, Arguments: map[string]any{"order_id": "order-1", "user_id": 999}, RequireConfirmation: true,
 		}},
@@ -73,6 +75,7 @@ func TestChatReturnsAssistantPromptWithoutExecutingTool(t *testing.T) {
 	query := &fakeChatToolExecutor{}
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
 		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentQuery, AssistantMessage: "请提供订单号", MissingParams: []string{"order_id"}}},
 		QueryChatTools:      query,
 		MessagesModel:       &fakeChatMessagesModel{},
@@ -91,6 +94,7 @@ func TestChatRegistryForcesHighRiskConfirmation(t *testing.T) {
 	registry := tools.NewRegistry(config.ToolTimeoutConfig{QuerySeconds: 3, WriteSeconds: 5})
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
 		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentAction, ToolName: domain.ToolOrderCancel, Arguments: map[string]any{"order_id": "order-1"}}},
 		ToolRegistry:        registry,
 		HighRiskChatTools:   highRisk,
@@ -107,6 +111,7 @@ func TestChatPreservesSuccessfulWriteWhenMessagePersistenceFails(t *testing.T) {
 	write := &fakeChatToolExecutor{event: domain.AgentEvent{Type: domain.EventToolResult, Tool: domain.ToolCartAdd, Status: "success", Content: "已加入购物车", BusinessExecuted: true, Done: true}}
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
 		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentAction, ToolName: domain.ToolCartAdd}},
 		WriteChatTools:      write,
 		MessagesModel:       &fakeChatMessagesModel{err: errors.New("insert failed")},
@@ -132,6 +137,7 @@ func TestChatPersistsSuccessfulToolResultEnvelope(t *testing.T) {
 	messages := &fakeChatMessagesModel{}
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
 		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentAction, ToolName: domain.ToolCartAdd}},
 		WriteChatTools:      write,
 		MessagesModel:       messages,
@@ -171,6 +177,79 @@ func TestChatPersistsSuccessfulToolResultEnvelope(t *testing.T) {
 	toolResult, _ := rawMeta["tool_result"].(map[string]any)
 	if meta.DataJSON == "" || meta.ToolResult.Summary != "已加入购物车" || hasUnexpectedToolResultVersionKey(toolResult) {
 		t.Fatalf("metadata = %+v", meta)
+	}
+}
+
+func TestChatUsesContextManagerForPlannerAndRunnerWithoutHistoryFallback(t *testing.T) {
+	contextBuilder := &fakeBuildContextManager{
+		intent: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "intent-system"},
+			{Role: domain.ContextRoleUser, Content: "你好"},
+		},
+		agent: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "agent-system"},
+			{Role: domain.ContextRoleAssistant, Content: "context-manager-only"},
+			{Role: domain.ContextRoleUser, Content: "你好"},
+		},
+	}
+	intentPlanner := &capturingIntentPlanner{result: planner.PlanResult{
+		Intent: planner.IntentChat, AssistantMessage: "fast intent model reply must not bypass AgentRunner",
+	}}
+	agentRunner := &capturingAgentRunner{events: []domain.AgentEvent{{
+		Type: domain.EventAssistantMessage, ConversationID: "conv-1", Content: "你好", Done: true,
+	}}}
+	ctx := &svc.ServiceContext{
+		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{
+			ConversationID: "conv-1", UserMessageID: "user-1",
+			History: []*aimessages.AiMessages{{Id: "legacy", Role: conversation.RoleAssistant, Content: "legacy-history-must-not-be-used"}},
+		}},
+		ContextManager: contextBuilder,
+		IntentPlanner:  intentPlanner,
+		AgentRunner:    agentRunner,
+		MessagesModel:  &fakeChatMessagesModel{},
+	}
+
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{
+		UserId: 42, ConversationId: "conv-1", MessageId: "user-1", Content: "你好",
+	})
+	if err != nil || resp.StatusCode != 0 {
+		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
+	}
+	if len(contextBuilder.requests) != 2 ||
+		contextBuilder.requests[0].Mode != domain.IntentContextMode ||
+		contextBuilder.requests[1].Mode != domain.AgentContextMode {
+		t.Fatalf("context requests = %+v", contextBuilder.requests)
+	}
+	for _, request := range contextBuilder.requests {
+		if request.UserID != 42 || request.ConversationID != "conv-1" || request.CurrentMessageID != "user-1" || request.CurrentInput != "你好" {
+			t.Fatalf("context request = %+v", request)
+		}
+	}
+	if joinContextContentsForLogic(intentPlanner.req.Messages) != "intent-system\n你好\n" {
+		t.Fatalf("planner messages = %+v", intentPlanner.req.Messages)
+	}
+	runnerContext := joinContextContentsForLogic(agentRunner.req.Messages)
+	if !strings.Contains(runnerContext, "context-manager-only") || strings.Contains(runnerContext, "legacy-history-must-not-be-used") {
+		t.Fatalf("runner messages = %+v", agentRunner.req.Messages)
+	}
+}
+
+func TestChatReturnsErrorWhenContextBuildFailsWithoutCallingPlanner(t *testing.T) {
+	contextErr := errors.New("context build failed")
+	intentPlanner := &capturingIntentPlanner{}
+	ctx := &svc.ServiceContext{
+		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      &fakeBuildContextManager{err: contextErr},
+		IntentPlanner:       intentPlanner,
+		MessagesModel:       &fakeChatMessagesModel{},
+	}
+
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "你好"})
+	if err != nil || resp.StatusCode == 0 || intentPlanner.calls != 0 {
+		t.Fatalf("Chat() resp=%+v err=%v planner_calls=%d", resp, err, intentPlanner.calls)
+	}
+	if !strings.Contains(resp.StatusMsg, contextErr.Error()) {
+		t.Fatalf("StatusMsg = %q", resp.StatusMsg)
 	}
 }
 
@@ -221,6 +300,19 @@ func (f fakeIntentPlanner) Plan(context.Context, planner.PlanRequest) (planner.P
 	return f.result, f.err
 }
 
+type capturingIntentPlanner struct {
+	result planner.PlanResult
+	err    error
+	req    planner.PlanRequest
+	calls  int
+}
+
+func (f *capturingIntentPlanner) Plan(_ context.Context, req planner.PlanRequest) (planner.PlanResult, error) {
+	f.calls++
+	f.req = req
+	return f.result, f.err
+}
+
 type fakeAgentRunner struct {
 	events []domain.AgentEvent
 	err    error
@@ -231,6 +323,62 @@ func (f fakeAgentRunner) Run(context.Context, eino.RunRequest) ([]domain.AgentEv
 }
 func (f fakeAgentRunner) Stream(context.Context, eino.RunRequest) (<-chan domain.AgentEvent, error) {
 	return nil, f.err
+}
+
+type capturingAgentRunner struct {
+	events []domain.AgentEvent
+	err    error
+	req    eino.RunRequest
+}
+
+func (f *capturingAgentRunner) Run(_ context.Context, req eino.RunRequest) ([]domain.AgentEvent, error) {
+	f.req = req
+	return f.events, f.err
+}
+
+func (f *capturingAgentRunner) Stream(context.Context, eino.RunRequest) (<-chan domain.AgentEvent, error) {
+	return nil, f.err
+}
+
+type fakeBuildContextManager struct {
+	intent   []domain.ContextMessage
+	agent    []domain.ContextMessage
+	err      error
+	requests []domain.BuildContextRequest
+}
+
+func (f *fakeBuildContextManager) Build(_ context.Context, req domain.BuildContextRequest) (*domain.BuildContextResult, error) {
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return nil, f.err
+	}
+	messages := f.intent
+	if req.Mode == domain.AgentContextMode {
+		messages = f.agent
+	}
+	return &domain.BuildContextResult{Messages: messages}, nil
+}
+
+func successfulContextManager() *fakeBuildContextManager {
+	return &fakeBuildContextManager{
+		intent: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "intent-system"},
+			{Role: domain.ContextRoleUser, Content: "current"},
+		},
+		agent: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "agent-system"},
+			{Role: domain.ContextRoleUser, Content: "current"},
+		},
+	}
+}
+
+func joinContextContentsForLogic(messages []domain.ContextMessage) string {
+	var builder strings.Builder
+	for _, message := range messages {
+		builder.WriteString(message.Content)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
 }
 
 type fakeChatToolExecutor struct {
@@ -274,6 +422,9 @@ func (f *fakeChatMessagesModel) FindOne(context.Context, string) (*aimessages.Ai
 func (f *fakeChatMessagesModel) Update(context.Context, *aimessages.AiMessages) error { return nil }
 func (f *fakeChatMessagesModel) Delete(context.Context, string) error                 { return nil }
 func (f *fakeChatMessagesModel) FindRecentByConversationID(context.Context, string, int) ([]*aimessages.AiMessages, error) {
+	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindRecentContextMessages(context.Context, uint64, string, int) ([]*aimessages.AiMessages, error) {
 	return nil, nil
 }
 func (f *fakeChatMessagesModel) FindRecentToolMessages(context.Context, uint64, string, int) ([]*aimessages.AiMessages, error) {

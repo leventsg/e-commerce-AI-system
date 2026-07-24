@@ -1032,7 +1032,7 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 上下文优化的目标设计见 `docs/ai-agent-context-optimization.md`。原始消息继续由 Conversation Manager 完整保存；Planner 和 Agent 的模型输入统一由轻量 Context Manager 临时组装。首期不引入向量数据库，不持久化模型输入，不做运行时 token 上限裁剪，也不在这些任务中重构 ReAct 循环。
 
-**实现状态（2026-07-23）：** 上下文方案已从重型治理收敛为轻量 Context Manager。后续实现优先保留 ToolResult envelope、滚动摘要、ToolCallRef、按需读取工具结果、TaskState 和长期记忆；删除或避免继续扩展独立上下文快照持久化、复杂预算打包和超限阻断。
+**实现状态（2026-07-24）：** 上下文方案已从重型治理收敛为轻量 Context Manager。Task 18 已正式接入：Chat 分别构建 IntentContext 和 AgentContext，Planner/Runner 只消费领域 ContextMessages，token 估算不参与裁剪或阻断。后续继续补齐 Task 19-21 的滚动摘要、长期记忆、TaskState 持久化、观测和旧路径清理。
 
 ### Task 17: 工具结果引用和按需读取
 
@@ -1086,7 +1086,7 @@ Expected: ToolResult envelope 可恢复，ToolCallRef 不丢关键 ID，按需�
 - Test: `services/aiagent/internal/eino/agent_test.go`
 - Test: `services/aiagent/internal/logic/chatlogic_test.go`
 
-- [ ] **Step 1: 先写 Context 组装测试**
+- [x] **Step 1: 先写 Context 组装测试**
 
 覆盖：
 
@@ -1095,19 +1095,19 @@ Expected: ToolResult envelope 可恢复，ToolCallRef 不丢关键 ID，按需�
 - Context Manager 只返回临时 `[]domain.ContextMessage` 和轻量 build metadata，不落库模型输入。
 - token 估算只记录在 build metadata 或日志中，不参与裁剪，不返回错误。
 
-- [ ] **Step 2: 定义轻量 Context 类型**
+- [x] **Step 2: 定义轻量 Context 类型**
 
 使用 `ContextMode`、`BuildContextRequest`、`ContextMessage` 和 `BuildContextResult`。`BuildContextResult` 至少包含 messages、summary covered watermark、recent message range、latest tool call ID、tool ref count 和 estimated input tokens。
 
-- [ ] **Step 3: Planner 接入 IntentContext**
+- [x] **Step 3: Planner 接入 IntentContext**
 
 Planner 只接收 Context Manager 已组装的 IntentContext，不再自行做固定 8 条或单条 300 字符裁剪。缺少历史工具完整结果时，Planner 返回澄清问题或读取工具结果的计划，不猜测参数。
 
-- [ ] **Step 4: AgentRunner 接入 AgentContext**
+- [x] **Step 4: AgentRunner 接入 AgentContext**
 
 Runner 接收 AgentContext 的 `[]domain.ContextMessage`，由 `internal/eino/messages.go` 转换为 Eino `schema.Message`，不再直接把 `[]*AiMessages` 转换为模型输入。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 ```bash
 go test ./services/aiagent/internal/contextmanager -run TestManager -count=1

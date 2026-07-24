@@ -73,6 +73,31 @@ func TestInsertBatchReturnsDatabaseError(t *testing.T) {
 	}
 }
 
+func TestFindRecentContextMessagesScopesByUserConversationAndExcludesTools(t *testing.T) {
+	model, mock, cleanup := newBatchTestModel(t)
+	defer cleanup()
+	newer := time.Date(2026, 7, 24, 10, 1, 0, 0, time.UTC)
+	older := newer.Add(-time.Minute)
+	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `created_at` desc, `id` desc limit ?"
+	rows := sqlmock.NewRows([]string{"id", "conversation_id", "user_id", "role", "content", "metadata", "created_at"}).
+		AddRow("m2", "conv-1", uint64(42), "assistant", "newer", nil, newer).
+		AddRow("m1", "conv-1", uint64(42), "user", "older", nil, older)
+	mock.ExpectQuery(query).
+		WithArgs(uint64(42), "conv-1", "user", "assistant", 21).
+		WillReturnRows(rows)
+
+	messages, err := model.FindRecentContextMessages(context.Background(), 42, "conv-1", 21)
+	if err != nil {
+		t.Fatalf("FindRecentContextMessages() error = %v", err)
+	}
+	if len(messages) != 2 || messages[0].Id != "m1" || messages[1].Id != "m2" {
+		t.Fatalf("messages = %+v", messages)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func newBatchTestModel(t *testing.T) (*customAiMessagesModel, sqlmock.Sqlmock, func()) {
 	t.Helper()
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))

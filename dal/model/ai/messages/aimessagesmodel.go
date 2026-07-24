@@ -20,6 +20,7 @@ type (
 	AiMessagesModel interface {
 		aiMessagesModel
 		FindRecentByConversationID(ctx context.Context, conversationID string, limit int) ([]*AiMessages, error)
+		FindRecentContextMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
 		FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
 		FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error)
 		InsertBatch(ctx context.Context, messages []*AiMessages) error
@@ -83,6 +84,23 @@ func (m *customAiMessagesModel) FindRecentByConversationID(ctx context.Context, 
 	}
 
 	// 交换顺序，由新到旧排序
+	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
+		rows[left], rows[right] = rows[right], rows[left]
+	}
+	return rows, nil
+}
+
+// FindRecentContextMessages 查询当前用户会话中最近的 user/assistant 原文，不包含工具消息。
+func (m *customAiMessagesModel) FindRecentContextMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var rows []*AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `created_at` desc, `id` desc limit ?"
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "user", "assistant", limit); err != nil {
+		return nil, err
+	}
 	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
 		rows[left], rows[right] = rows[right], rows[left]
 	}

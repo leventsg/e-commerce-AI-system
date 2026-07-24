@@ -6,7 +6,7 @@ import (
 )
 
 func TestIntentPlannerSystemContainsRequiredConstraints(t *testing.T) {
-	prompt := IntentSystemPrompt
+	prompt := SystemPrompt
 	if strings.TrimSpace(prompt) == "" {
 		t.Fatal("IntentPlannerSystem should not be empty")
 	}

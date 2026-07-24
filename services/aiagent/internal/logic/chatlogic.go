@@ -45,7 +45,7 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 	if err := l.validateRequest(in); err != nil {
 		return chatErrorResponse("", err), nil
 	}
-	if l.svcCtx == nil || l.svcCtx.ConversationManager == nil || l.svcCtx.IntentPlanner == nil || l.svcCtx.MessagesModel == nil {
+	if l.svcCtx == nil || l.svcCtx.ConversationManager == nil || l.svcCtx.ContextManager == nil || l.svcCtx.IntentPlanner == nil || l.svcCtx.MessagesModel == nil {
 		return chatErrorResponse(in.ConversationId, errors.New("AI 服务暂时不可用，请稍后重试")), nil
 	}
 	source := strings.TrimSpace(in.Source)
@@ -64,14 +64,46 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 		}
 		return chatErrorResponse(in.ConversationId, err), nil
 	}
+	currentInput := strings.TrimSpace(in.Content)
+	intentContext, err := l.svcCtx.ContextManager.Build(l.ctx, domain.BuildContextRequest{
+		UserID:           uint64(in.UserId),
+		ConversationID:   prepared.ConversationID,
+		Mode:             domain.IntentContextMode,
+		CurrentMessageID: prepared.UserMessageID,
+		CurrentInput:     currentInput,
+	})
+	if err != nil || intentContext == nil {
+		if err == nil {
+			err = errors.New("意图上下文构建失败")
+		}
+		return chatErrorResponse(prepared.ConversationID, err), nil
+	}
 	// 意图识别
-	plan, err := l.svcCtx.IntentPlanner.Plan(l.ctx, planner.PlanRequest{Message: in.Content, History: prepared.History})
+	plan, err := l.svcCtx.IntentPlanner.Plan(l.ctx, planner.PlanRequest{Message: currentInput, Messages: intentContext.Messages})
 	if err != nil {
 		return chatErrorResponse(prepared.ConversationID, err), nil
 	}
 
+	var agentMessages []domain.ContextMessage
+	if planUsesAgentRunner(plan) {
+		agentContext, buildErr := l.svcCtx.ContextManager.Build(l.ctx, domain.BuildContextRequest{
+			UserID:           uint64(in.UserId),
+			ConversationID:   prepared.ConversationID,
+			Mode:             domain.AgentContextMode,
+			CurrentMessageID: prepared.UserMessageID,
+			CurrentInput:     currentInput,
+		})
+		if buildErr != nil || agentContext == nil {
+			if buildErr == nil {
+				buildErr = errors.New("对话上下文构建失败")
+			}
+			return chatErrorResponse(prepared.ConversationID, buildErr), nil
+		}
+		agentMessages = agentContext.Messages
+	}
+
 	// 根据意图执行相应的操作，并生成事件
-	events := l.executePlan(in, prepared, plan)
+	events := l.executePlan(in, prepared, plan, agentMessages)
 	protoEvents := make([]*aiagent.AgentEvent, 0, len(events))
 	businessExecuted := false
 	for i := range events {
@@ -112,8 +144,8 @@ func persistenceErrorEvent(conversationID string, businessExecuted bool) *aiagen
 }
 
 // executePlan 根据意图执行相应的操作，并生成事件
-func (l *ChatLogic) executePlan(in *aiagent.ChatRequest, prepared *conversation.PreparedConversation, plan planner.PlanResult) []domain.AgentEvent {
-	if strings.TrimSpace(plan.AssistantMessage) != "" || len(plan.MissingParams) > 0 {
+func (l *ChatLogic) executePlan(in *aiagent.ChatRequest, prepared *conversation.PreparedConversation, plan planner.PlanResult, agentMessages []domain.ContextMessage) []domain.AgentEvent {
+	if len(plan.MissingParams) > 0 || (plan.Intent != planner.IntentChat && strings.TrimSpace(plan.AssistantMessage) != "") {
 		return []domain.AgentEvent{{Type: domain.EventAssistantMessage, ConversationID: prepared.ConversationID, Content: strings.TrimSpace(plan.AssistantMessage), Done: true}}
 	}
 	if strings.TrimSpace(plan.ToolName) == "" {
@@ -121,8 +153,11 @@ func (l *ChatLogic) executePlan(in *aiagent.ChatRequest, prepared *conversation.
 			l.Errorw("ai chat runner unavailable", logx.Field("component", "chat_model"), logx.Field("stage", "execute"), logx.Field("reason", "runner_unavailable"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId))
 			return []domain.AgentEvent{{Type: domain.EventError, ConversationID: prepared.ConversationID, Content: "AI 服务暂时不可用，请稍后重试", Done: true}}
 		}
-		// Prepare 已持久化当前消息，History 中无需再次追加同一条用户输入。
-		events, err := l.svcCtx.AgentRunner.Run(l.ctx, eino.RunRequest{ConversationID: prepared.ConversationID, MessageID: newChatMessageID(), History: prepared.History})
+		events, err := l.svcCtx.AgentRunner.Run(l.ctx, eino.RunRequest{
+			ConversationID: prepared.ConversationID,
+			MessageID:      newChatMessageID(),
+			Messages:       agentMessages,
+		})
 		if err != nil {
 			l.Errorw("ai chat model execution failed", logx.Field("component", "chat_model"), logx.Field("stage", "execute"), logx.Field("reason", eino.ErrorReason(err)), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
 			return []domain.AgentEvent{{Type: domain.EventError, ConversationID: prepared.ConversationID, Content: "AI 服务暂时不可用，请稍后重试", Done: true}}
@@ -172,6 +207,12 @@ func (l *ChatLogic) executePlan(in *aiagent.ChatRequest, prepared *conversation.
 		events = append(events, domain.AgentEvent{Type: domain.EventAssistantMessage, ConversationID: prepared.ConversationID, MessageID: newChatMessageID(), Content: event.Content, Done: true})
 	}
 	return events
+}
+
+func planUsesAgentRunner(plan planner.PlanResult) bool {
+	return plan.Intent == planner.IntentChat &&
+		len(plan.MissingParams) == 0 &&
+		strings.TrimSpace(plan.ToolName) == ""
 }
 
 // agentEventsToMessages 将事件转换为数据库消息记录格式

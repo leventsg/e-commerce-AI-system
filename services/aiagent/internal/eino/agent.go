@@ -9,7 +9,6 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -17,8 +16,7 @@ import (
 type RunRequest struct {
 	ConversationID string
 	MessageID      string
-	UserMessage    string
-	History        []*aimessages.AiMessages
+	Messages       []domain.ContextMessage
 }
 
 type Runner interface {
@@ -89,14 +87,7 @@ func (r *runner) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agen
 }
 
 func buildInputMessages(req RunRequest) ([]*schema.Message, error) {
-	messages, err := ConvertMessages(req.History)
-	if err != nil {
-		return nil, err
-	}
-	if req.UserMessage != "" {
-		messages = append(messages, schema.UserMessage(req.UserMessage))
-	}
-	return messages, nil
+	return ConvertContextMessages(req.Messages)
 }
 
 func assistantEvent(req RunRequest, content string, done bool) domain.AgentEvent {
