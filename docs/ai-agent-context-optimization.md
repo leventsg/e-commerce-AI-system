@@ -75,7 +75,7 @@ Context Manager
   |-- TaskStateStore
   |-- ToolResultStore
   |-- ToolCallRefStore
-  `-- UserProfileSource（可选）
+  `-- UserProfileStore（LLM 抽取画像）
           |
           v
 临时 ContextMessages
@@ -87,7 +87,7 @@ Context Manager
   |-- 持久化 ToolResult envelope
   |-- 更新 TaskState
   |-- 异步评估摘要水位
-  `-- 按策略提取长期记忆候选
+  `-- 投递 Kafka 画像更新事件
 ```
 
 MySQL 是原始消息、工具调用、工具结果、摘要、记忆和运行状态的事实来源。Redis 只缓存可重建的热数据和 Agent checkpoint，不作为唯一事实来源。
@@ -209,7 +209,7 @@ IntentContext 不加载完整工具结果、用户画像、完整会话摘要全
 6. 最近一次完整工具调用结果；
 7. 最近固定数量的 ToolCallRef；
 8. 有效 UserMemory；
-9. 最小化 UserProfile（可选）。
+9. LLM 从聊天中抽取的 UserProfile JSON（可选）。
 
 近期消息按数据库消息条数计数，不再按“轮”做复杂折算。
 
@@ -397,6 +397,13 @@ FindResultByCallID(ctx, authenticated_user_id, conversation_id, tool_call_id)
 
 ## 11. 长期记忆和用户画像
 
+UserMemory 和 UserProfile 职责分离：
+
+- `UserMemory` 是原子化记忆或证据，用于记录明确指令、偏好、价格区间、来源消息、置信度和生命周期。
+- `UserProfile` 是面向 LLM 注入的聚合画像，只来源于 AI 聊天过程中的用户表达和稳定行为模式，不从 users RPC 或账号资料生成。
+- `UserProfile` 必须以 JSON 保存，便于模型稳定识别、局部更新和删除偏好。
+- 每轮聊天消息持久化成功后，通过 Kafka MQ 异步触发画像提取/更新；画像更新失败不阻塞聊天主流程。
+
 ### 11.1 写入策略
 
 采用“显式 + 受控推断”：
@@ -407,6 +414,35 @@ FindResultByCallID(ctx, authenticated_user_id, conversation_id, tool_call_id)
 - 单次行为、订单状态、库存、地址、支付信息、认证信息不得写成长期记忆。
 - 用户明确纠正时，新值覆盖同一 `memory_key`，旧值保留审计状态但不再注入上下文。
 
+UserProfile 更新时机：
+
+1. 用户明确表达长期偏好，例如“以后都给我推荐轻薄手机”。
+2. 多次行为表现出稳定模式，例如多次选择同一价位、品类、品牌或风格。
+3. 用户主动纠正画像，例如“我不是喜欢黑色，是喜欢白色”。
+4. 用户主动要求删除、遗忘或不再使用某类偏好，例如“不要再记住我喜欢苹果”。
+
+画像抽取模型只输出严格 JSON patch 或候选更新，不能直接写数据库。后端策略负责校验来源、置信度、敏感信息、删除请求和用户隔离。
+
+UserProfile JSON 建议结构：
+
+```json
+{
+  "preferences": {
+    "categories": [],
+    "brands": [],
+    "price_ranges": [],
+    "styles": [],
+    "shipping": [],
+    "avoid": []
+  },
+  "stable_patterns": [],
+  "corrections": [],
+  "deleted_or_disabled": [],
+  "evidence": [],
+  "updated_at": ""
+}
+```
+
 ### 11.2 生命周期
 
 状态为 `active / superseded / deleted / expired`。默认 TTL：
@@ -416,7 +452,7 @@ FindResultByCallID(ctx, authenticated_user_id, conversation_id, tool_call_id)
 - 推断 preference/price：90 天；
 - profile_fact：按字段策略配置，敏感事实默认不保存。
 
-AgentContext 每次注入最多 12 条。IntentContext 只注入长期记忆摘要，不注入完整记忆列表。
+AgentContext 每次注入最多 12 条 UserMemory，并可注入精简 UserProfile JSON。IntentContext 只注入长期记忆/画像摘要，不注入完整记忆列表或完整画像 JSON。
 
 ### 11.3 Prompt 注入防护
 
@@ -503,6 +539,39 @@ ALTER TABLE `ai_user_memories`
 
 正式迁移必须由新增 migration 完成；`construct/depend/sql/init.sql` 同步最终建表结构，不直接在生产环境运行初始化脚本。
 
+### 13.4 ai_user_profiles
+
+新增聊天来源用户画像表。UserProfile 只保存 LLM 从 AI 聊天中抽取、经后端策略校验后的 JSON 画像，不保存 users RPC 账号资料。
+
+```sql
+CREATE TABLE `ai_user_profiles` (
+  `id` varchar(64) NOT NULL,
+  `user_id` bigint unsigned NOT NULL,
+  `profile_json` json NOT NULL,
+  `version` int unsigned NOT NULL DEFAULT 1,
+  `source` varchar(32) NOT NULL DEFAULT 'ai_chat',
+  `status` varchar(32) NOT NULL DEFAULT 'active',
+  `last_event_id` varchar(64) NOT NULL DEFAULT '',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_profile` (`user_id`),
+  KEY `idx_user_status` (`user_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+画像更新事件通过 Kafka 投递，topic 建议命名为 `AiUserProfileUpdates`。事件 key 使用 `user_id`，payload 至少包含：
+
+```json
+{
+  "event_id": "",
+  "user_id": 0,
+  "conversation_id": "",
+  "message_ids": [],
+  "created_at": ""
+}
+```
+
 ## 14. 结构化日志与排查
 
 每次 Planner 或 Agent 模型调用记录轻量结构化日志：
@@ -526,7 +595,7 @@ ALTER TABLE `ai_user_memories`
 | SummaryStore 不可用 | 使用近期未压缩消息，不生成新摘要 |
 | 摘要模型失败或 JSON 非法 | 保留上一版摘要，近期原文继续保留 |
 | MemoryStore 不可用 | 跳过长期记忆 |
-| users RPC 不可用 | 跳过 UserProfile |
+| UserProfileStore 不可用 | 跳过 UserProfile JSON |
 | TaskStateStore 不可用 | 当前单轮可继续；等待确认或多步任务返回不可恢复错误 |
 | ToolResult envelope 解析失败 | 跳过该工具引用，记录日志；不得使用半个 JSON |
 | 历史工具结果按需读取失败 | 让模型澄清或重新调用业务查询工具 |
@@ -626,7 +695,7 @@ ALTER TABLE `ai_user_memories`
 - Planner 使用轻量 IntentContext，仍能处理当前输入和当前任务。
 - 查询购物车后，最近一次工具结果完整进入上下文。
 - 更早工具调用以 ToolCallRef 进入上下文，需要完整结果时再按需读取。
-- SummaryStore、MemoryStore、users RPC 或 Redis 故障时基础聊天仍可用。
+- SummaryStore、MemoryStore、UserProfileStore 或 Redis 故障时基础聊天仍可用。
 - 等待确认状态在服务重启后恢复，确认后仍经过 Execution Guard。
 
 ### 19.3 目标命令
@@ -798,7 +867,7 @@ type BaseTool interface {
 1. 定义领域 `ContextMessage`、`BuildContextRequest` 和 `BuildContextResult`。
 2. 实现 MessageStore、ToolResultStore、SummaryStore、MemoryStore、TaskStateStore。
 3. IntentContext 只加载当前输入、最近对话、当前 TaskState 和长期记忆摘要。
-4. AgentContext 加载摘要、近期 20 条原文、最近一次完整工具结果、历史 ToolCallRef、TaskState、UserMemory 和可选 UserProfile。
+4. AgentContext 加载摘要、近期 20 条原文、最近一次完整工具结果、历史 ToolCallRef、TaskState、UserMemory 和可选 UserProfile JSON。
 5. 增加 context 组装日志和 token 估算日志，估算值不参与裁剪。
 
 ### 21.8 P4：滚动摘要（问题 1）
@@ -822,8 +891,9 @@ type BaseTool interface {
 1. 扩展 `ai_user_memories` 的 key、source、confidence、status、TTL 和 source message。
 2. 明确指令直接保存；推断偏好必须高置信、非敏感、有来源和 TTL；模型只能提交候选。
 3. IntentContext 使用长期记忆摘要；AgentContext 使用最多 12 条有效记忆。
-4. 使用现有 users RPC 生成最小 UserProfile；RPC 不可用时跳过画像。
-5. 以 `ai_agent_runs` 保存最小 TaskState、pending confirmation、当前参数、幂等键和 checkpoint。
+4. 新增聊天来源 UserProfile JSON：每轮消息持久化后投递 Kafka 事件，由异步消费者调用 LLM Profile Extractor 生成画像 patch，校验后保存。
+5. UserProfile 更新覆盖四类时机：明确长期偏好、稳定行为模式、主动纠正、主动删除/遗忘偏好。
+6. 以 `ai_agent_runs` 保存最小 TaskState、pending confirmation、当前参数、幂等键和 checkpoint。
 
 ### 21.10 P6：监控和旧路径收敛
 

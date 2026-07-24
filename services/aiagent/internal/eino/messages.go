@@ -1,50 +1,27 @@
 package eino
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	"github.com/cloudwego/eino/schema"
-	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
 
-type messageMetadata struct {
-	ToolCallID string `json:"tool_call_id"`
-	ToolName   string `json:"tool_name"`
-}
-
-func ConvertMessages(history []*aimessages.AiMessages) ([]*schema.Message, error) {
-	messages := make([]*schema.Message, 0, len(history))
-	for _, item := range history {
-		if item == nil {
-			continue
-		}
+func ConvertContextMessages(contextMessages []domain.ContextMessage) ([]*schema.Message, error) {
+	messages := make([]*schema.Message, 0, len(contextMessages))
+	for _, item := range contextMessages {
 		switch item.Role {
-		case "user":
+		case domain.ContextRoleSystem:
+			messages = append(messages, schema.SystemMessage(item.Content))
+		case domain.ContextRoleUser:
 			messages = append(messages, schema.UserMessage(item.Content))
-		case "assistant":
+		case domain.ContextRoleAssistant:
 			messages = append(messages, schema.AssistantMessage(item.Content, nil))
-		case "tool":
-			meta, err := parseMessageMetadata(item.Metadata)
-			if err != nil {
-				return nil, err
-			}
-			messages = append(messages, schema.ToolMessage(item.Content, meta.ToolCallID, schema.WithToolName(meta.ToolName)))
+		case domain.ContextRoleTool:
+			messages = append(messages, schema.ToolMessage(item.Content, item.ToolCallID, schema.WithToolName(item.ToolName)))
 		default:
-			return nil, fmt.Errorf("unsupported ai message role %q", item.Role)
+			return nil, fmt.Errorf("unsupported context message role %q", item.Role)
 		}
 	}
 	return messages, nil
-}
-
-func parseMessageMetadata(metadata sql.NullString) (messageMetadata, error) {
-	if !metadata.Valid || metadata.String == "" {
-		return messageMetadata{}, nil
-	}
-	var meta messageMetadata
-	if err := json.Unmarshal([]byte(metadata.String), &meta); err != nil {
-		return messageMetadata{}, fmt.Errorf("parse message metadata: %w", err)
-	}
-	return meta, nil
 }

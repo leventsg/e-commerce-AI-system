@@ -2,7 +2,6 @@ package planner
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,13 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
-	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
-	intentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/intent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -40,20 +35,28 @@ type PlanResult struct {
 }
 
 type PlanRequest struct {
-	Message string
-	History []*aimessages.AiMessages
+	Message  string
+	Messages []domain.ContextMessage
+}
+
+type IntentModel interface {
+	Generate(ctx context.Context, messages []domain.ContextMessage) (string, error)
+}
+
+type IntentModelFactory interface {
+	NewIntentModel(ctx context.Context, cfg config.EinoConfig) (IntentModel, error)
 }
 
 type Planner struct {
 	registry          *tools.Registry
-	modelFactory      eino.ModelFactory
+	modelFactory      IntentModelFactory
 	intentModelConfig config.EinoConfig
 	maxLLMAttempts    int
 }
 
 type Option func(*Planner)
 
-func WithIntentModel(factory eino.ModelFactory, cfg config.EinoConfig) Option {
+func WithIntentModel(factory IntentModelFactory, cfg config.EinoConfig) Option {
 	return func(p *Planner) {
 		p.modelFactory = factory
 		p.intentModelConfig = cfg
@@ -90,7 +93,7 @@ func (p *Planner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error)
 
 	// 意图识别(llm)
 	if p.modelFactory != nil {
-		if result, ok := p.planWithLLM(ctx, text, req.History); ok {
+		if result, ok := p.planWithLLM(ctx, text, req.Messages); ok {
 			return result, nil
 		}
 	}
@@ -99,9 +102,9 @@ func (p *Planner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error)
 	return p.rulePlan(text)
 }
 
-func (p *Planner) planWithLLM(ctx context.Context, text string, history []*aimessages.AiMessages) (PlanResult, bool) {
+func (p *Planner) planWithLLM(ctx context.Context, text string, messages []domain.ContextMessage) (PlanResult, bool) {
 	for attempt := 0; attempt < p.maxLLMAttempts; attempt++ {
-		result, err := p.callLLMPlannerOnce(ctx, text, history)
+		result, err := p.callLLMPlannerOnce(ctx, messages)
 		if err != nil {
 			logx.WithContext(ctx).Errorw("ai intent planner attempt failed", logx.Field("component", "intent_planner"), logx.Field("attempt", attempt+1), logx.Field("stage", plannerErrorStage(err)), logx.Field("reason", plannerErrorReason(err)), logx.Field("err", err))
 			continue
@@ -114,24 +117,24 @@ func (p *Planner) planWithLLM(ctx context.Context, text string, history []*aimes
 	return PlanResult{}, false
 }
 
-func (p *Planner) callLLMPlannerOnce(ctx context.Context, text string, history []*aimessages.AiMessages) (PlanResult, error) {
-	chatModel, err := p.modelFactory.NewChatModel(ctx, p.intentModelConfig)
+func (p *Planner) callLLMPlannerOnce(ctx context.Context, messages []domain.ContextMessage) (PlanResult, error) {
+	intentModel, err := p.modelFactory.NewIntentModel(ctx, p.intentModelConfig)
 	if err != nil {
 		return PlanResult{}, fmt.Errorf("initialize intent model: %w", err)
 	}
 
-	// 调用llm进行意图识别
-	response, err := chatModel.Generate(ctx, buildLLMPlannerMessages(text, history))
+	response, err := intentModel.Generate(ctx, messages)
 	if err != nil {
 		return PlanResult{}, fmt.Errorf("generate intent plan: %w", err)
 	}
-	if response == nil || strings.TrimSpace(response.Content) == "" {
-		return PlanResult{}, fmt.Errorf("generate intent plan: %w", eino.ErrEmptyModelResponse)
+	response = strings.TrimSpace(response)
+	if response == "" {
+		return PlanResult{}, fmt.Errorf("generate intent plan: %w", ErrEmptyIntentModelResponse)
 	}
 
 	// 解析llm返回的json字符串
 	var output llmPlanResult
-	if err := json.Unmarshal([]byte(response.Content), &output); err != nil {
+	if err := json.Unmarshal([]byte(response), &output); err != nil {
 		return PlanResult{}, fmt.Errorf("invalid intent planner response: %w", err)
 	}
 
@@ -155,13 +158,13 @@ func plannerErrorStage(err error) string {
 }
 
 func plannerErrorReason(err error) string {
-	if errors.Is(err, eino.ErrEmptyModelResponse) {
+	if errors.Is(err, ErrEmptyIntentModelResponse) {
 		return "model_empty_response"
 	}
 	if strings.HasPrefix(err.Error(), "invalid intent planner response:") {
 		return "planner_response_invalid"
 	}
-	return eino.ErrorReason(err)
+	return "model_error"
 }
 
 type llmPlanResult struct {
@@ -172,109 +175,7 @@ type llmPlanResult struct {
 	AssistantMessage string         `json:"assistant_message"`
 }
 
-const maxPlannerContextMessages = 8
-
-func buildLLMPlannerMessages(text string, history []*aimessages.AiMessages) []*schema.Message {
-	messages := []*schema.Message{schema.SystemMessage(intentprompt.IntentSystemPrompt)}
-	messages = append(messages, recentContextMessages(text, history, maxPlannerContextMessages)...)
-	return append(messages, schema.UserMessage(text))
-}
-
-// 整理最近上下文消息，并保留原始 role 语义。
-func recentContextMessages(currentText string, history []*aimessages.AiMessages, limit int) []*schema.Message {
-	if limit <= 0 || len(history) == 0 {
-		return nil
-	}
-
-	currentText = strings.TrimSpace(currentText)
-	messages := make([]*schema.Message, 0, limit)
-	for i := len(history) - 1; i >= 0 && len(messages) < limit; i-- {
-		item := history[i]
-		if item == nil {
-			continue
-		}
-		// 过滤掉不需要的角色和内容
-		role := normalizedHistoryRole(item.Role)
-		if role == "" {
-			continue
-		}
-		// 按照字符数（最多300个字符）进行截断压缩
-		content := compactContextContent(item.Content)
-		// 内容为空，或者用户消息与当前消息重复，则跳过
-		if content == "" || (role == "user" && (content == currentText || strings.TrimSpace(item.Content) == currentText)) {
-			continue
-		}
-		message := historyMessageByRole(role, content, item.Metadata)
-		if message == nil {
-			continue
-		}
-		messages = append(messages, message)
-	}
-
-	// 将 messages 反转，保持历史消息的时间顺序。
-	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
-		messages[left], messages[right] = messages[right], messages[left]
-	}
-	return messages
-}
-
-// 根据role，创建对应的 schema.Message 对象
-func historyMessageByRole(role, content string, metadata sql.NullString) *schema.Message {
-	switch role {
-	case "user":
-		return schema.UserMessage(content)
-	case "assistant":
-		return schema.AssistantMessage(content, nil)
-	case "tool":
-		meta := parsePlannerMessageMetadata(metadata)
-		return schema.ToolMessage(content, meta.ToolCallID, schema.WithToolName(meta.ToolName))
-	default:
-		return nil
-	}
-}
-
-type plannerMessageMetadata struct {
-	ToolCallID string `json:"tool_call_id"`
-	ToolName   string `json:"tool_name"`
-}
-
-// 解析 AiMessages 的 metadata 字段，提取工具调用相关信息
-func parsePlannerMessageMetadata(metadata sql.NullString) plannerMessageMetadata {
-	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" {
-		return plannerMessageMetadata{}
-	}
-	var meta plannerMessageMetadata
-	_ = json.Unmarshal([]byte(metadata.String), &meta)
-	return meta
-}
-
-func normalizedHistoryRole(role string) string {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "user", "assistant", "tool":
-		return strings.ToLower(strings.TrimSpace(role))
-	default:
-		return ""
-	}
-}
-
-// 压缩上下文内容，最多300个字符
-func compactContextContent(content string) string {
-	content = strings.Join(strings.Fields(redactSensitiveText(content)), " ")
-
-	// 按照字符数进行截断，避免破坏中文字符
-	runes := []rune(content)
-	if len(runes) > 300 {
-		content = string(runes[:300])
-	}
-	return strings.TrimSpace(content)
-}
-
-// 脱敏脱敏，将敏感参数替换为 [redacted]
-func redactSensitiveText(text string) string {
-	// 处理敏感参数，将敏感参数替换为 [redacted]"
-	text = sensitiveAssignmentPattern.ReplaceAllString(text, "$1=[redacted]")
-	return sensitiveColonPattern.ReplaceAllString(text, "$1:[redacted]")
-}
+var ErrEmptyIntentModelResponse = errors.New("intent model returned empty response")
 
 // 规则匹配意图
 func (p *Planner) rulePlan(text string) (PlanResult, error) {
@@ -347,6 +248,9 @@ func (p *Planner) validatedPlan(ctx context.Context, result PlanResult) (PlanRes
 		if result.Intent == IntentChat || len(result.MissingParams) > 0 {
 			result.RequireConfirmation = false
 			result.Arguments = argx.SanitizeMapKeys(result.Arguments, sensitiveArgumentKeys)
+			if result.Intent == IntentChat && len(result.MissingParams) == 0 {
+				result.AssistantMessage = ""
+			}
 			return result, true
 		}
 		return PlanResult{}, false
@@ -451,12 +355,10 @@ func isCartAdd(text string) bool {
 }
 
 var (
-	orderIDPattern             = regexp.MustCompile(`(?i)([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}|\d{6,})`)
-	productIDRegexp            = regexp.MustCompile(`商品\s*(\d+)`)
-	quantityRegexp             = regexp.MustCompile(`(\d+)\s*件`)
-	sensitiveAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*=\s*[^\s,，;；]+`)
-	sensitiveColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*[:：]\s*[^\s,，;；]+`)
-	sensitiveArgumentKeys      = []string{"user_id", "token", "session_id", "auth"}
+	orderIDPattern        = regexp.MustCompile(`(?i)([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}|\d{6,})`)
+	productIDRegexp       = regexp.MustCompile(`商品\s*(\d+)`)
+	quantityRegexp        = regexp.MustCompile(`(\d+)\s*件`)
+	sensitiveArgumentKeys = []string{"user_id", "token", "session_id", "auth"}
 )
 
 // 从文本中提取订单ID，正则匹配uuid格式的订单号

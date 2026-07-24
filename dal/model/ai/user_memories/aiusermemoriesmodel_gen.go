@@ -24,13 +24,15 @@ var (
 	aiUserMemoriesRowsExpectAutoSet   = strings.Join(stringx.Remove(aiUserMemoriesFieldNames, "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), ",")
 	aiUserMemoriesRowsWithPlaceHolder = strings.Join(stringx.Remove(aiUserMemoriesFieldNames, "`id`", "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), "=?,") + "=?"
 
-	cacheAiUserMemoriesIdPrefix = "cache:aiUserMemories:id:"
+	cacheAiUserMemoriesIdPrefix              = "cache:aiUserMemories:id:"
+	cacheAiUserMemoriesUserIdMemoryKeyPrefix = "cache:aiUserMemories:userId:memoryKey:"
 )
 
 type (
 	aiUserMemoriesModel interface {
 		Insert(ctx context.Context, data *AiUserMemories) (sql.Result, error)
 		FindOne(ctx context.Context, id string) (*AiUserMemories, error)
+		FindOneByUserIdMemoryKey(ctx context.Context, userId uint64, memoryKey string) (*AiUserMemories, error)
 		Update(ctx context.Context, data *AiUserMemories) error
 		Delete(ctx context.Context, id string) error
 	}
@@ -41,13 +43,19 @@ type (
 	}
 
 	AiUserMemories struct {
-		Id         string    `db:"id"`          // 记忆ID
-		UserId     uint64    `db:"user_id"`     // 用户ID
-		MemoryType string    `db:"memory_type"` // preference/category/price
-		Content    string    `db:"content"`     // 记忆内容
-		Confidence float64   `db:"confidence"`  // 置信度
-		CreatedAt  time.Time `db:"created_at"`
-		UpdatedAt  time.Time `db:"updated_at"`
+		Id              string       `db:"id"`                // 记忆ID
+		UserId          uint64       `db:"user_id"`           // 用户ID
+		MemoryKey       string       `db:"memory_key"`        // 用户内稳定记忆键
+		MemoryType      string       `db:"memory_type"`       // instruction/preference/price/profile_fact
+		Content         string       `db:"content"`           // 记忆内容
+		Confidence      float64      `db:"confidence"`        // 置信度
+		Source          string       `db:"source"`            // explicit/inferred
+		SourceMessageId string       `db:"source_message_id"` // 来源消息ID
+		Status          string       `db:"status"`            // active/superseded/deleted/expired
+		ExpiresAt       sql.NullTime `db:"expires_at"`        // 过期时间
+		LastConfirmedAt sql.NullTime `db:"last_confirmed_at"` // 最近确认时间
+		CreatedAt       time.Time    `db:"created_at"`
+		UpdatedAt       time.Time    `db:"updated_at"`
 	}
 )
 
@@ -59,11 +67,17 @@ func newAiUserMemoriesModel(conn sqlx.SqlConn, c cache.CacheConf, opts ...cache.
 }
 
 func (m *defaultAiUserMemoriesModel) Delete(ctx context.Context, id string) error {
+	data, err := m.FindOne(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	aiUserMemoriesIdKey := fmt.Sprintf("%s%v", cacheAiUserMemoriesIdPrefix, id)
-	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
+	aiUserMemoriesUserIdMemoryKeyKey := fmt.Sprintf("%s%v:%v", cacheAiUserMemoriesUserIdMemoryKeyPrefix, data.UserId, data.MemoryKey)
+	_, err = m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
 		query := fmt.Sprintf("delete from %s where `id` = ?", m.table)
 		return conn.ExecCtx(ctx, query, id)
-	}, aiUserMemoriesIdKey)
+	}, aiUserMemoriesIdKey, aiUserMemoriesUserIdMemoryKeyKey)
 	return err
 }
 
@@ -84,21 +98,48 @@ func (m *defaultAiUserMemoriesModel) FindOne(ctx context.Context, id string) (*A
 	}
 }
 
+func (m *defaultAiUserMemoriesModel) FindOneByUserIdMemoryKey(ctx context.Context, userId uint64, memoryKey string) (*AiUserMemories, error) {
+	aiUserMemoriesUserIdMemoryKeyKey := fmt.Sprintf("%s%v:%v", cacheAiUserMemoriesUserIdMemoryKeyPrefix, userId, memoryKey)
+	var resp AiUserMemories
+	err := m.QueryRowIndexCtx(ctx, &resp, aiUserMemoriesUserIdMemoryKeyKey, m.formatPrimary, func(ctx context.Context, conn sqlx.SqlConn, v any) (i any, e error) {
+		query := fmt.Sprintf("select %s from %s where `user_id` = ? and `memory_key` = ? limit 1", aiUserMemoriesRows, m.table)
+		if err := conn.QueryRowCtx(ctx, &resp, query, userId, memoryKey); err != nil {
+			return nil, err
+		}
+		return resp.Id, nil
+	}, m.queryPrimary)
+	switch err {
+	case nil:
+		return &resp, nil
+	case sqlc.ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
 func (m *defaultAiUserMemoriesModel) Insert(ctx context.Context, data *AiUserMemories) (sql.Result, error) {
 	aiUserMemoriesIdKey := fmt.Sprintf("%s%v", cacheAiUserMemoriesIdPrefix, data.Id)
+	aiUserMemoriesUserIdMemoryKeyKey := fmt.Sprintf("%s%v:%v", cacheAiUserMemoriesUserIdMemoryKeyPrefix, data.UserId, data.MemoryKey)
 	ret, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
-		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?)", m.table, aiUserMemoriesRowsExpectAutoSet)
-		return conn.ExecCtx(ctx, query, data.Id, data.UserId, data.MemoryType, data.Content, data.Confidence)
-	}, aiUserMemoriesIdKey)
+		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", m.table, aiUserMemoriesRowsExpectAutoSet)
+		return conn.ExecCtx(ctx, query, data.Id, data.UserId, data.MemoryKey, data.MemoryType, data.Content, data.Confidence, data.Source, data.SourceMessageId, data.Status, data.ExpiresAt, data.LastConfirmedAt)
+	}, aiUserMemoriesIdKey, aiUserMemoriesUserIdMemoryKeyKey)
 	return ret, err
 }
 
-func (m *defaultAiUserMemoriesModel) Update(ctx context.Context, data *AiUserMemories) error {
+func (m *defaultAiUserMemoriesModel) Update(ctx context.Context, newData *AiUserMemories) error {
+	data, err := m.FindOne(ctx, newData.Id)
+	if err != nil {
+		return err
+	}
+
 	aiUserMemoriesIdKey := fmt.Sprintf("%s%v", cacheAiUserMemoriesIdPrefix, data.Id)
-	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
+	aiUserMemoriesUserIdMemoryKeyKey := fmt.Sprintf("%s%v:%v", cacheAiUserMemoriesUserIdMemoryKeyPrefix, data.UserId, data.MemoryKey)
+	_, err = m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
 		query := fmt.Sprintf("update %s set %s where `id` = ?", m.table, aiUserMemoriesRowsWithPlaceHolder)
-		return conn.ExecCtx(ctx, query, data.UserId, data.MemoryType, data.Content, data.Confidence, data.Id)
-	}, aiUserMemoriesIdKey)
+		return conn.ExecCtx(ctx, query, newData.UserId, newData.MemoryKey, newData.MemoryType, newData.Content, newData.Confidence, newData.Source, newData.SourceMessageId, newData.Status, newData.ExpiresAt, newData.LastConfirmedAt, newData.Id)
+	}, aiUserMemoriesIdKey, aiUserMemoriesUserIdMemoryKeyKey)
 	return err
 }
 

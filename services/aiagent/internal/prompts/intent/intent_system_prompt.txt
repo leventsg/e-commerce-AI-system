@@ -164,7 +164,7 @@ assistant_message 使用中文向用户追问。
 ========================
 assistant_message 规则
 ========================
-如果无需调用工具: assistant_message 为正常回复。
+如果 intent=chat 且无需调用工具: assistant_message=""，普通回复由主 ChatModel 生成。
 
 如果需要追问: assistant_message 为追问内容。
 

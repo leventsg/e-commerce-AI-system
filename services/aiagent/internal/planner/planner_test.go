@@ -2,19 +2,12 @@ package planner
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
-	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 )
 
@@ -133,17 +126,19 @@ func TestPlannerFallsBackAfterTwoUnknownLLMTools(t *testing.T) {
 	}
 }
 
-func TestPlannerLLMReceivesBoundedContextBeforeCurrentMessage(t *testing.T) {
+func TestPlannerLLMReceivesPrebuiltContextWithoutCropping(t *testing.T) {
 	planner, fakeModel := newPlannerAndFakeLLM(t, []fakeLLMResponse{
 		{content: `{"intent":"action","tool_name":"cart.add","arguments":{"product_id":12,"quantity":2}}`},
 	})
 
 	result, err := planner.Plan(context.Background(), PlanRequest{
 		Message: "加两件",
-		History: []*aimessages.AiMessages{
-			newHistoryMessage("m1", "user", "推荐几款学生党手机"),
-			newHistoryMessage("m2", "assistant", "推荐了商品 12 和商品 18"),
-			newHistoryMessage("m3", "user", "把这个加入购物车"),
+		Messages: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "意图识别器"},
+			{Role: domain.ContextRoleUser, Content: "推荐几款学生党手机"},
+			{Role: domain.ContextRoleAssistant, Content: strings.Repeat("推荐了商品 12 和商品 18", 50)},
+			{Role: domain.ContextRoleUser, Content: "把这个加入购物车"},
+			{Role: domain.ContextRoleUser, Content: "加两件"},
 		},
 	})
 	if err != nil {
@@ -157,24 +152,26 @@ func TestPlannerLLMReceivesBoundedContextBeforeCurrentMessage(t *testing.T) {
 
 	messages := fakeModel.lastMessages
 	if len(messages) != 5 {
-		t.Fatalf("LLM message count = %d, want system/history/current", len(messages))
+		t.Fatalf("LLM message count = %d, want prebuilt context", len(messages))
 	}
-	assertMessage(t, messages[0], schema.System, "意图识别器")
-	assertMessage(t, messages[1], schema.User, "推荐几款学生党手机")
-	assertMessage(t, messages[2], schema.Assistant, "商品 12")
-	assertMessage(t, messages[3], schema.User, "把这个加入购物车")
-	assertMessage(t, messages[4], schema.User, "加两件")
+	assertContextMessage(t, messages[0], domain.ContextRoleSystem, "意图识别器")
+	assertContextMessage(t, messages[1], domain.ContextRoleUser, "推荐几款学生党手机")
+	assertContextMessage(t, messages[2], domain.ContextRoleAssistant, strings.Repeat("推荐了商品 12 和商品 18", 50))
+	assertContextMessage(t, messages[3], domain.ContextRoleUser, "把这个加入购物车")
+	assertContextMessage(t, messages[4], domain.ContextRoleUser, "加两件")
 }
 
-func TestPlannerLLMConvertsToolHistoryToToolMessage(t *testing.T) {
+func TestPlannerLLMForwardsPrebuiltToolMessage(t *testing.T) {
 	planner, fakeModel := newPlannerAndFakeLLM(t, []fakeLLMResponse{
 		{content: `{"intent":"query","tool_name":"cart.list","arguments":{}}`},
 	})
 
 	_, err := planner.Plan(context.Background(), PlanRequest{
 		Message: "看看购物车",
-		History: []*aimessages.AiMessages{
-			newToolHistoryMessage(t, "m1", "cart.list", "call_001", `{"items":[{"product_id":12}]}`),
+		Messages: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "意图识别器"},
+			{Role: domain.ContextRoleTool, ToolName: "cart.list", ToolCallID: "call_001", Content: `{"items":[{"product_id":12}]}`},
+			{Role: domain.ContextRoleUser, Content: "看看购物车"},
 		},
 	})
 	if err != nil {
@@ -185,7 +182,7 @@ func TestPlannerLLMConvertsToolHistoryToToolMessage(t *testing.T) {
 	if len(messages) != 3 {
 		t.Fatalf("LLM message count = %d, want system/tool/current", len(messages))
 	}
-	assertMessage(t, messages[1], schema.Tool, "product_id")
+	assertContextMessage(t, messages[1], domain.ContextRoleTool, "product_id")
 	if messages[1].ToolName != "cart.list" {
 		t.Fatalf("ToolName = %q, want cart.list", messages[1].ToolName)
 	}
@@ -201,9 +198,11 @@ func TestPlannerUsesContextForHighRiskActionButConfirmationComesFromRegistry(t *
 
 	result, err := planner.Plan(context.Background(), PlanRequest{
 		Message: "取消刚才那个订单",
-		History: []*aimessages.AiMessages{
-			newHistoryMessage("m1", "user", "查一下订单 202406300001"),
-			newHistoryMessage("m2", "assistant", "订单 202406300001 当前待支付"),
+		Messages: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "意图识别器"},
+			{Role: domain.ContextRoleUser, Content: "查一下订单 202406300001"},
+			{Role: domain.ContextRoleAssistant, Content: "订单 202406300001 当前待支付"},
+			{Role: domain.ContextRoleUser, Content: "取消刚才那个订单"},
 		},
 	})
 	if err != nil {
@@ -225,9 +224,11 @@ func TestPlannerKeepsCurrentMessagePriorityOverContext(t *testing.T) {
 
 	result, err := planner.Plan(context.Background(), PlanRequest{
 		Message: "查订单 202406300002",
-		History: []*aimessages.AiMessages{
-			newHistoryMessage("m1", "user", "查订单 202406300001"),
-			newHistoryMessage("m2", "assistant", "订单 202406300001 当前待支付"),
+		Messages: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "意图识别器"},
+			{Role: domain.ContextRoleUser, Content: "查订单 202406300001"},
+			{Role: domain.ContextRoleAssistant, Content: "订单 202406300001 当前待支付"},
+			{Role: domain.ContextRoleUser, Content: "查订单 202406300002"},
 		},
 	})
 	if err != nil {
@@ -257,15 +258,17 @@ func TestPlannerSanitizesSensitiveLLMArguments(t *testing.T) {
 	}
 }
 
-func TestPlannerDoesNotExposeSensitiveHistoryInContextMessage(t *testing.T) {
+func TestPlannerDoesNotExposeSensitiveContextValues(t *testing.T) {
 	planner, fakeModel := newPlannerAndFakeLLM(t, []fakeLLMResponse{
 		{content: `{"intent":"chat","tool_name":"","arguments":{},"assistant_message":"好的"}`},
 	})
 
 	_, err := planner.Plan(context.Background(), PlanRequest{
 		Message: "你好",
-		History: []*aimessages.AiMessages{
-			newHistoryMessage("m1", "user", "token=secret-token user_id=999 session_id=abc auth=bearer"),
+		Messages: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "意图识别器"},
+			{Role: domain.ContextRoleUser, Content: "token=[redacted] user_id=[redacted] session_id=[redacted] auth=[redacted]"},
+			{Role: domain.ContextRoleUser, Content: "你好"},
 		},
 	})
 	if err != nil {
@@ -464,13 +467,11 @@ func newPlannerWithFakeLLM(t *testing.T, responses []fakeLLMResponse) *Planner {
 	return planner
 }
 
-func newPlannerAndFakeLLM(t *testing.T, responses []fakeLLMResponse) (*Planner, *fakeChatModel) {
+func newPlannerAndFakeLLM(t *testing.T, responses []fakeLLMResponse) (*Planner, *fakeIntentModel) {
 	t.Helper()
 
-	fakeModel := &fakeChatModel{responses: responses}
-	factory := eino.NewModelFactory(eino.WithChatModelBuilder(func(context.Context, string, config.EinoConfig) (model.BaseChatModel, error) {
-		return fakeModel, nil
-	}))
+	fakeModel := &fakeIntentModel{responses: responses}
+	factory := fakeIntentModelFactory{model: fakeModel}
 
 	return New(
 		tools.NewRegistry(config.ToolTimeoutConfig{}),
@@ -478,37 +479,8 @@ func newPlannerAndFakeLLM(t *testing.T, responses []fakeLLMResponse) (*Planner, 
 	), fakeModel
 }
 
-func newHistoryMessage(id, role, content string) *aimessages.AiMessages {
-	return &aimessages.AiMessages{
-		Id:             id,
-		ConversationId: "conv_test",
-		UserId:         42,
-		Role:           role,
-		Content:        content,
-		Metadata:       sql.NullString{},
-		CreatedAt:      time.Now(),
-	}
-}
-
-func newToolHistoryMessage(t *testing.T, id, toolName, toolCallID, content string) *aimessages.AiMessages {
+func assertContextMessage(t *testing.T, message domain.ContextMessage, role, contains string) {
 	t.Helper()
-	metadata, err := json.Marshal(map[string]string{
-		"tool_name":    toolName,
-		"tool_call_id": toolCallID,
-	})
-	if err != nil {
-		t.Fatalf("marshal tool metadata: %v", err)
-	}
-	message := newHistoryMessage(id, "tool", content)
-	message.Metadata = sql.NullString{String: string(metadata), Valid: true}
-	return message
-}
-
-func assertMessage(t *testing.T, message *schema.Message, role schema.RoleType, contains string) {
-	t.Helper()
-	if message == nil {
-		t.Fatal("message is nil")
-	}
 	if message.Role != role {
 		t.Fatalf("Role = %q, want %q", message.Role, role)
 	}
@@ -522,25 +494,30 @@ type fakeLLMResponse struct {
 	err     error
 }
 
-type fakeChatModel struct {
+type fakeIntentModel struct {
 	responses    []fakeLLMResponse
 	calls        int
-	lastMessages []*schema.Message
+	lastMessages []domain.ContextMessage
 }
 
-func (m *fakeChatModel) Generate(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+func (m *fakeIntentModel) Generate(_ context.Context, messages []domain.ContextMessage) (string, error) {
 	if m.calls >= len(m.responses) {
-		return nil, errors.New("unexpected Generate call")
+		return "", errors.New("unexpected Generate call")
 	}
 	m.lastMessages = messages
 	response := m.responses[m.calls]
 	m.calls++
 	if response.err != nil {
-		return nil, response.err
+		return "", response.err
 	}
-	return schema.AssistantMessage(response.content, nil), nil
+	return response.content, nil
 }
 
-func (m *fakeChatModel) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	return nil, errors.New("not implemented")
+type fakeIntentModelFactory struct {
+	model IntentModel
+	err   error
+}
+
+func (f fakeIntentModelFactory) NewIntentModel(context.Context, config.EinoConfig) (IntentModel, error) {
+	return f.model, f.err
 }
