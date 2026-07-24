@@ -129,7 +129,25 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 		protoEvents = append(protoEvents, persistenceErrorEvent(prepared.ConversationID, businessExecuted))
 		return &aiagent.ChatResponse{StatusCode: code.ServerError, StatusMsg: err.Error(), Events: protoEvents}, nil
 	}
+	l.refreshConversationSummary(prepared.ConversationID, uint64(in.UserId))
 	return &aiagent.ChatResponse{StatusCode: code.Success, StatusMsg: code.SuccessMsg, Events: protoEvents}, nil
+}
+
+// refreshConversationSummary 尝试刷新会话的滚动摘要
+func (l *ChatLogic) refreshConversationSummary(conversationID string, userID uint64) {
+	if l.svcCtx == nil || l.svcCtx.SummaryManager == nil {
+		return
+	}
+	if _, err := l.svcCtx.SummaryManager.MaybeRefresh(l.ctx, contextmanager.SummaryRefreshRequest{
+		UserID: userID, ConversationID: conversationID,
+	}); err != nil {
+		l.Errorw("refresh ai conversation summary failed",
+			logx.Field("component", "context_manager"),
+			logx.Field("stage", "summary_refresh"),
+			logx.Field("conversation_id", conversationID),
+			logx.Field("user_id", userID),
+			logx.Field("err", err))
+	}
 }
 
 // persistenceErrorEvent 生成持久化消息失败的事件

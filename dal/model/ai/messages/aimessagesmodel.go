@@ -21,6 +21,9 @@ type (
 		aiMessagesModel
 		FindRecentByConversationID(ctx context.Context, conversationID string, limit int) ([]*AiMessages, error)
 		FindRecentContextMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
+		CountUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string) (int64, error)
+		FindUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
+		FindRecentUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
 		FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
 		FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error)
 		InsertBatch(ctx context.Context, messages []*AiMessages) error
@@ -99,6 +102,67 @@ func (m *customAiMessagesModel) FindRecentContextMessages(ctx context.Context, u
 	var rows []*AiMessages
 	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `created_at` desc, `id` desc limit ?"
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "user", "assistant", limit); err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
+		rows[left], rows[right] = rows[right], rows[left]
+	}
+	return rows, nil
+}
+
+// CountUnsummarizedContextMessages 统计摘要水位之后的 user/assistant 原文数量。
+func (m *customAiMessagesModel) CountUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string) (int64, error) {
+	var count int64
+	query := "select count(1) from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
+	args := []any{userID, conversationID, "user", "assistant"}
+	if afterCreatedAt != "" || afterMessageID != "" {
+		query += " and (`created_at` > ? or (`created_at` = ? and `id` > ?))"
+		args = append(args, afterCreatedAt, afterCreatedAt, afterMessageID)
+	}
+	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &count, query, args...); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// FindUnsummarizedContextMessages 查询摘要水位之后的 user/assistant 原文。
+func (m *customAiMessagesModel) FindUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+
+	var rows []*AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
+	args := []any{userID, conversationID, "user", "assistant"}
+	if afterCreatedAt != "" || afterMessageID != "" {
+		query += " and (`created_at` > ? or (`created_at` = ? and `id` > ?))"
+		args = append(args, afterCreatedAt, afterCreatedAt, afterMessageID)
+	}
+	// 按创建时间升序排序，确保按时间顺序返回
+	query += " order by `created_at` asc, `id` asc limit ?"
+	args = append(args, limit)
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// FindRecentUnsummarizedContextMessages 查询摘要水位之后最近的 user/assistant 原文，并按时间正序返回。
+func (m *customAiMessagesModel) FindRecentUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var rows []*AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
+	args := []any{userID, conversationID, "user", "assistant"}
+	if afterCreatedAt != "" || afterMessageID != "" {
+		query += " and (`created_at` > ? or (`created_at` = ? and `id` > ?))"
+		args = append(args, afterCreatedAt, afterCreatedAt, afterMessageID)
+	}
+	query += " order by `created_at` desc, `id` desc limit ?"
+	args = append(args, limit)
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
 		return nil, err
 	}
 	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {

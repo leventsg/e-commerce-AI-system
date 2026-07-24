@@ -54,6 +54,7 @@ type ConversationSummary struct {
 	OpenTasks             []string       `json:"open_tasks,omitempty"`
 	CoveredUntilMessageID string         `json:"-"`
 	CoveredUntilCreatedAt time.Time      `json:"-"`
+	TokenCount            int            `json:"-"`
 }
 
 type TaskState struct {
@@ -67,16 +68,38 @@ type TaskState struct {
 }
 
 type UserMemory struct {
-	Key        string  `json:"key"`
-	Type       string  `json:"type,omitempty"`
-	Content    string  `json:"content"`
-	Confidence float64 `json:"confidence,omitempty"`
+	Id              string     `json:"id,omitempty"`
+	UserID          uint64     `json:"-"`
+	Key             string     `json:"key"`
+	Type            string     `json:"type,omitempty"`
+	Content         string     `json:"content"`
+	Confidence      float64    `json:"confidence,omitempty"`
+	Source          string     `json:"source,omitempty"`
+	SourceMessageID string     `json:"source_message_id,omitempty"`
+	Status          string     `json:"status,omitempty"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	LastConfirmedAt *time.Time `json:"last_confirmed_at,omitempty"`
 }
 
 type UserProfile struct {
 	DisplayName string `json:"display_name,omitempty"`
 	Locale      string `json:"locale,omitempty"`
 }
+
+const (
+	MemoryTypeInstruction = "instruction"
+	MemoryTypePreference  = "preference"
+	MemoryTypePrice       = "price"
+	MemoryTypeProfileFact = "profile_fact"
+
+	MemorySourceExplicit = "explicit"
+	MemorySourceInferred = "inferred"
+
+	MemoryStatusActive     = "active"
+	MemoryStatusSuperseded = "superseded"
+	MemoryStatusDeleted    = "deleted"
+	MemoryStatusExpired    = "expired"
+)
 
 // ToolResultEnvelope 工具调用结果封装
 type ToolResultEnvelope struct {

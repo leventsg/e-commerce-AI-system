@@ -108,13 +108,41 @@ DROP TABLE IF EXISTS `ai_user_memories`;
 CREATE TABLE `ai_user_memories` (
   `id` varchar(64) NOT NULL COMMENT '记忆ID',
   `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
-  `memory_type` varchar(32) NOT NULL COMMENT 'preference/category/price',
+  `memory_key` varchar(128) NOT NULL COMMENT '用户内稳定记忆键',
+  `memory_type` varchar(32) NOT NULL COMMENT 'instruction/preference/price/profile_fact',
   `content` text NOT NULL COMMENT '记忆内容',
   `confidence` decimal(5,4) NOT NULL DEFAULT 0.0000 COMMENT '置信度',
+  `source` varchar(32) NOT NULL DEFAULT 'explicit' COMMENT 'explicit/inferred',
+  `source_message_id` varchar(64) NOT NULL DEFAULT '' COMMENT '来源消息ID',
+  `status` varchar(16) NOT NULL DEFAULT 'active' COMMENT 'active/superseded/deleted/expired',
+  `expires_at` datetime DEFAULT NULL COMMENT '过期时间',
+  `last_confirmed_at` datetime DEFAULT NULL COMMENT '最近确认时间',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_user_type_updated` (`user_id`, `memory_type`, `updated_at`)
+  UNIQUE KEY `uk_user_memory_key` (`user_id`, `memory_key`),
+  KEY `idx_user_type_updated` (`user_id`, `memory_type`, `updated_at`),
+  KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
+-- Table structure for ai_conversation_summaries
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_conversation_summaries`;
+CREATE TABLE `ai_conversation_summaries` (
+  `id` varchar(64) NOT NULL COMMENT '摘要ID',
+  `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `covered_until_created_at` datetime(3) NOT NULL COMMENT '已覆盖消息时间水位',
+  `covered_until_message_id` varchar(64) NOT NULL COMMENT '已覆盖消息ID水位',
+  `summary` text NOT NULL COMMENT '会话摘要',
+  `key_facts` json NOT NULL COMMENT '稳定关键事实',
+  `open_tasks` json NOT NULL COMMENT '未完成事项',
+  `token_count` int unsigned NOT NULL DEFAULT 0 COMMENT '摘要估算Token',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_conversation_watermark` (`user_id`, `conversation_id`, `covered_until_created_at`, `covered_until_message_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------

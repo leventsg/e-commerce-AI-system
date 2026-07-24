@@ -37,6 +37,7 @@ type Config struct {
 	Cache        cache.CacheConf
 	Eino         EinoConfig
 	IntentModel  EinoConfig
+	SummaryModel EinoConfig
 	ToolTimeout  ToolTimeoutConfig
 	Confirmation ConfirmationConfig
 	ProductRpc   zrpc.RpcClientConf

@@ -427,6 +427,15 @@ func (f *fakeChatMessagesModel) FindRecentByConversationID(context.Context, stri
 func (f *fakeChatMessagesModel) FindRecentContextMessages(context.Context, uint64, string, int) ([]*aimessages.AiMessages, error) {
 	return nil, nil
 }
+func (f *fakeChatMessagesModel) CountUnsummarizedContextMessages(context.Context, uint64, string, string, string) (int64, error) {
+	return 0, nil
+}
+func (f *fakeChatMessagesModel) FindUnsummarizedContextMessages(context.Context, uint64, string, string, string, int) ([]*aimessages.AiMessages, error) {
+	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindRecentUnsummarizedContextMessages(context.Context, uint64, string, string, string, int) ([]*aimessages.AiMessages, error) {
+	return nil, nil
+}
 func (f *fakeChatMessagesModel) FindRecentToolMessages(context.Context, uint64, string, int) ([]*aimessages.AiMessages, error) {
 	return nil, nil
 }

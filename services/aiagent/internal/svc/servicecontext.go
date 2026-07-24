@@ -6,6 +6,7 @@ import (
 	"time"
 
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
+	aiconversationsummaries "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversation_summaries"
 	aiconversations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversations"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
@@ -69,6 +70,7 @@ type ServiceContext struct {
 	ToolCallsModel      aitoolcalls.AiToolCallsModel
 	ConfirmationsModel  aiconfirmations.AiConfirmationsModel
 	UserMemoriesModel   aiusermemories.AiUserMemoriesModel
+	SummariesModel      aiconversationsummaries.AiConversationSummariesModel
 	ProductRpc          productcatalogservice.ProductCatalogService
 	InventoryRpc        inventoryclient.Inventory
 	OrderRpc            orderservice.OrderService
@@ -85,6 +87,8 @@ type ServiceContext struct {
 	HighRiskTools       HighRiskToolExecutor
 	ConversationManager conversation.Manager
 	ContextManager      contextmanager.Manager
+	SummaryManager      *contextmanager.SummaryManager
+	MemoryPolicy        *contextmanager.MemoryPolicy
 	IntentPlanner       IntentPlanner
 	AgentRunner         eino.Runner
 	QueryChatTools      ChatToolExecutor
@@ -101,6 +105,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	cartRPC := cartsclient.NewCart(zrpc.MustNewClient(c.CartRpc))
 	couponRPC := couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc))
 	auditRPC := auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc))
+	userRPC := usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc))
 	redisClient := redis.MustNewRedis(c.RedisConf)
 	toolCallsModel := aitoolcalls.NewAiToolCallsModel(mysql, c.Cache)
 	confirmationsModel := aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache)
@@ -135,6 +140,10 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	})
 	conversationsModel := aiconversations.NewAiConversationsModel(mysql, c.Cache)
 	messagesModel := aimessages.NewAiMessagesModel(mysql, c.Cache)
+	summariesModel := aiconversationsummaries.NewAiConversationSummariesModel(mysql, c.Cache)
+	userMemoriesModel := aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache)
+	summaryStore := contextmanager.NewSummaryStore(summariesModel)
+	memoryStore := contextmanager.NewMemoryStore(userMemoriesModel)
 	conversationManager := conversation.NewManager(
 		conversationsModel,
 		messagesModel,
@@ -142,8 +151,17 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	contextManager := contextmanager.NewManager(
 		contextmanager.NewMessageStore(messagesModel),
 		contextmanager.NewToolResultStore(messagesModel),
+		contextmanager.WithSummaryStore(summaryStore),
+		contextmanager.WithMemoryStore(memoryStore),
+		contextmanager.WithUserProfileSource(contextmanager.NewUserProfileSource(userRPC)),
 	)
 	modelFactory := eino.NewModelFactory()
+	summaryManager := contextmanager.NewSummaryManager(
+		summaryStore,
+		contextmanager.NewSummaryMessageStore(messagesModel),
+		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.IntentModel)),
+	)
+	memoryPolicy := contextmanager.NewMemoryPolicy(memoryStore)
 	intentPlanner := planner.New(toolRegistry, planner.WithIntentModel(eino.NewIntentModelFactory(modelFactory), c.IntentModel))
 	var agentRunner eino.Runner
 	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino); err == nil {
@@ -160,14 +178,15 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		MessagesModel:       messagesModel,
 		ToolCallsModel:      toolCallsModel,
 		ConfirmationsModel:  confirmationsModel,
-		UserMemoriesModel:   aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache),
+		UserMemoriesModel:   userMemoriesModel,
+		SummariesModel:      summariesModel,
 		ProductRpc:          productRPC,
 		InventoryRpc:        inventoryRPC,
 		OrderRpc:            orderRPC,
 		CheckoutRpc:         checkoutRPC,
 		CartRpc:             cartRPC,
 		CouponRpc:           couponRPC,
-		UserRpc:             usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc)),
+		UserRpc:             userRPC,
 		AuditRpc:            auditRPC,
 		ToolRegistry:        toolRegistry,
 		ToolExecutor:        toolExecutor,
@@ -177,12 +196,27 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		HighRiskTools:       highRiskTools,
 		ConversationManager: conversationManager,
 		ContextManager:      contextManager,
+		SummaryManager:      summaryManager,
+		MemoryPolicy:        memoryPolicy,
 		IntentPlanner:       intentPlanner,
 		AgentRunner:         agentRunner,
 		QueryChatTools:      queryTools,
 		WriteChatTools:      writeTools,
 		HighRiskChatTools:   highRiskTools,
 	}
+}
+
+func selectSummaryModelConfig(summaryConfig, fallback config.EinoConfig) config.EinoConfig {
+	if summaryConfig.Provider == "" &&
+		summaryConfig.APIKey == "" &&
+		summaryConfig.BaseURL == "" &&
+		summaryConfig.Model == "" &&
+		summaryConfig.Timeout == 0 &&
+		summaryConfig.MaxTokens == 0 &&
+		summaryConfig.Temperature == 0 {
+		return fallback
+	}
+	return summaryConfig
 }
 
 func modelBaseURLHost(raw string) string {

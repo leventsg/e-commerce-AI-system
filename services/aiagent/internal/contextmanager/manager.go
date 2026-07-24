@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strings"
 	"unicode/utf8"
 
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
@@ -91,8 +90,7 @@ func NewManager(messages MessageStore, tools ToolContextStore, opts ...Option) M
 
 func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*domain.BuildContextResult, error) {
 	// 验证请求参数
-	currentInput := strings.TrimSpace(req.CurrentInput)
-	if req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || currentInput == "" ||
+	if req.UserID == 0 || req.ConversationID == "" || req.CurrentInput == "" ||
 		(req.Mode != domain.IntentContextMode && req.Mode != domain.AgentContextMode) {
 		return nil, ErrInvalidContextRequest
 	}
@@ -141,7 +139,7 @@ func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*d
 		m.appendUserProfile(ctx, req, result)
 	}
 
-	result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleUser, Content: currentInput})
+	result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleUser, Content: req.CurrentInput})
 	result.EstimatedInputTokens = estimateInputTokens(result.Messages)
 	return result, nil
 }
@@ -217,7 +215,7 @@ func (m *manager) appendIntentMemory(ctx context.Context, req domain.BuildContex
 		return
 	}
 	summary, err := m.memories.SummarizeForIntent(ctx, req.UserID, activeMemoryLimit)
-	if err != nil || strings.TrimSpace(summary) == "" {
+	if err != nil || summary == "" {
 		return
 	}
 	result.Messages = append(result.Messages, domain.ContextMessage{

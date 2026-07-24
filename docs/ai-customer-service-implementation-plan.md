@@ -768,7 +768,7 @@ Expected: 低风险写操作无需确认，但必须记录审计。
 - MySQL 条件更新覆盖 pending、approved、rejected、expired、executed、failed 状态流转。
 - Redis 锁在状态变更后释放，不跨 Task 11 的高风险业务 RPC 持有。
 
-- [x] **Step 6: 运行测试**
+- [ ] **Step 6: 运行测试**
 
 Run:
 
@@ -1091,7 +1091,7 @@ Expected: ToolResult envelope 可恢复，ToolCallRef 不丢关键 ID，按需�
 覆盖：
 
 - IntentContext 只包含当前输入、最近对话、当前 TaskState 和长期记忆摘要。
-- AgentContext 包含摘要、最近 20 条未压缩消息、最近一次完整工具结果、历史 ToolCallRef、TaskState、UserMemory 和可选 UserProfile。
+- AgentContext 包含摘要、最近 20 条未压缩消息、最近一次完整工具结果、历史 ToolCallRef、TaskState、UserMemory 和可选 UserProfile JSON。
 - Context Manager 只返回临时 `[]domain.ContextMessage` 和轻量 build metadata，不落库模型输入。
 - token 估算只记录在 build metadata 或日志中，不参与裁剪，不返回错误。
 
@@ -1126,15 +1126,21 @@ Expected: Planner 和 Runner 均消费轻量 Context Manager 输出；Context �
 - Create/Modify: `dal/model/ai/conversation_summaries/**`
 - Modify: `dal/model/ai/user_memories/ai_user_memories.sql`
 - Regenerate: `dal/model/ai/user_memories/**`
+- Create/Modify: `dal/model/ai/user_profiles/ai_user_profiles.sql`
+- Create/Modify: `dal/model/ai/user_profiles/**`
 - Modify: `construct/depend/sql/init.sql`
 - Modify: `construct/depend/sql/migrations/20260722_ai_context_engineering.sql`
 - Create/Modify: `services/aiagent/internal/contextmanager/summary.go`
 - Create/Modify: `services/aiagent/internal/contextmanager/memory_policy.go`
 - Create/Modify: `services/aiagent/internal/contextmanager/user_profile.go`
+- Create/Modify: `services/aiagent/internal/profileextractor/**`
+- Modify: `services/aiagent/internal/logic/chatlogic.go`
+- Modify: `services/aiagent/etc/aiagent.yaml`
+- Modify: `services/aiagent/etc/aiagent.prod.yaml`
 - Test: `services/aiagent/internal/contextmanager/summary_test.go`
 - Test: `services/aiagent/internal/contextmanager/memory_policy_test.go`
 
-- [ ] **Step 1: 先写 30 -> 10 + 20 摘要测试**
+- [x] **Step 1: 先写 30 -> 10 + 20 摘要测试**
 
 覆盖：
 
@@ -1146,35 +1152,48 @@ Expected: Planner 和 Runner 均消费轻量 Context Manager 输出；Context �
 - 显式记忆可以保存、更新、删除和过期。
 - 推断记忆只有 `confidence >= 0.85`、存在来源消息、非敏感且有 TTL 时才写入。
 
-- [ ] **Step 2: 新增或保留摘要表并扩展记忆表**
+- [ ] **Step 2: 新增或保留摘要表、扩展记忆表并新增画像表**
 
-按设计文档保留 `ai_conversation_summaries`，扩展 `ai_user_memories` 的 memory key、source、source message、status、expires 和 last confirmed 字段。生成 go-zero model；生成文件不手改。
+按设计文档保留 `ai_conversation_summaries`，扩展 `ai_user_memories` 的 memory key、source、source message、status、expires 和 last confirmed 字段，并新增 `ai_user_profiles` 保存聊天来源 UserProfile JSON。生成 go-zero model；生成文件不手改。
 
 ```bash
 goctl model mysql ddl -src dal/model/ai/conversation_summaries/ai_conversation_summaries.sql -dir dal/model/ai/conversation_summaries -c
 goctl model mysql ddl -src dal/model/ai/user_memories/ai_user_memories.sql -dir dal/model/ai/user_memories -c
+goctl model mysql ddl -src dal/model/ai/user_profiles/ai_user_profiles.sql -dir dal/model/ai/user_profiles -c
 ```
 
-- [ ] **Step 3: 实现滚动摘要服务**
+- [x] **Step 3: 实现滚动摘要服务**
 
 摘要模型无工具权限，输入上一版摘要和本次要压缩的 10 条消息，输出 `summary/key_facts/open_tasks` 严格 JSON。保存前校验 JSON、字段长度和引用实体 ID。
 
-- [ ] **Step 4: 实现显式和受控推断 MemoryPolicy**
+- [x] **Step 4: 实现显式和受控推断 MemoryPolicy**
 
 模型只能产生候选，MemoryPolicy 负责脱敏、置信度、来源、TTL、冲突和 upsert。禁止保存认证信息、支付凭据、完整地址、瞬时库存和单次订单状态。
 
-- [ ] **Step 5: 接入最小 UserProfile**
+- [ ] **Step 5: 接入聊天来源 UserProfile JSON**
 
-通过现有 users RPC 加载当前任务需要的 allowlist 字段，并与有效 UserMemory 组合。users RPC 失败时跳过画像，不阻塞聊天。
+UserProfile 不再来自 users RPC。每轮聊天消息持久化成功后投递 Kafka 画像更新事件，异步 consumer 调用 LLM Profile Extractor 判断是否需要更新画像。画像以 JSON 保存，便于后续注入给 LLM。
 
-- [ ] **Step 6: 运行测试**
+更新时机：
+
+1. 用户明确表达长期偏好。
+2. 多次行为表现出稳定模式。
+3. 用户主动纠正画像。
+4. 用户主动要求删除、遗忘或不再使用某类偏好。
+
+LLM 只能输出严格 JSON patch 或候选更新，不能直接写数据库；后端策略负责校验来源、置信度、敏感信息、删除请求和用户隔离。
+
+- [x] **Step 6: 运行测试**
 
 ```bash
 go test ./dal/model/ai/...
 go test ./services/aiagent/internal/contextmanager -run 'TestSummary|TestMemory|TestUserProfile' -count=1
+go test ./services/aiagent/internal/profileextractor -count=1
 ```
 
-Expected: 摘要窗口、消息去重、记忆生命周期、用户隔离、失败降级和提示注入防护全部通过。
+Expected: 摘要窗口、消息去重、记忆生命周期、聊天来源画像 JSON、Kafka 异步触发、用户隔离、失败降级和提示注入防护全部通过。
+
+**实现状态（2026-07-24）：** Task 19 已接入滚动摘要与长期记忆。新增 `ai_conversation_summaries` 表和 model，扩展 `ai_user_memories` 的 key/source/status/TTL 字段；SummaryManager 按 30 -> 10 + 20 推进摘要水位，摘要失败保留旧摘要和未压缩原文；MemoryPolicy 支持显式记忆保存/更新/删除/过期，并约束推断记忆必须高置信、有来源、非敏感且有 TTL；Context Manager 已使用摘要和 active memories，Chat 消息持久化后触发摘要刷新且失败不阻塞聊天。聊天来源 UserProfile JSON 与 Kafka 异步画像更新仍待实现。
 
 ### Task 20: Agent Run、TaskState 与 Checkpoint
 
@@ -1288,7 +1307,7 @@ go test ./...
 - 模型不可用：返回“AI 服务暂时不可用，请稍后重试”，查询/写操作不自动编造结果。
 - 上下文过长：不做运行时裁剪；通过 30 -> 10 + 20 滚动摘要、近期 20 条原文和历史工具引用从源头节省 token，并记录估算 token 便于排查。
 - 工具结果过大：只把最近一次完整工具结果放入上下文，历史工具调用保留 ToolCallRef；需要完整结果时按 `tool_call_id` 重新读取。
-- 摘要或记忆错误：原始消息始终保留；摘要、记忆和画像失败降级到近期消息，不阻塞基础聊天。
+- 摘要、记忆或画像错误：原始消息始终保留；摘要、记忆和 UserProfile JSON 失败降级到近期消息，不阻塞基础聊天。
 - 记忆污染和提示注入：模型只能提交候选，MemoryPolicy 负责来源、置信度、敏感信息、TTL 和冲突校验；记忆不能覆盖 system prompt。
 - checkpoint 丢失：Redis 只做热缓存，MySQL AgentRun、confirmation 和 tool call 记录可重建执行状态。
 
@@ -1307,5 +1326,6 @@ go test ./...
 - 超出近期 20 条原文窗口的关键事实可通过会话摘要恢复。
 - 历史工具调用以 ToolCallRef 保留，完整结果只能通过 user ID + conversation ID + tool_call_id 按需读取。
 - 长期记忆具备来源、置信度、冲突、过期、删除和用户隔离。
+- UserProfile 只来源于 AI 聊天过程，异步抽取为 JSON，并支持明确偏好、稳定模式、主动纠正和删除/遗忘偏好四类更新。
 - waiting_confirmation 可以跨实例恢复，重复恢复不会重复执行写 RPC。
 - 每次模型调用可以通过结构化日志追踪摘要覆盖水位、近期消息范围、最近工具结果和历史工具引用数量。

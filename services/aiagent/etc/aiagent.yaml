@@ -59,6 +59,15 @@ IntentModel:
   MaxTokens: 512
   Temperature: 0
 
+SummaryModel:
+  Provider: ${AI_SUMMARY_MODEL_PROVIDER}
+  APIKey: ${AI_SUMMARY_MODEL_API_KEY}
+  BaseURL: ${AI_SUMMARY_MODEL_BASE_URL}
+  Model: ${AI_SUMMARY_MODEL_NAME}
+  Timeout: 10
+  MaxTokens: 1024
+  Temperature: 0
+
 ToolTimeout:
   QuerySeconds: 3
   WriteSeconds: 5
