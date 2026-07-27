@@ -9,6 +9,7 @@ import (
 
 	openai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
+	"github.com/eino-contrib/jsonschema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 )
 
@@ -16,12 +17,22 @@ var ErrModelUnavailable = errors.New("ai model unavailable, please retry later")
 
 type ModelFactory interface {
 	NewChatModel(ctx context.Context, cfg config.EinoConfig) (model.BaseChatModel, error)
+	NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig) (model.BaseChatModel, error)
 }
 
 type ChatModelBuilder func(ctx context.Context, provider string, cfg config.EinoConfig) (model.BaseChatModel, error)
+type StructuredChatModelBuilder func(ctx context.Context, provider string, cfg config.EinoConfig, structured StructuredOutputConfig) (model.BaseChatModel, error)
+
+type StructuredOutputConfig struct {
+	Name        string
+	Description string
+	Strict      bool
+	Schema      *jsonschema.Schema
+}
 
 type modelFactory struct {
-	builder ChatModelBuilder
+	builder           ChatModelBuilder
+	structuredBuilder StructuredChatModelBuilder
 }
 
 type ModelFactoryOption func(*modelFactory)
@@ -32,8 +43,17 @@ func WithChatModelBuilder(builder ChatModelBuilder) ModelFactoryOption {
 	}
 }
 
+func WithStructuredChatModelBuilder(builder StructuredChatModelBuilder) ModelFactoryOption {
+	return func(f *modelFactory) {
+		f.structuredBuilder = builder
+	}
+}
+
 func NewModelFactory(opts ...ModelFactoryOption) ModelFactory {
-	f := &modelFactory{builder: buildOpenAICompatibleModel}
+	f := &modelFactory{
+		builder:           buildOpenAICompatibleModel,
+		structuredBuilder: buildOpenAICompatibleStructuredModel,
+	}
 	for _, opt := range opts {
 		opt(f)
 	}
@@ -59,6 +79,29 @@ func (f *modelFactory) NewChatModel(ctx context.Context, cfg config.EinoConfig) 
 	return chatModel, nil
 }
 
+// NewStructuredChatModel 创建结构化输出模型
+func (f *modelFactory) NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig) (model.BaseChatModel, error) {
+	provider, err := normalizeProvider(cfg.Provider)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		return nil, fmt.Errorf("model is required for provider %q", cfg.Provider)
+	}
+	if err := validateStructuredOutputConfig(structured); err != nil {
+		return nil, err
+	}
+
+	chatModel, err := f.structuredBuilder(ctx, provider, cfg, structured)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	}
+	if chatModel == nil {
+		return nil, fmt.Errorf("%w: nil chat model", ErrModelUnavailable)
+	}
+	return chatModel, nil
+}
+
 func normalizeProvider(provider string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "":
@@ -73,6 +116,14 @@ func normalizeProvider(provider string) (string, error) {
 }
 
 func buildOpenAICompatibleModel(ctx context.Context, _ string, cfg config.EinoConfig) (model.BaseChatModel, error) {
+	return openai.NewChatModel(ctx, buildOpenAICompatibleModelConfig(cfg, nil))
+}
+
+func buildOpenAICompatibleStructuredModel(ctx context.Context, _ string, cfg config.EinoConfig, structured StructuredOutputConfig) (model.BaseChatModel, error) {
+	return openai.NewChatModel(ctx, buildOpenAICompatibleModelConfig(cfg, &structured))
+}
+
+func buildOpenAICompatibleModelConfig(cfg config.EinoConfig, structured *StructuredOutputConfig) *openai.ChatModelConfig {
 	temperature := float32(cfg.Temperature)
 	timeout := time.Duration(cfg.Timeout) * time.Second
 	openAIConfig := &openai.ChatModelConfig{
@@ -86,5 +137,26 @@ func buildOpenAICompatibleModel(ctx context.Context, _ string, cfg config.EinoCo
 	if cfg.MaxTokens <= 0 {
 		openAIConfig.MaxTokens = nil
 	}
-	return openai.NewChatModel(ctx, openAIConfig)
+	if structured != nil {
+		openAIConfig.ResponseFormat = &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name:        structured.Name,
+				Description: structured.Description,
+				Strict:      structured.Strict,
+				JSONSchema:  structured.Schema,
+			},
+		}
+	}
+	return openAIConfig
+}
+
+func validateStructuredOutputConfig(structured StructuredOutputConfig) error {
+	if strings.TrimSpace(structured.Name) == "" {
+		return errors.New("structured output schema name is required")
+	}
+	if structured.Schema == nil {
+		return errors.New("structured output json schema is required")
+	}
+	return nil
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/planner"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 
@@ -129,8 +130,47 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 		protoEvents = append(protoEvents, persistenceErrorEvent(prepared.ConversationID, businessExecuted))
 		return &aiagent.ChatResponse{StatusCode: code.ServerError, StatusMsg: err.Error(), Events: protoEvents}, nil
 	}
+	// 异步更新用户画像
+	l.publishProfileUpdate(prepared, messages, uint64(in.UserId))
 	l.refreshConversationSummary(prepared.ConversationID, uint64(in.UserId))
 	return &aiagent.ChatResponse{StatusCode: code.Success, StatusMsg: code.SuccessMsg, Events: protoEvents}, nil
+}
+
+// publishProfileUpdate 发布用户画像更新事件
+func (l *ChatLogic) publishProfileUpdate(prepared *conversation.PreparedConversation, messages []*aimessages.AiMessages, userID uint64) {
+	if l.svcCtx.ProfileUpdatePublisher == nil || prepared == nil {
+		return
+	}
+	messageIDs := make([]string, 0, len(messages)+1)
+	// 传当前用户消息
+	if prepared.UserMessageID != "" {
+		messageIDs = append(messageIDs, prepared.UserMessageID)
+	}
+	// 传其他消息
+	for _, message := range messages {
+		if message != nil && message.Id != "" {
+			messageIDs = append(messageIDs, message.Id)
+		}
+	}
+	if len(messageIDs) == 0 {
+		return
+	}
+	event := profileextractor.UpdateEvent{
+		EventID:        "profile_evt_" + uuid.NewString(),
+		UserID:         userID,
+		ConversationID: prepared.ConversationID,
+		MessageIDs:     messageIDs,
+		CreatedAt:      time.Now(),
+	}
+	// 推到kafka
+	if err := l.svcCtx.ProfileUpdatePublisher.PublishProfileUpdate(l.ctx, event); err != nil {
+		l.Errorw("publish ai user profile update failed",
+			logx.Field("component", "profile_extractor"),
+			logx.Field("stage", "publish_update_event"),
+			logx.Field("conversation_id", prepared.ConversationID),
+			logx.Field("user_id", userID),
+			logx.Field("err", err))
+	}
 }
 
 // refreshConversationSummary 尝试刷新会话的滚动摘要

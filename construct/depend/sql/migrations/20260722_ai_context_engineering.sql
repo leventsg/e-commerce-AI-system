@@ -23,3 +23,18 @@ ALTER TABLE `ai_user_memories`
   ADD COLUMN `last_confirmed_at` datetime DEFAULT NULL COMMENT '最近确认时间' AFTER `expires_at`,
   ADD UNIQUE KEY `uk_user_memory_key` (`user_id`, `memory_key`),
   ADD KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`);
+
+CREATE TABLE IF NOT EXISTS `ai_user_profiles` (
+  `id` varchar(64) NOT NULL COMMENT '画像ID',
+  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
+  `profile_json` json NOT NULL COMMENT '聊天来源用户画像JSON',
+  `version` int unsigned NOT NULL DEFAULT 1 COMMENT '画像版本',
+  `source` varchar(32) NOT NULL DEFAULT 'ai_chat' COMMENT '来源',
+  `status` varchar(32) NOT NULL DEFAULT 'active' COMMENT 'active/deleted',
+  `last_event_id` varchar(64) NOT NULL DEFAULT '' COMMENT '最近画像更新事件ID',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_profile` (`user_id`),
+  KEY `idx_user_status` (`user_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

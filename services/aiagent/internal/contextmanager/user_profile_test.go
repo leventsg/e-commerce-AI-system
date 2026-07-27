@@ -2,49 +2,60 @@ package contextmanager
 
 import (
 	"context"
-	"errors"
 	"testing"
+	"time"
 
-	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
-	"github.com/leventsg/e-commerce-AI-system/services/users/usersclient"
-	"google.golang.org/grpc"
+	aiuserprofiles "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_profiles"
 )
 
-func TestUserProfileSourceLoadsAllowlistedFields(t *testing.T) {
-	users := &fakeUserRPC{resp: &usersclient.GetUserResponse{StatusCode: uint32(code.Success), UserName: "小明", Email: "secret@example.com"}}
-	source := NewUserProfileSource(users)
+func TestUserProfileStoreLoadsActiveProfileJSON(t *testing.T) {
+	store := NewUserProfileStore(&fakeUserProfileModel{row: &aiuserprofiles.AiUserProfiles{
+		UserId: 42, ProfileJson: `{"preferences":{"categories":["手机"]}}`, Version: 2, LastEventId: "evt-1",
+		Status: "active", UpdatedAt: baseTime(),
+	}})
 
-	profile, err := source.Load(context.Background(), 42)
+	profile, err := store.LoadActive(context.Background(), 42)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadActive() error = %v", err)
 	}
-	if profile == nil || profile.DisplayName != "小明" || profile.Locale != "zh-CN" {
+	if profile == nil || string(profile.ProfileJSON) != `{"preferences":{"categories":["手机"]}}` ||
+		profile.Version != 2 || profile.LastEventID != "evt-1" || !profile.UpdatedAt.Equal(baseTime()) {
 		t.Fatalf("profile = %+v", profile)
 	}
-	if users.userID != 42 {
-		t.Fatalf("GetUser user_id = %d, want trusted user id 42", users.userID)
+}
+
+func TestUserProfileStoreSkipsInvalidOrInactiveProfile(t *testing.T) {
+	for _, row := range []*aiuserprofiles.AiUserProfiles{
+		{UserId: 42, ProfileJson: `{"preferences":`, Status: "active"},
+		nil,
+	} {
+		store := NewUserProfileStore(&fakeUserProfileModel{row: row})
+		profile, err := store.LoadActive(context.Background(), 42)
+		if err != nil {
+			t.Fatalf("LoadActive() error = %v", err)
+		}
+		if profile != nil {
+			t.Fatalf("profile = %+v, want nil", profile)
+		}
 	}
 }
 
-func TestUserProfileSourceSkipsWhenUsersRPCFails(t *testing.T) {
-	source := NewUserProfileSource(&fakeUserRPC{err: errors.New("users unavailable")})
-	profile, err := source.Load(context.Background(), 42)
-	if err == nil {
-		t.Fatal("Load() error = nil, want RPC error for caller to degrade")
-	}
-	if profile != nil {
-		t.Fatalf("profile = %+v, want nil", profile)
-	}
-}
-
-type fakeUserRPC struct {
-	usersclient.Users
-	resp   *usersclient.GetUserResponse
+type fakeUserProfileModel struct {
+	row    *aiuserprofiles.AiUserProfiles
+	saved  *aiuserprofiles.AiUserProfiles
+	userID uint64
 	err    error
-	userID uint32
 }
 
-func (f *fakeUserRPC) GetUser(ctx context.Context, in *usersclient.GetUserRequest, opts ...grpc.CallOption) (*usersclient.GetUserResponse, error) {
-	f.userID = in.UserId
-	return f.resp, f.err
+func (f *fakeUserProfileModel) FindActiveByUser(_ context.Context, userID uint64) (*aiuserprofiles.AiUserProfiles, error) {
+	f.userID = userID
+	return f.row, f.err
+}
+
+func (f *fakeUserProfileModel) UpsertByUser(_ context.Context, data *aiuserprofiles.AiUserProfiles) (*aiuserprofiles.AiUserProfiles, error) {
+	f.saved = data
+	if data.UpdatedAt.IsZero() {
+		data.UpdatedAt = time.Now()
+	}
+	return data, f.err
 }
