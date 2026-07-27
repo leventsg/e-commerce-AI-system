@@ -15,6 +15,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/planner"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 )
@@ -40,6 +41,41 @@ func TestChatRunsAssistantAndPersistsResponse(t *testing.T) {
 	}
 	if messages.batchCalls != 1 || messages.insertCalls != 0 || len(messages.inserted) != 1 || messages.inserted[0].Role != conversation.RoleAssistant {
 		t.Fatalf("batchCalls=%d insertCalls=%d messages=%+v", messages.batchCalls, messages.insertCalls, messages.inserted)
+	}
+}
+
+func TestChatPublishesProfileUpdateAfterMessagesPersist(t *testing.T) {
+	publisher := &fakeProfileUpdatePublisher{err: errors.New("kafka unavailable")}
+	messages := &fakeChatMessagesModel{}
+	ctx := &svc.ServiceContext{
+		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1"}},
+		ContextManager:      successfulContextManager(),
+		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentChat}},
+		AgentRunner: fakeAgentRunner{events: []domain.AgentEvent{{
+			Type: domain.EventAssistantMessage, ConversationID: "conv-1", MessageID: "assistant-1", Content: "你好", Done: true,
+		}}},
+		MessagesModel:          messages,
+		ProfileUpdatePublisher: publisher,
+	}
+
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "以后推荐轻薄手机", Source: "web"})
+	if err != nil || resp.StatusCode != 0 || len(resp.Events) != 1 {
+		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("profile update publisher calls=%d, want 1", publisher.calls)
+	}
+	if publisher.event.UserID != 42 || publisher.event.ConversationID != "conv-1" || publisher.event.EventID == "" || publisher.event.CreatedAt.IsZero() {
+		t.Fatalf("profile update event = %+v", publisher.event)
+	}
+	wantIDs := map[string]bool{"user-1": true, "assistant-1": true}
+	if len(publisher.event.MessageIDs) != len(wantIDs) {
+		t.Fatalf("message ids = %+v", publisher.event.MessageIDs)
+	}
+	for _, id := range publisher.event.MessageIDs {
+		if !wantIDs[id] {
+			t.Fatalf("unexpected message id %q in event %+v", id, publisher.event)
+		}
 	}
 }
 
@@ -397,6 +433,18 @@ func (f *fakeChatToolExecutor) RequestConfirmation(_ context.Context, req tools.
 	return f.Execute(context.Background(), req)
 }
 
+type fakeProfileUpdatePublisher struct {
+	event profileextractor.UpdateEvent
+	err   error
+	calls int
+}
+
+func (f *fakeProfileUpdatePublisher) PublishProfileUpdate(_ context.Context, event profileextractor.UpdateEvent) error {
+	f.calls++
+	f.event = event
+	return f.err
+}
+
 type fakeChatMessagesModel struct {
 	inserted    []*aimessages.AiMessages
 	err         error
@@ -440,5 +488,8 @@ func (f *fakeChatMessagesModel) FindRecentToolMessages(context.Context, uint64, 
 	return nil, nil
 }
 func (f *fakeChatMessagesModel) FindToolMessageByID(context.Context, uint64, string, string) (*aimessages.AiMessages, error) {
+	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindMessagesByIDs(context.Context, uint64, string, []string) ([]*aimessages.AiMessages, error) {
 	return nil, nil
 }

@@ -2,6 +2,7 @@ package contextmanager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -27,12 +28,12 @@ func TestManagerBuildsIntentContextFromLightweightSources(t *testing.T) {
 		latest: &domain.ToolResultEnvelope{ToolCallID: "call-1", ToolName: domain.ToolCartList, Status: "success", Data: []byte(`{"items":[]}`)},
 		refs:   []domain.ToolCallRef{{ToolCallID: "call-0", ToolName: domain.ToolProductRecommend}},
 	}
-	profiles := &fakeUserProfileSource{profile: &domain.UserProfile{DisplayName: "不应进入 IntentContext"}}
+	profiles := &fakeUserProfileStore{profile: &domain.UserProfile{ProfileJSON: json.RawMessage(`{"preferences":{"categories":["不应进入 IntentContext"]}}`)}}
 	manager := NewManager(messages, tools,
 		WithSummaryStore(summaries),
 		WithMemoryStore(memories),
 		WithTaskStateStore(taskStates),
-		WithUserProfileSource(profiles),
+		WithUserProfileStore(profiles),
 	)
 
 	result, err := manager.Build(context.Background(), domain.BuildContextRequest{
@@ -85,7 +86,7 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 	}}
 	taskStates := &fakeTaskStateStore{state: &domain.TaskState{Goal: "完成购物选择", PendingConfirmationID: "confirm-1"}}
 	memories := &fakeMemoryStore{active: []domain.UserMemory{{Key: "budget", Content: "预算 3000 元"}}}
-	profiles := &fakeUserProfileSource{profile: &domain.UserProfile{DisplayName: "小明", Locale: "zh-CN"}}
+	profiles := &fakeUserProfileStore{profile: &domain.UserProfile{ProfileJSON: json.RawMessage(`{"preferences":{"categories":["手机"],"brands":["品牌A"]},"evidence":["m2"]}`), Version: 3, LastEventID: "evt-1"}}
 	tools := &fakeToolContextStore{
 		latest: &domain.ToolResultEnvelope{
 			ToolCallID: "call-latest", ToolName: domain.ToolCartList, Status: "success",
@@ -100,7 +101,7 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 		WithSummaryStore(summaries),
 		WithMemoryStore(memories),
 		WithTaskStateStore(taskStates),
-		WithUserProfileSource(profiles),
+		WithUserProfileStore(profiles),
 	)
 
 	result, err := manager.Build(context.Background(), domain.BuildContextRequest{
@@ -112,7 +113,7 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 	}
 
 	joined := joinContextContents(result.Messages)
-	for _, want := range []string{"更早的会话摘要", "recent-m3", "recent-m22", "call-latest", "cart_item_id", "call-old", "完成购物选择", "预算 3000 元", "小明"} {
+	for _, want := range []string{"更早的会话摘要", "recent-m3", "recent-m22", "call-latest", "cart_item_id", "call-old", "完成购物选择", "预算 3000 元", `"categories":["手机"]`, `"brands":["品牌A"]`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("AgentContext missing %q", want)
 		}
@@ -218,6 +219,23 @@ func TestManagerAgentContextExcludesMessagesCoveredBySummaryWatermark(t *testing
 	}
 }
 
+func TestManagerSkipsUserProfileWhenStoreFails(t *testing.T) {
+	manager := NewManager(&fakeContextMessageStore{messages: []*aimessages.AiMessages{
+		contextMessage("m1", "user", "想买手机", baseTime()),
+	}}, nil, WithUserProfileStore(&fakeUserProfileStore{err: errors.New("profile unavailable")}))
+
+	result, err := manager.Build(context.Background(), domain.BuildContextRequest{
+		UserID: 42, ConversationID: "conv-1", Mode: domain.AgentContextMode, CurrentInput: "继续",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	joined := joinContextContents(result.Messages)
+	if strings.Contains(joined, "[user_profile]") {
+		t.Fatalf("profile store error should degrade by skipping profile: %s", joined)
+	}
+}
+
 type fakeContextMessageStore struct {
 	messages       []*aimessages.AiMessages
 	err            error
@@ -271,14 +289,16 @@ func (f *fakeTaskStateStore) FindActive(context.Context, uint64, string, string)
 	return f.state, f.err
 }
 
-type fakeUserProfileSource struct {
+type fakeUserProfileStore struct {
 	profile *domain.UserProfile
 	err     error
 	calls   int
+	userID  uint64
 }
 
-func (f *fakeUserProfileSource) Load(context.Context, uint64) (*domain.UserProfile, error) {
+func (f *fakeUserProfileStore) LoadActive(_ context.Context, userID uint64) (*domain.UserProfile, error) {
 	f.calls++
+	f.userID = userID
 	return f.profile, f.err
 }
 

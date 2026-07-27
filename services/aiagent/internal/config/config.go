@@ -38,6 +38,8 @@ type Config struct {
 	Eino         EinoConfig
 	IntentModel  EinoConfig
 	SummaryModel EinoConfig
+	ProfileModel EinoConfig
+	KafkaMQ      config.KafkaConfig
 	ToolTimeout  ToolTimeoutConfig
 	Confirmation ConfirmationConfig
 	ProductRpc   zrpc.RpcClientConf
@@ -46,6 +48,5 @@ type Config struct {
 	CheckoutRpc  zrpc.RpcClientConf
 	CartRpc      zrpc.RpcClientConf
 	CouponRpc    zrpc.RpcClientConf
-	UserRpc      zrpc.RpcClientConf
 	AuditRpc     zrpc.RpcClientConf
 }

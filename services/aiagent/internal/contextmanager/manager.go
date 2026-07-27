@@ -44,8 +44,8 @@ type TaskStateStore interface {
 	FindActive(ctx context.Context, userID uint64, conversationID, runID string) (*domain.TaskState, error)
 }
 
-type UserProfileSource interface {
-	Load(ctx context.Context, userID uint64) (*domain.UserProfile, error)
+type UserProfileStore interface {
+	LoadActive(ctx context.Context, userID uint64) (*domain.UserProfile, error)
 }
 
 type ToolContextStore interface {
@@ -59,7 +59,7 @@ type manager struct {
 	summaries   SummaryStore // 会话级记忆
 	memories    MemoryStore  // 用户级记忆
 	taskStates  TaskStateStore
-	userProfile UserProfileSource
+	userProfile UserProfileStore
 }
 
 type Option func(*manager)
@@ -76,8 +76,8 @@ func WithTaskStateStore(store TaskStateStore) Option {
 	return func(m *manager) { m.taskStates = store }
 }
 
-func WithUserProfileSource(source UserProfileSource) Option {
-	return func(m *manager) { m.userProfile = source }
+func WithUserProfileStore(store UserProfileStore) Option {
+	return func(m *manager) { m.userProfile = store }
 }
 
 func NewManager(messages MessageStore, tools ToolContextStore, opts ...Option) Manager {
@@ -236,15 +236,16 @@ func (m *manager) appendAgentMemory(ctx context.Context, req domain.BuildContext
 	}
 }
 
+// appendUserProfile 将用户画像作为结构化消息附加到上下文中
 func (m *manager) appendUserProfile(ctx context.Context, req domain.BuildContextRequest, result *domain.BuildContextResult) {
 	if m.userProfile == nil {
 		return
 	}
-	profile, err := m.userProfile.Load(ctx, req.UserID)
+	profile, err := m.userProfile.LoadActive(ctx, req.UserID)
 	if err != nil || profile == nil {
 		return
 	}
-	if message, ok := structuredContextMessage("user_profile", profile); ok {
+	if message, ok := structuredContextMessage("user_profile", profile.ProfileJSON); ok {
 		result.Messages = append(result.Messages, message)
 	}
 }

@@ -46,6 +46,29 @@
 - 不要把 Eino 类型泄漏到现有业务服务中。
 - 现有业务 RPC 仍然是 product、inventory、order、checkout、cart、coupon、user、audit 行为的事实来源。
 
+## 代码规则
+创建任何新接口前，必须回答：
+1.为什么具体 struct 无法满足需求？
+2.当前是否存在多个实现？
+3.该接口隔离了什么变化？
+4.删除该接口是否会降低可维护性？
+如果无法回答以上问题，则不要创建接口。
+新增接口时必须添加注释说明用途：
+推荐：
+```
+// PaymentGateway abstracts payment providers.
+// Implementations include Alipay and WechatPay.
+type PaymentGateway interface {
+    Pay(ctx context.Context, req PayRequest) error
+}
+```
+不推荐：
+```
+// UserService interface
+type UserService interface {
+}
+```
+
 ## 安全规则
 
 - 登录态中的用户 ID 是唯一可信来源。
@@ -57,33 +80,6 @@
 - 同一个 confirmation ID 不得重复执行。
 - 工具调用失败时，不得总结为成功。
 - 所有写操作都必须产出审计记录。
-
-## 确认策略
-
-无需确认：
-
-- 闲聊。
-- 查询。
-- 商品推荐。
-- 添加商品到购物车。
-- 减少购物车商品数量。
-- 领取优惠券。
-
-必须确认：
-
-- 删除购物车商品。
-- 创建订单。
-- 取消订单。
-- 下单时使用优惠券。
-- 后续支付、退款、地址修改或类似敏感操作。
-
-确认响应必须包含：
-
-- `confirmation_id`
-- action/tool 名称
-- 用户可读的操作摘要
-- 过期时间
-- 待执行参数摘要
 
 ## Eino Tool 规则
 
@@ -101,28 +97,6 @@
 - 兜底 Planner 必须使用与 Eino tool calling 相同的 Tool Registry 和 Execution Guard。
 - 模型不可用时必须降级为明确的稍后重试提示。不要编造业务结果。
 - 发送给模型的上下文必须有边界。优先使用最近消息加摘要，而不是无限历史。
-
-## WebSocket 协议规则
-
-接口：
-
-```text
-GET /douyin/ai/chat/ws?conversation_id=optional
-```
-
-客户端输入类型：
-
-- `user_message`
-- `confirm_action`
-
-服务端输出类型：
-
-- `assistant_message`
-- `tool_result`
-- `confirmation_required`
-- `error`
-
-WebSocket 网关必须从现有鉴权中间件或请求上下文获取用户身份，不得从 WebSocket payload 中接受用户身份。
 
 ## 数据与审计规则
 

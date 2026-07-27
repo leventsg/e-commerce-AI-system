@@ -82,8 +82,10 @@ type UserMemory struct {
 }
 
 type UserProfile struct {
-	DisplayName string `json:"display_name,omitempty"`
-	Locale      string `json:"locale,omitempty"`
+	ProfileJSON json.RawMessage `json:"profile_json"`
+	Version     uint64          `json:"version,omitempty"`
+	LastEventID string          `json:"last_event_id,omitempty"`
+	UpdatedAt   time.Time       `json:"updated_at,omitempty"`
 }
 
 const (

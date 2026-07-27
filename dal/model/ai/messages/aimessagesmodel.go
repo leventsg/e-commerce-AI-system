@@ -26,6 +26,7 @@ type (
 		FindRecentUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
 		FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
 		FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error)
+		FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error)
 		InsertBatch(ctx context.Context, messages []*AiMessages) error
 	}
 
@@ -191,4 +192,23 @@ func (m *customAiMessagesModel) FindToolMessageByID(ctx context.Context, userID 
 		return nil, err
 	}
 	return &row, nil
+}
+
+func (m *customAiMessagesModel) FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(messageIDs))
+	args := make([]any, 0, len(messageIDs)+2)
+	args = append(args, userID, conversationID)
+	for i, id := range messageIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `id` in (" + strings.Join(placeholders, ",") + ") order by `created_at` asc, `id` asc"
+	var rows []*AiMessages
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

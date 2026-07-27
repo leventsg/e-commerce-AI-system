@@ -1152,7 +1152,7 @@ Expected: Planner 和 Runner 均消费轻量 Context Manager 输出；Context �
 - 显式记忆可以保存、更新、删除和过期。
 - 推断记忆只有 `confidence >= 0.85`、存在来源消息、非敏感且有 TTL 时才写入。
 
-- [ ] **Step 2: 新增或保留摘要表、扩展记忆表并新增画像表**
+- [x] **Step 2: 新增或保留摘要表、扩展记忆表并新增画像表**
 
 按设计文档保留 `ai_conversation_summaries`，扩展 `ai_user_memories` 的 memory key、source、source message、status、expires 和 last confirmed 字段，并新增 `ai_user_profiles` 保存聊天来源 UserProfile JSON。生成 go-zero model；生成文件不手改。
 
@@ -1170,7 +1170,7 @@ goctl model mysql ddl -src dal/model/ai/user_profiles/ai_user_profiles.sql -dir 
 
 模型只能产生候选，MemoryPolicy 负责脱敏、置信度、来源、TTL、冲突和 upsert。禁止保存认证信息、支付凭据、完整地址、瞬时库存和单次订单状态。
 
-- [ ] **Step 5: 接入聊天来源 UserProfile JSON**
+- [x] **Step 5: 接入聊天来源 UserProfile JSON**
 
 UserProfile 不再来自 users RPC。每轮聊天消息持久化成功后投递 Kafka 画像更新事件，异步 consumer 调用 LLM Profile Extractor 判断是否需要更新画像。画像以 JSON 保存，便于后续注入给 LLM。
 
@@ -1193,7 +1193,7 @@ go test ./services/aiagent/internal/profileextractor -count=1
 
 Expected: 摘要窗口、消息去重、记忆生命周期、聊天来源画像 JSON、Kafka 异步触发、用户隔离、失败降级和提示注入防护全部通过。
 
-**实现状态（2026-07-24）：** Task 19 已接入滚动摘要与长期记忆。新增 `ai_conversation_summaries` 表和 model，扩展 `ai_user_memories` 的 key/source/status/TTL 字段；SummaryManager 按 30 -> 10 + 20 推进摘要水位，摘要失败保留旧摘要和未压缩原文；MemoryPolicy 支持显式记忆保存/更新/删除/过期，并约束推断记忆必须高置信、有来源、非敏感且有 TTL；Context Manager 已使用摘要和 active memories，Chat 消息持久化后触发摘要刷新且失败不阻塞聊天。聊天来源 UserProfile JSON 与 Kafka 异步画像更新仍待实现。
+**实现状态（2026-07-25）：** Task 19 已接入滚动摘要、长期记忆和聊天来源 UserProfile JSON。新增 `ai_conversation_summaries` 与 `ai_user_profiles` 表和 model，扩展 `ai_user_memories` 的 key/source/status/TTL 字段；SummaryManager 按 30 -> 10 + 20 推进摘要水位，摘要失败保留旧摘要和未压缩原文；MemoryPolicy 支持显式记忆保存/更新/删除/过期，并约束推断记忆必须高置信、有来源、非敏感且有 TTL；Context Manager 已使用摘要、active memories 和 DB-backed UserProfile JSON。Chat 消息持久化后触发摘要刷新，并投递 Kafka `AiUserProfileUpdates` 事件；异步 Profile Extractor 通过无工具权限 LLM 生成候选 patch，经后端策略校验证据、置信度、敏感信息、删除请求和用户隔离后保存画像，失败不阻塞聊天。
 
 ### Task 20: Agent Run、TaskState 与 Checkpoint
 
