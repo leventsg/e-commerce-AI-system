@@ -48,11 +48,13 @@ require (
 	github.com/meguminnnnnnnnn/go-openai v0.1.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
+	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/smartwalle/ncrypto v1.0.4 // indirect
 	github.com/smartwalle/ngx v1.0.9 // indirect
 	github.com/smartwalle/nsign v1.0.9 // indirect
+	github.com/smarty/assertions v1.16.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	golang.org/x/arch v0.15.0 // indirect
@@ -68,8 +70,6 @@ require (
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260724103301-c9a5dc923462
-	github.com/cloudwego/eino-ext/components/retriever/redis v0.0.0-20260724103301-c9a5dc923462
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect

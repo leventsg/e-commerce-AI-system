@@ -158,9 +158,6 @@ func (l *ChatLogic) publishProfileUpdate(prepared *conversation.PreparedConversa
 			messageIDs = append(messageIDs, message.MsgId)
 		}
 	}
-	if len(messageIDs) == 0 {
-		return
-	}
 	event := profileextractor.UpdateEvent{
 		EventID:        "profile_evt_" + uuid.NewString(),
 		UserID:         userID,
