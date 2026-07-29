@@ -164,16 +164,22 @@ CREATE TABLE `ai_conversations` (
 
 ```sql
 CREATE TABLE `ai_messages` (
-  `id` varchar(64) NOT NULL COMMENT '消息ID',
+  `seq` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '消息自增序号',
+  `msg_id` varchar(64) NOT NULL COMMENT '消息ID',
   `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
   `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
   `role` varchar(16) NOT NULL COMMENT 'user/assistant/tool',
   `content` text NOT NULL COMMENT '消息内容',
   `metadata` json DEFAULT NULL COMMENT '扩展信息',
+  `client_message_id` varchar(128) DEFAULT NULL COMMENT '前端生成的用户消息幂等ID',
+  `dedupe_client_message_id` varchar(128) GENERATED ALWAYS AS (case when `role` = 'user' then `client_message_id` else NULL end) STORED COMMENT '仅用户消息参与幂等唯一约束',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_conversation_created` (`conversation_id`, `created_at`),
-  KEY `idx_user_created` (`user_id`, `created_at`)
+  PRIMARY KEY (`seq`),
+  UNIQUE KEY `uk_msg_id` (`msg_id`),
+  UNIQUE KEY `uk_user_client_message` (`user_id`, `dedupe_client_message_id`),
+  KEY `idx_conversation_seq` (`conversation_id`, `seq`),
+  KEY `idx_user_seq` (`user_id`, `seq`),
+  KEY `idx_user_conversation_client_role_seq` (`user_id`, `conversation_id`, `client_message_id`, `role`, `seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
@@ -268,6 +274,7 @@ message ChatRequest {
   string message_id = 3;
   string content = 4;
   string source = 5;
+  string client_message_id = 6;
 }
 
 message AgentEvent {
@@ -916,10 +923,12 @@ Expected: API 包全部可编译。
 发送：
 
 ```json
-{"type":"user_message","content":"你好","metadata":{"source":"web"}}
+{"type":"user_message","client_message_id":"client_msg_0190f1f0e8a57000","content":"你好","metadata":{"source":"web"}}
 ```
 
 期望收到 `assistant_message`，`done=true`。
+
+同一用户重复提交相同 `client_message_id` 时，不再执行模型、工具或写操作，只重放同一会话、同一 `client_message_id` 下已保存的 assistant 消息。
 
 - [ ] **Step 3: 测试高风险确认**
 

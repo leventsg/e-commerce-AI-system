@@ -103,11 +103,15 @@ func (l *ChatLogic) handleMessage(ctx context.Context, userID uint32, conversati
 		if strings.TrimSpace(input.Content) == "" {
 			return []types.ServerEvent{errorEvent(conversationID, "content 为必填字段")}, ""
 		}
+		clientMessageID := strings.TrimSpace(input.ClientMessageID)
+		if clientMessageID == "" {
+			return []types.ServerEvent{errorEvent(conversationID, "client_message_id 为必填字段")}, ""
+		}
 		source := strings.TrimSpace(input.Metadata.Source)
 		if source == "" {
 			source = "web"
 		}
-		resp, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{UserId: userID, ConversationId: conversationID, MessageId: "", Content: input.Content, Source: source})
+		resp, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{UserId: userID, ConversationId: conversationID, MessageId: "", Content: input.Content, Source: source, ClientMessageId: clientMessageID})
 		if err != nil || resp == nil {
 			return []types.ServerEvent{errorEvent(conversationID, "AI 服务暂时不可用，请稍后重试")}, ""
 		}

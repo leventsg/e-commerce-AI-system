@@ -135,6 +135,7 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 			Previous:       previous,
 			Messages:       toCompress,
 		})
+
 		if err != nil {
 			return result, err
 		}
@@ -143,7 +144,7 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 			return result, err
 		}
 		watermark := toCompress[len(toCompress)-1]
-		next.CoveredUntilMessageID = watermark.Id
+		next.CoveredUntilMessageID = watermark.MsgId
 		next.CoveredUntilCreatedAt = watermark.CreatedAt
 		next.TokenCount = summaryTokenCount(summaryResult, next)
 		if err := m.summaries.Save(ctx, req.UserID, req.ConversationID, next); err != nil {

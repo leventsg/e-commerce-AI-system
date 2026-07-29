@@ -38,6 +38,7 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 ```json
 {
   "type": "user_message",
+  "client_message_id": "client_msg_0190f1f0e8a57000",
   "content": "帮我查一下订单 202406300001",
   "metadata": {
     "source": "web"
@@ -280,13 +281,18 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 ### 4.2 ai_messages
 | 字段 | 说明 |
 |---|---|
-| id | 消息 ID |
+| seq | 数据库内部自增序号 |
+| msg_id | 消息唯一 ID，对外作为 `message_id` 返回，服务端 UUIDv7 生成 |
 | conversation_id | 会话 ID |
 | user_id | 用户 ID |
 | role | user / assistant / tool |
 | content | 消息内容 |
 | metadata | 扩展信息 |
+| client_message_id | 前端生成的用户消息幂等 ID，同一轮 user/assistant/tool 消息保存相同值 |
+| dedupe_client_message_id | 仅 user 消息参与幂等唯一约束的生成列 |
 | created_at | 创建时间 |
+
+`user_message` 必须携带 `client_message_id`。同一用户重复提交相同 `client_message_id` 时，AI Agent 不再执行模型、工具或写操作，只重放同一会话、同一 `client_message_id` 下已保存的 assistant 消息。
 
 ### 4.3 ai_tool_calls
 | 字段 | 说明 |

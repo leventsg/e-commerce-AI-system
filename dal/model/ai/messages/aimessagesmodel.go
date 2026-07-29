@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,6 +28,8 @@ type (
 		FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
 		FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error)
 		FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error)
+		FindUserMessageByClientMessageID(ctx context.Context, userID uint64, clientMessageID string) (*AiMessages, error)
+		FindAssistantMessagesByClientMessageID(ctx context.Context, userID uint64, conversationID, clientMessageID string) ([]*AiMessages, error)
 		InsertBatch(ctx context.Context, messages []*AiMessages) error
 	}
 
@@ -42,32 +45,63 @@ func NewAiMessagesModel(conn sqlx.SqlConn, c cache.CacheConf, opts ...cache.Opti
 	}
 }
 
+// Insert inserts a single message without writing generated columns.
+func (m *customAiMessagesModel) Insert(ctx context.Context, data *AiMessages) (sql.Result, error) {
+	query := "insert into " + m.table + " (`msg_id`, `conversation_id`, `user_id`, `role`, `content`, `metadata`, `client_message_id`) values (?, ?, ?, ?, ?, ?, ?)"
+	return m.CachedConn.ExecNoCacheCtx(ctx, query,
+		data.MsgId,
+		data.ConversationId,
+		data.UserId,
+		data.Role,
+		data.Content,
+		data.Metadata,
+		data.ClientMessageId,
+	)
+}
+
+// Update updates a message without writing generated columns.
+func (m *customAiMessagesModel) Update(ctx context.Context, data *AiMessages) error {
+	query := "update " + m.table + " set `msg_id` = ?, `conversation_id` = ?, `user_id` = ?, `role` = ?, `content` = ?, `metadata` = ?, `client_message_id` = ? where `seq` = ?"
+	_, err := m.CachedConn.ExecNoCacheCtx(ctx, query,
+		data.MsgId,
+		data.ConversationId,
+		data.UserId,
+		data.Role,
+		data.Content,
+		data.Metadata,
+		data.ClientMessageId,
+		data.Seq,
+	)
+	return err
+}
+
 // InsertBatch 批量插入消息记录
 func (m *customAiMessagesModel) InsertBatch(ctx context.Context, messages []*AiMessages) error {
 	if len(messages) == 0 {
 		return nil
 	}
 
-	const rowPlaceholder = "(?, ?, ?, ?, ?, ?)"
+	const rowPlaceholder = "(?, ?, ?, ?, ?, ?, ?)"
 	placeholders := make([]string, len(messages))
-	args := make([]any, 0, len(messages)*6)
+	args := make([]any, 0, len(messages)*7)
 	for i, message := range messages {
 		if message == nil {
 			return ErrNilBatchMessage
 		}
 		placeholders[i] = rowPlaceholder
 		args = append(args,
-			message.Id,
+			message.MsgId,
 			message.ConversationId,
 			message.UserId,
 			message.Role,
 			message.Content,
 			message.Metadata,
+			message.ClientMessageId,
 		)
 	}
 
 	query := fmt.Sprintf(
-		"insert into %s (`id`, `conversation_id`, `user_id`, `role`, `content`, `metadata`) values %s",
+		"insert into %s (`msg_id`, `conversation_id`, `user_id`, `role`, `content`, `metadata`, `client_message_id`) values %s",
 		m.table,
 		strings.Join(placeholders, ", "),
 	)
@@ -81,7 +115,7 @@ func (m *customAiMessagesModel) FindRecentByConversationID(ctx context.Context, 
 	}
 
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `conversation_id` = ? order by `created_at` desc limit ?"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `conversation_id` = ? order by `seq` desc limit ?"
 	err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, conversationID, limit)
 	if err != nil {
 		return nil, err
@@ -101,7 +135,7 @@ func (m *customAiMessagesModel) FindRecentContextMessages(ctx context.Context, u
 	}
 
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `created_at` desc, `id` desc limit ?"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `seq` desc limit ?"
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "user", "assistant", limit); err != nil {
 		return nil, err
 	}
@@ -116,9 +150,12 @@ func (m *customAiMessagesModel) CountUnsummarizedContextMessages(ctx context.Con
 	var count int64
 	query := "select count(1) from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
 	args := []any{userID, conversationID, "user", "assistant"}
-	if afterCreatedAt != "" || afterMessageID != "" {
-		query += " and (`created_at` > ? or (`created_at` = ? and `id` > ?))"
-		args = append(args, afterCreatedAt, afterCreatedAt, afterMessageID)
+	if afterMessageID != "" {
+		query += " and `seq` > (select `seq` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+		args = append(args, afterMessageID, userID, conversationID)
+	} else if afterCreatedAt != "" {
+		query += " and `created_at` > ?"
+		args = append(args, afterCreatedAt)
 	}
 	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &count, query, args...); err != nil {
 		return 0, err
@@ -135,12 +172,15 @@ func (m *customAiMessagesModel) FindUnsummarizedContextMessages(ctx context.Cont
 	var rows []*AiMessages
 	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
 	args := []any{userID, conversationID, "user", "assistant"}
-	if afterCreatedAt != "" || afterMessageID != "" {
-		query += " and (`created_at` > ? or (`created_at` = ? and `id` > ?))"
-		args = append(args, afterCreatedAt, afterCreatedAt, afterMessageID)
+	if afterMessageID != "" {
+		query += " and `seq` > (select `seq` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+		args = append(args, afterMessageID, userID, conversationID)
+	} else if afterCreatedAt != "" {
+		query += " and `created_at` > ?"
+		args = append(args, afterCreatedAt)
 	}
 	// 按创建时间升序排序，确保按时间顺序返回
-	query += " order by `created_at` asc, `id` asc limit ?"
+	query += " order by `seq` asc limit ?"
 	args = append(args, limit)
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
 		return nil, err
@@ -157,11 +197,14 @@ func (m *customAiMessagesModel) FindRecentUnsummarizedContextMessages(ctx contex
 	var rows []*AiMessages
 	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
 	args := []any{userID, conversationID, "user", "assistant"}
-	if afterCreatedAt != "" || afterMessageID != "" {
-		query += " and (`created_at` > ? or (`created_at` = ? and `id` > ?))"
-		args = append(args, afterCreatedAt, afterCreatedAt, afterMessageID)
+	if afterMessageID != "" {
+		query += " and `seq` > (select `seq` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+		args = append(args, afterMessageID, userID, conversationID)
+	} else if afterCreatedAt != "" {
+		query += " and `created_at` > ?"
+		args = append(args, afterCreatedAt)
 	}
-	query += " order by `created_at` desc, `id` desc limit ?"
+	query += " order by `seq` desc limit ?"
 	args = append(args, limit)
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
 		return nil, err
@@ -179,7 +222,7 @@ func (m *customAiMessagesModel) FindRecentToolMessages(ctx context.Context, user
 	}
 
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` = ? order by `created_at` desc limit ?"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` = ? order by `seq` desc limit ?"
 	err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "tool", limit)
 	return rows, err
 }
@@ -187,7 +230,7 @@ func (m *customAiMessagesModel) FindRecentToolMessages(ctx context.Context, user
 // FindToolMessageByID 根据ID查询工具消息
 func (m *customAiMessagesModel) FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error) {
 	var row AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `id` = ? and `user_id` = ? and `conversation_id` = ? and `role` = ? limit 1"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? and `role` = ? limit 1"
 	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &row, query, messageID, userID, conversationID, "tool"); err != nil {
 		return nil, err
 	}
@@ -205,9 +248,27 @@ func (m *customAiMessagesModel) FindMessagesByIDs(ctx context.Context, userID ui
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `id` in (" + strings.Join(placeholders, ",") + ") order by `created_at` asc, `id` asc"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `msg_id` in (" + strings.Join(placeholders, ",") + ") order by `seq` asc"
 	var rows []*AiMessages
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (m *customAiMessagesModel) FindUserMessageByClientMessageID(ctx context.Context, userID uint64, clientMessageID string) (*AiMessages, error) {
+	var row AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `client_message_id` = ? and `role` = ? limit 1"
+	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &row, query, userID, clientMessageID, "user"); err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (m *customAiMessagesModel) FindAssistantMessagesByClientMessageID(ctx context.Context, userID uint64, conversationID, clientMessageID string) ([]*AiMessages, error) {
+	var rows []*AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `client_message_id` = ? and `role` = ? order by `seq` asc"
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, clientMessageID, "assistant"); err != nil {
 		return nil, err
 	}
 	return rows, nil

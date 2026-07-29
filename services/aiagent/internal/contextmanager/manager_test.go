@@ -328,7 +328,7 @@ func (f *fakeToolContextStore) FindRecentRefs(_ context.Context, userID uint64, 
 
 func contextMessage(id, role, content string, createdAt time.Time) *aimessages.AiMessages {
 	return &aimessages.AiMessages{
-		Id: id, UserId: 42, ConversationId: "conv-1", Role: role, Content: content, CreatedAt: createdAt,
+		MsgId: id, UserId: 42, ConversationId: "conv-1", Role: role, Content: content, CreatedAt: createdAt,
 	}
 }
 

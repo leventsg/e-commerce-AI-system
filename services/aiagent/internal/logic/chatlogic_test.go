@@ -32,7 +32,7 @@ func TestChatRunsAssistantAndPersistsResponse(t *testing.T) {
 		MessagesModel: messages,
 	}
 
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "你好", Source: "web"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "你好", Source: "web"})
 	if err != nil || resp.StatusCode != 0 || len(resp.Events) != 1 {
 		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
 	}
@@ -41,6 +41,66 @@ func TestChatRunsAssistantAndPersistsResponse(t *testing.T) {
 	}
 	if messages.batchCalls != 1 || messages.insertCalls != 0 || len(messages.inserted) != 1 || messages.inserted[0].Role != conversation.RoleAssistant {
 		t.Fatalf("batchCalls=%d insertCalls=%d messages=%+v", messages.batchCalls, messages.insertCalls, messages.inserted)
+	}
+}
+
+func TestChatPersistsClientMessageIDOnAssistantAndToolMessages(t *testing.T) {
+	write := &fakeChatToolExecutor{event: domain.AgentEvent{
+		Type: domain.EventToolResult, Tool: domain.ToolCartAdd, Status: "success", Content: "已加入购物车", Done: true,
+	}}
+	messages := &fakeChatMessagesModel{}
+	ctx := &svc.ServiceContext{
+		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{ConversationID: "conv-1", UserMessageID: "user-1", ClientMessageID: "client-1"}},
+		ContextManager:      successfulContextManager(),
+		IntentPlanner:       fakeIntentPlanner{result: planner.PlanResult{Intent: planner.IntentAction, ToolName: domain.ToolCartAdd}},
+		WriteChatTools:      write,
+		MessagesModel:       messages,
+	}
+
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "加入购物车"})
+	if err != nil || resp.StatusCode != 0 || len(messages.inserted) != 2 {
+		t.Fatalf("Chat() resp=%+v err=%v messages=%+v", resp, err, messages.inserted)
+	}
+	for _, message := range messages.inserted {
+		if !message.ClientMessageId.Valid || message.ClientMessageId.String != "client-1" {
+			t.Fatalf("message missing client_message_id: %+v", message)
+		}
+	}
+}
+
+func TestChatReplaysAssistantMessagesForDuplicateClientMessageID(t *testing.T) {
+	planner := &capturingIntentPlanner{}
+	runner := &capturingAgentRunner{}
+	messages := &fakeChatMessagesModel{
+		replay: []*aimessages.AiMessages{
+			{Seq: 11, MsgId: "assistant-1", ConversationId: "conv-1", UserId: 42, Role: conversation.RoleAssistant, Content: "旧回复 1"},
+			{Seq: 12, MsgId: "assistant-2", ConversationId: "conv-1", UserId: 42, Role: conversation.RoleAssistant, Content: "旧回复 2"},
+		},
+	}
+	ctx := &svc.ServiceContext{
+		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{
+			ConversationID: "conv-1", UserMessageID: "user-1", UserMessageSeq: 10, ClientMessageID: "client-1", Duplicate: true,
+		}},
+		ContextManager: successfulContextManager(),
+		IntentPlanner:  planner,
+		AgentRunner:    runner,
+		MessagesModel:  messages,
+	}
+
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{
+		UserId: 42, ConversationId: "conv-1", ClientMessageId: "client-1", Content: "你好",
+	})
+	if err != nil || resp.StatusCode != 0 || len(resp.Events) != 2 {
+		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
+	}
+	if planner.calls != 0 || runner.req.ConversationID != "" || messages.batchCalls != 0 {
+		t.Fatalf("duplicate should not execute planner/runner/persist: planner=%d runner=%+v batch=%d", planner.calls, runner.req, messages.batchCalls)
+	}
+	if resp.Events[0].MessageId != "assistant-1" || resp.Events[0].Content != "旧回复 1" || resp.Events[1].MessageId != "assistant-2" {
+		t.Fatalf("events=%+v", resp.Events)
+	}
+	if messages.replayUserID != 42 || messages.replayConversationID != "conv-1" || messages.replayClientMessageID != "client-1" {
+		t.Fatalf("replay query args user=%d conversation=%q client=%q", messages.replayUserID, messages.replayConversationID, messages.replayClientMessageID)
 	}
 }
 
@@ -58,7 +118,7 @@ func TestChatPublishesProfileUpdateAfterMessagesPersist(t *testing.T) {
 		ProfileUpdatePublisher: publisher,
 	}
 
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "以后推荐轻薄手机", Source: "web"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "以后推荐轻薄手机", Source: "web"})
 	if err != nil || resp.StatusCode != 0 || len(resp.Events) != 1 {
 		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
 	}
@@ -92,7 +152,7 @@ func TestChatDispatchesHighRiskToolToConfirmation(t *testing.T) {
 		MessagesModel:     messages,
 	}
 
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "取消订单 order-1"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "取消订单 order-1"})
 	if err != nil || len(resp.Events) != 1 || resp.Events[0].Type != domain.EventConfirmationRequired {
 		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
 	}
@@ -116,7 +176,7 @@ func TestChatReturnsAssistantPromptWithoutExecutingTool(t *testing.T) {
 		QueryChatTools:      query,
 		MessagesModel:       &fakeChatMessagesModel{},
 	}
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "查询订单"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "查询订单"})
 	if err != nil || len(resp.Events) != 1 || resp.Events[0].Content != "请提供订单号" {
 		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
 	}
@@ -137,7 +197,7 @@ func TestChatRegistryForcesHighRiskConfirmation(t *testing.T) {
 		WriteChatTools:      &fakeChatToolExecutor{},
 		MessagesModel:       &fakeChatMessagesModel{},
 	}
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "取消订单 order-1"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "取消订单 order-1"})
 	if err != nil || len(resp.Events) == 0 || resp.Events[0].Type != domain.EventConfirmationRequired || highRisk.calls != 1 {
 		t.Fatalf("Chat() resp=%+v err=%v confirmation calls=%d", resp, err, highRisk.calls)
 	}
@@ -152,7 +212,7 @@ func TestChatPreservesSuccessfulWriteWhenMessagePersistenceFails(t *testing.T) {
 		WriteChatTools:      write,
 		MessagesModel:       &fakeChatMessagesModel{err: errors.New("insert failed")},
 	}
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "加入购物车"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "加入购物车"})
 	if err != nil || len(resp.Events) != 3 || resp.Events[0].Type != domain.EventToolResult || resp.Events[0].Status != "success" || resp.Events[len(resp.Events)-1].Type != domain.EventError {
 		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
 	}
@@ -179,12 +239,12 @@ func TestChatPersistsSuccessfulToolResultEnvelope(t *testing.T) {
 		MessagesModel:       messages,
 	}
 
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "加入购物车"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "加入购物车"})
 	if err != nil || resp.StatusCode != 0 || len(messages.inserted) != 2 {
 		t.Fatalf("Chat() resp=%+v err=%v messages=%+v", resp, err, messages.inserted)
 	}
 	toolMessage := messages.inserted[0]
-	if toolMessage.Role != conversation.RoleTool || toolMessage.Id == "" {
+	if toolMessage.Role != conversation.RoleTool || toolMessage.MsgId == "" {
 		t.Fatalf("tool message = %+v", toolMessage)
 	}
 	var meta struct {
@@ -203,8 +263,8 @@ func TestChatPersistsSuccessfulToolResultEnvelope(t *testing.T) {
 	if err := json.Unmarshal([]byte(toolMessage.Metadata.String), &meta); err != nil {
 		t.Fatalf("metadata json: %v", err)
 	}
-	if meta.ToolCallID != toolMessage.Id || meta.ToolResult.ToolCallID != toolMessage.Id {
-		t.Fatalf("tool_call_id meta=%q envelope=%q message=%q", meta.ToolCallID, meta.ToolResult.ToolCallID, toolMessage.Id)
+	if meta.ToolCallID != toolMessage.MsgId || meta.ToolResult.ToolCallID != toolMessage.MsgId {
+		t.Fatalf("tool_call_id meta=%q envelope=%q message=%q", meta.ToolCallID, meta.ToolResult.ToolCallID, toolMessage.MsgId)
 	}
 	var rawMeta map[string]any
 	if err := json.Unmarshal([]byte(toolMessage.Metadata.String), &rawMeta); err != nil {
@@ -237,7 +297,6 @@ func TestChatUsesContextManagerForPlannerAndRunnerWithoutHistoryFallback(t *test
 	ctx := &svc.ServiceContext{
 		ConversationManager: fakeConversationManager{prepared: &conversation.PreparedConversation{
 			ConversationID: "conv-1", UserMessageID: "user-1",
-			History: []*aimessages.AiMessages{{Id: "legacy", Role: conversation.RoleAssistant, Content: "legacy-history-must-not-be-used"}},
 		}},
 		ContextManager: contextBuilder,
 		IntentPlanner:  intentPlanner,
@@ -246,7 +305,7 @@ func TestChatUsesContextManagerForPlannerAndRunnerWithoutHistoryFallback(t *test
 	}
 
 	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{
-		UserId: 42, ConversationId: "conv-1", MessageId: "user-1", Content: "你好",
+		UserId: 42, ConversationId: "conv-1", MessageId: "user-1", ClientMessageId: "client-1", Content: "你好",
 	})
 	if err != nil || resp.StatusCode != 0 {
 		t.Fatalf("Chat() resp=%+v err=%v", resp, err)
@@ -280,7 +339,7 @@ func TestChatReturnsErrorWhenContextBuildFailsWithoutCallingPlanner(t *testing.T
 		MessagesModel:       &fakeChatMessagesModel{},
 	}
 
-	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, Content: "你好"})
+	resp, err := NewChatLogic(context.Background(), ctx).Chat(&aiagent.ChatRequest{UserId: 42, ClientMessageId: "client-1", Content: "你好"})
 	if err != nil || resp.StatusCode == 0 || intentPlanner.calls != 0 {
 		t.Fatalf("Chat() resp=%+v err=%v planner_calls=%d", resp, err, intentPlanner.calls)
 	}
@@ -307,7 +366,7 @@ func TestChatDoesNotPersistFullEnvelopeForConfirmationOrFailedTool(t *testing.T)
 		{name: "failed", event: domain.AgentEvent{Type: domain.EventToolResult, Tool: domain.ToolCartList, Status: "failed", DataJSON: `{"error":"boom"}`, Done: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			message, err := agentEventToMessage(42, tc.event)
+			message, err := agentEventToMessage(42, "client-1", tc.event)
 			if err != nil {
 				t.Fatalf("agentEventToMessage() error = %v", err)
 			}
@@ -321,9 +380,11 @@ func TestChatDoesNotPersistFullEnvelopeForConfirmationOrFailedTool(t *testing.T)
 type fakeConversationManager struct {
 	prepared *conversation.PreparedConversation
 	err      error
+	req      conversation.PrepareRequest
 }
 
-func (f fakeConversationManager) Prepare(context.Context, conversation.PrepareRequest) (*conversation.PreparedConversation, error) {
+func (f fakeConversationManager) Prepare(_ context.Context, req conversation.PrepareRequest) (*conversation.PreparedConversation, error) {
+	f.req = req
 	return f.prepared, f.err
 }
 
@@ -446,10 +507,14 @@ func (f *fakeProfileUpdatePublisher) PublishProfileUpdate(_ context.Context, eve
 }
 
 type fakeChatMessagesModel struct {
-	inserted    []*aimessages.AiMessages
-	err         error
-	batchCalls  int
-	insertCalls int
+	inserted              []*aimessages.AiMessages
+	replay                []*aimessages.AiMessages
+	err                   error
+	batchCalls            int
+	insertCalls           int
+	replayUserID          uint64
+	replayConversationID  string
+	replayClientMessageID string
 }
 
 func (f *fakeChatMessagesModel) Insert(_ context.Context, data *aimessages.AiMessages) (sql.Result, error) {
@@ -464,11 +529,17 @@ func (f *fakeChatMessagesModel) InsertBatch(_ context.Context, data []*aimessage
 	return f.err
 }
 
-func (f *fakeChatMessagesModel) FindOne(context.Context, string) (*aimessages.AiMessages, error) {
+func (f *fakeChatMessagesModel) FindOne(context.Context, uint64) (*aimessages.AiMessages, error) {
+	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindOneByMsgId(context.Context, string) (*aimessages.AiMessages, error) {
+	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindOneByUserIdDedupeClientMessageId(context.Context, uint64, sql.NullString) (*aimessages.AiMessages, error) {
 	return nil, nil
 }
 func (f *fakeChatMessagesModel) Update(context.Context, *aimessages.AiMessages) error { return nil }
-func (f *fakeChatMessagesModel) Delete(context.Context, string) error                 { return nil }
+func (f *fakeChatMessagesModel) Delete(context.Context, uint64) error                 { return nil }
 func (f *fakeChatMessagesModel) FindRecentByConversationID(context.Context, string, int) ([]*aimessages.AiMessages, error) {
 	return nil, nil
 }
@@ -492,4 +563,13 @@ func (f *fakeChatMessagesModel) FindToolMessageByID(context.Context, uint64, str
 }
 func (f *fakeChatMessagesModel) FindMessagesByIDs(context.Context, uint64, string, []string) ([]*aimessages.AiMessages, error) {
 	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindUserMessageByClientMessageID(context.Context, uint64, string) (*aimessages.AiMessages, error) {
+	return nil, nil
+}
+func (f *fakeChatMessagesModel) FindAssistantMessagesByClientMessageID(_ context.Context, userID uint64, conversationID, clientMessageID string) ([]*aimessages.AiMessages, error) {
+	f.replayUserID = userID
+	f.replayConversationID = conversationID
+	f.replayClientMessageID = clientMessageID
+	return f.replay, f.err
 }

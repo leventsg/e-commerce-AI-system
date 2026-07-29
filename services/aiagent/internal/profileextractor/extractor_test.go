@@ -119,7 +119,7 @@ func TestParseCandidateRejectsNonJSONObjectOutput(t *testing.T) {
 }
 
 func profileMessages() []*aimessages.AiMessages {
-	return []*aimessages.AiMessages{{Id: "msg-1", UserId: 42, ConversationId: "conv-1", Role: domain.ContextRoleUser, Content: "以后推荐轻薄手机"}}
+	return []*aimessages.AiMessages{{MsgId: "msg-1", UserId: 42, ConversationId: "conv-1", Role: domain.ContextRoleUser, Content: "以后推荐轻薄手机"}}
 }
 
 type fakeProfileMessageStore struct {

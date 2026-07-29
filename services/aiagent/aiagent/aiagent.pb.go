@@ -22,14 +22,15 @@ const (
 )
 
 type ChatRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	UserId         uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ConversationId string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
-	MessageId      string                 `protobuf:"bytes,3,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
-	Content        string                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
-	Source         string                 `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	UserId          uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ConversationId  string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	MessageId       string                 `protobuf:"bytes,3,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Content         string                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	Source          string                 `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	ClientMessageId string                 `protobuf:"bytes,6,opt,name=client_message_id,json=clientMessageId,proto3" json:"client_message_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ChatRequest) Reset() {
@@ -93,6 +94,13 @@ func (x *ChatRequest) GetContent() string {
 func (x *ChatRequest) GetSource() string {
 	if x != nil {
 		return x.Source
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetClientMessageId() string {
+	if x != nil {
+		return x.ClientMessageId
 	}
 	return ""
 }
@@ -421,14 +429,15 @@ var File_services_aiagent_aiagent_proto protoreflect.FileDescriptor
 
 const file_services_aiagent_aiagent_proto_rawDesc = "" +
 	"\n" +
-	"\x1eservices/aiagent/aiagent.proto\x12\aaiagent\"\xa0\x01\n" +
+	"\x1eservices/aiagent/aiagent.proto\x12\aaiagent\"\xcc\x01\n" +
 	"\vChatRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\x12'\n" +
 	"\x0fconversation_id\x18\x02 \x01(\tR\x0econversationId\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x03 \x01(\tR\tmessageId\x12\x18\n" +
 	"\acontent\x18\x04 \x01(\tR\acontent\x12\x16\n" +
-	"\x06source\x18\x05 \x01(\tR\x06source\"\xd9\x02\n" +
+	"\x06source\x18\x05 \x01(\tR\x06source\x12*\n" +
+	"\x11client_message_id\x18\x06 \x01(\tR\x0fclientMessageId\"\xd9\x02\n" +
 	"\n" +
 	"AgentEvent\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12'\n" +

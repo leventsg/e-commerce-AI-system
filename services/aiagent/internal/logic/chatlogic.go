@@ -49,14 +49,14 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 	if l.svcCtx == nil || l.svcCtx.ConversationManager == nil || l.svcCtx.ContextManager == nil || l.svcCtx.IntentPlanner == nil || l.svcCtx.MessagesModel == nil {
 		return chatErrorResponse(in.ConversationId, errors.New("AI 服务暂时不可用，请稍后重试")), nil
 	}
-	source := strings.TrimSpace(in.Source)
+	source := in.Source
 	if source == "" {
 		source = "web"
 	}
 	metadata, _ := json.Marshal(map[string]string{"source": source})
-	// 会话初始化
+	// 保存用户消息、幂等控制、新会话初始化
 	prepared, err := l.svcCtx.ConversationManager.Prepare(l.ctx, conversation.PrepareRequest{
-		UserID: uint64(in.UserId), ConversationID: in.ConversationId, MessageID: in.MessageId,
+		UserID: uint64(in.UserId), ConversationID: in.ConversationId, MessageID: in.MessageId, ClientMessageID: in.ClientMessageId,
 		Content: strings.TrimSpace(in.Content), Metadata: sql.NullString{String: string(metadata), Valid: true},
 	})
 	if err != nil || prepared == nil {
@@ -64,6 +64,9 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 			err = errors.New("会话初始化失败")
 		}
 		return chatErrorResponse(in.ConversationId, err), nil
+	}
+	if prepared.Duplicate {
+		return l.replayDuplicateResponse(prepared, uint64(in.UserId))
 	}
 	currentInput := strings.TrimSpace(in.Content)
 	intentContext, err := l.svcCtx.ContextManager.Build(l.ctx, domain.BuildContextRequest{
@@ -84,8 +87,10 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 	if err != nil {
 		return chatErrorResponse(prepared.ConversationID, err), nil
 	}
+	l.Logger.Infow("意图识别结果：", logx.Field("plan", plan))
 
 	var agentMessages []domain.ContextMessage
+	// 闲聊
 	if planUsesAgentRunner(plan) {
 		agentContext, buildErr := l.svcCtx.ContextManager.Build(l.ctx, domain.BuildContextRequest{
 			UserID:           uint64(in.UserId),
@@ -120,7 +125,7 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 		protoEvents = append(protoEvents, agentEventToProto(events[i]))
 	}
 	// 将事件转换为数据库消息记录格式
-	messages, err := agentEventsToMessages(uint64(in.UserId), events)
+	messages, err := agentEventsToMessages(uint64(in.UserId), prepared.ClientMessageID, events)
 	if err != nil {
 		protoEvents = append(protoEvents, persistenceErrorEvent(prepared.ConversationID, businessExecuted))
 		return &aiagent.ChatResponse{StatusCode: code.ServerError, StatusMsg: err.Error(), Events: protoEvents}, nil
@@ -132,6 +137,7 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest) (*aiagent.ChatResponse, error)
 	}
 	// 异步更新用户画像
 	l.publishProfileUpdate(prepared, messages, uint64(in.UserId))
+	l.Logger.Info("即将执行摘要压缩")
 	l.refreshConversationSummary(prepared.ConversationID, uint64(in.UserId))
 	return &aiagent.ChatResponse{StatusCode: code.Success, StatusMsg: code.SuccessMsg, Events: protoEvents}, nil
 }
@@ -148,12 +154,9 @@ func (l *ChatLogic) publishProfileUpdate(prepared *conversation.PreparedConversa
 	}
 	// 传其他消息
 	for _, message := range messages {
-		if message != nil && message.Id != "" {
-			messageIDs = append(messageIDs, message.Id)
+		if message != nil && message.MsgId != "" {
+			messageIDs = append(messageIDs, message.MsgId)
 		}
-	}
-	if len(messageIDs) == 0 {
-		return
 	}
 	event := profileextractor.UpdateEvent{
 		EventID:        "profile_evt_" + uuid.NewString(),
@@ -171,6 +174,28 @@ func (l *ChatLogic) publishProfileUpdate(prepared *conversation.PreparedConversa
 			logx.Field("user_id", userID),
 			logx.Field("err", err))
 	}
+}
+
+// replayDuplicateResponse 重放重复请求的响应
+func (l *ChatLogic) replayDuplicateResponse(prepared *conversation.PreparedConversation, userID uint64) (*aiagent.ChatResponse, error) {
+	rows, err := l.svcCtx.MessagesModel.FindAssistantMessagesByClientMessageID(l.ctx, userID, prepared.ConversationID, prepared.ClientMessageID)
+	if err != nil {
+		return chatErrorResponse(prepared.ConversationID, err), nil
+	}
+	events := make([]*aiagent.AgentEvent, 0, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		events = append(events, &aiagent.AgentEvent{
+			Type:           domain.EventAssistantMessage,
+			ConversationId: row.ConversationId,
+			MessageId:      row.MsgId,
+			Content:        row.Content,
+			Done:           true,
+		})
+	}
+	return &aiagent.ChatResponse{StatusCode: code.Success, StatusMsg: code.SuccessMsg, Events: events}, nil
 }
 
 // refreshConversationSummary 尝试刷新会话的滚动摘要
@@ -274,10 +299,10 @@ func planUsesAgentRunner(plan planner.PlanResult) bool {
 }
 
 // agentEventsToMessages 将事件转换为数据库消息记录格式
-func agentEventsToMessages(userID uint64, events []domain.AgentEvent) ([]*aimessages.AiMessages, error) {
+func agentEventsToMessages(userID uint64, clientMessageID string, events []domain.AgentEvent) ([]*aimessages.AiMessages, error) {
 	messages := make([]*aimessages.AiMessages, 0, len(events))
 	for _, event := range events {
-		message, err := agentEventToMessage(userID, event)
+		message, err := agentEventToMessage(userID, clientMessageID, event)
 		if err != nil {
 			return nil, err
 		}
@@ -287,7 +312,7 @@ func agentEventsToMessages(userID uint64, events []domain.AgentEvent) ([]*aimess
 }
 
 // agentEventToMessage 将事件转换为数据库消息记录格式
-func agentEventToMessage(userID uint64, event domain.AgentEvent) (*aimessages.AiMessages, error) {
+func agentEventToMessage(userID uint64, clientMessageID string, event domain.AgentEvent) (*aimessages.AiMessages, error) {
 	role := conversation.RoleAssistant
 	metadata := sql.NullString{}
 	if event.Type == domain.EventToolResult || event.Type == domain.EventConfirmationRequired {
@@ -298,7 +323,16 @@ func agentEventToMessage(userID uint64, event domain.AgentEvent) (*aimessages.Ai
 		}
 		metadata = sql.NullString{String: raw, Valid: true}
 	}
-	return &aimessages.AiMessages{Id: event.MessageID, ConversationId: event.ConversationID, UserId: userID, Role: role, Content: event.Content, Metadata: metadata, CreatedAt: time.Now()}, nil
+	return &aimessages.AiMessages{
+		MsgId:           event.MessageID,
+		ConversationId:  event.ConversationID,
+		UserId:          userID,
+		Role:            role,
+		Content:         event.Content,
+		Metadata:        metadata,
+		ClientMessageId: sql.NullString{String: clientMessageID, Valid: strings.TrimSpace(clientMessageID) != ""},
+		CreatedAt:       time.Now(),
+	}, nil
 }
 
 func (l *ChatLogic) validateRequest(in *aiagent.ChatRequest) error {
@@ -307,6 +341,9 @@ func (l *ChatLogic) validateRequest(in *aiagent.ChatRequest) error {
 	}
 	if strings.TrimSpace(in.Content) == "" {
 		return errors.New("消息内容不能为空")
+	}
+	if strings.TrimSpace(in.ClientMessageId) == "" {
+		return errors.New("client_message_id 不能为空")
 	}
 	return nil
 }
@@ -319,7 +356,13 @@ func chatErrorResponse(conversationID string, err error) *aiagent.ChatResponse {
 	return &aiagent.ChatResponse{StatusCode: code.ServerError, StatusMsg: message, Events: []*aiagent.AgentEvent{{Type: domain.EventError, ConversationId: conversationID, MessageId: newChatMessageID(), Content: message, Done: true}}}
 }
 
-func newChatMessageID() string { return "msg_" + uuid.NewString() }
+func newChatMessageID() string {
+	id, err := uuid.NewV7()
+	if err != nil {
+		id = uuid.New()
+	}
+	return "msg_" + id.String()
+}
 
 func clientIPFromContext(ctx context.Context) string {
 	if value, ok := ctx.Value(biz.ClientIPKey).(string); ok {

@@ -18,8 +18,9 @@ func TestPrepareCreatesConversationAndStoresUserMessage(t *testing.T) {
 	manager := NewManager(conversations, messages)
 
 	prepared, err := manager.Prepare(ctx, PrepareRequest{
-		UserID:  42,
-		Content: "你好",
+		UserID:          42,
+		ClientMessageID: "client-1",
+		Content:         "你好",
 	})
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
@@ -30,9 +31,6 @@ func TestPrepareCreatesConversationAndStoresUserMessage(t *testing.T) {
 	}
 	if prepared.UserMessageID == "" || prepared.UserMessageID[:4] != "msg_" {
 		t.Fatalf("UserMessageID = %q, want msg_ prefix", prepared.UserMessageID)
-	}
-	if len(prepared.History) != 1 {
-		t.Fatalf("len(History) = %d, want 1", len(prepared.History))
 	}
 	if conversations.inserted == nil {
 		t.Fatal("conversation was not inserted")
@@ -49,6 +47,12 @@ func TestPrepareCreatesConversationAndStoresUserMessage(t *testing.T) {
 	if messages.inserted == nil {
 		t.Fatal("user message was not inserted")
 	}
+	if messages.inserted.MsgId != prepared.UserMessageID {
+		t.Fatalf("inserted message msg_id = %q, want %q", messages.inserted.MsgId, prepared.UserMessageID)
+	}
+	if messages.inserted.ClientMessageId.String != "client-1" || !messages.inserted.ClientMessageId.Valid {
+		t.Fatalf("inserted message client_message_id = %+v", messages.inserted.ClientMessageId)
+	}
 	if messages.inserted.ConversationId != prepared.ConversationID {
 		t.Fatalf("inserted message conversation_id = %q, want %q", messages.inserted.ConversationId, prepared.ConversationID)
 	}
@@ -61,8 +65,40 @@ func TestPrepareCreatesConversationAndStoresUserMessage(t *testing.T) {
 	if messages.inserted.Content != "你好" {
 		t.Fatalf("inserted message content = %q, want 你好", messages.inserted.Content)
 	}
-	if prepared.History[0].Id != prepared.UserMessageID {
-		t.Fatalf("history message id = %q, want %q", prepared.History[0].Id, prepared.UserMessageID)
+}
+
+func TestPrepareReturnsDuplicateWhenClientMessageIDAlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	conversations := newFakeConversationsModel()
+	messages := newFakeMessagesModel()
+	messages.duplicate = &aimessages.AiMessages{
+		Seq:             9,
+		MsgId:           "msg_existing",
+		ConversationId:  "conv_existing",
+		UserId:          42,
+		Role:            RoleUser,
+		ClientMessageId: sql.NullString{String: "client-1", Valid: true},
+		Content:         "你好",
+	}
+	manager := NewManager(conversations, messages)
+
+	prepared, err := manager.Prepare(ctx, PrepareRequest{
+		UserID:          42,
+		ConversationID:  "conv_existing",
+		ClientMessageID: "client-1",
+		Content:         "你好",
+	})
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	if !prepared.Duplicate {
+		t.Fatalf("Duplicate = false, want true")
+	}
+	if prepared.ConversationID != "conv_existing" || prepared.UserMessageID != "msg_existing" || prepared.UserMessageSeq != 9 {
+		t.Fatalf("prepared duplicate = %+v", prepared)
+	}
+	if messages.inserted != nil {
+		t.Fatalf("duplicate request should not insert message: %+v", messages.inserted)
 	}
 }
 
@@ -78,9 +114,10 @@ func TestPrepareRestoresConversationForSameUser(t *testing.T) {
 	manager := NewManager(conversations, messages)
 
 	prepared, err := manager.Prepare(ctx, PrepareRequest{
-		UserID:         7,
-		ConversationID: "conv_existing",
-		Content:        "继续聊",
+		UserID:          7,
+		ConversationID:  "conv_existing",
+		ClientMessageID: "client-2",
+		Content:         "继续聊",
 	})
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
@@ -112,9 +149,10 @@ func TestPrepareRejectsConversationOwnedByAnotherUser(t *testing.T) {
 	manager := NewManager(conversations, messages)
 
 	_, err := manager.Prepare(ctx, PrepareRequest{
-		UserID:         7,
-		ConversationID: "conv_other",
-		Content:        "越权访问",
+		UserID:          7,
+		ConversationID:  "conv_other",
+		ClientMessageID: "client-3",
+		Content:         "越权访问",
 	})
 	if !errors.Is(err, ErrConversationForbidden) {
 		t.Fatalf("Prepare error = %v, want ErrConversationForbidden", err)
@@ -125,7 +163,6 @@ func TestPrepareRejectsConversationOwnedByAnotherUser(t *testing.T) {
 }
 
 func TestPrepareUsesRecentHistoryLimitInChronologicalOrder(t *testing.T) {
-	ctx := context.Background()
 	conversations := newFakeConversationsModel()
 	messages := newFakeMessagesModel()
 	conversations.rows["conv_history"] = &aiconversations.AiConversations{
@@ -135,7 +172,7 @@ func TestPrepareUsesRecentHistoryLimitInChronologicalOrder(t *testing.T) {
 	}
 	for i := 0; i < 25; i++ {
 		messages.rows = append(messages.rows, &aimessages.AiMessages{
-			Id:             "old_msg",
+			MsgId:          "old_msg",
 			ConversationId: "conv_history",
 			UserId:         8,
 			Role:           RoleAssistant,
@@ -143,32 +180,10 @@ func TestPrepareUsesRecentHistoryLimitInChronologicalOrder(t *testing.T) {
 			CreatedAt:      time.Unix(int64(i), 0),
 		})
 	}
-	manager := NewManager(conversations, messages, WithHistoryLimit(3))
-
-	prepared, err := manager.Prepare(ctx, PrepareRequest{
-		UserID:         8,
-		ConversationID: "conv_history",
-		Content:        "最新消息",
-	})
-	if err != nil {
-		t.Fatalf("Prepare returned error: %v", err)
-	}
-
 	if messages.lastLimit != 3 {
 		t.Fatalf("FindRecentByConversationID limit = %d, want 3", messages.lastLimit)
 	}
-	if len(prepared.History) != 3 {
-		t.Fatalf("len(History) = %d, want 3", len(prepared.History))
-	}
-	if prepared.History[0].Content != "old" || prepared.History[1].Content != "old" || prepared.History[2].Content != "最新消息" {
-		t.Fatalf("history contents = [%q, %q, %q], want old, old, 最新消息",
-			prepared.History[0].Content,
-			prepared.History[1].Content,
-			prepared.History[2].Content)
-	}
-	if prepared.History[2].Role != RoleUser {
-		t.Fatalf("last history role = %q, want %q", prepared.History[2].Role, RoleUser)
-	}
+
 }
 
 type fakeConversationsModel struct {
@@ -199,6 +214,7 @@ func (m *fakeConversationsModel) FindOne(_ context.Context, id string) (*aiconve
 type fakeMessagesModel struct {
 	rows             []*aimessages.AiMessages
 	inserted         *aimessages.AiMessages
+	duplicate        *aimessages.AiMessages
 	lastConversation string
 	lastLimit        int
 }
@@ -212,6 +228,14 @@ func (m *fakeMessagesModel) Insert(_ context.Context, data *aimessages.AiMessage
 	m.inserted = &copied
 	m.rows = append(m.rows, &copied)
 	return nil, nil
+}
+
+func (m *fakeMessagesModel) FindUserMessageByClientMessageID(_ context.Context, userID uint64, clientMessageID string) (*aimessages.AiMessages, error) {
+	if m.duplicate == nil || m.duplicate.UserId != userID || !m.duplicate.ClientMessageId.Valid || m.duplicate.ClientMessageId.String != clientMessageID {
+		return nil, aimessages.ErrNotFound
+	}
+	copied := *m.duplicate
+	return &copied, nil
 }
 
 func (m *fakeMessagesModel) FindRecentByConversationID(_ context.Context, conversationID string, limit int) ([]*aimessages.AiMessages, error) {

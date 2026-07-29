@@ -25,9 +25,9 @@ func TestSummaryManagerSkipsWhenUnsummarizedMessagesBelowThreshold(t *testing.T)
 	if result.Created || len(store.saved) != 0 {
 		t.Fatalf("summary created = %v saved=%d, want none", result.Created, len(store.saved))
 	}
-	if len(result.RecentMessages) != 20 || result.RecentMessages[0].Id != "m010" || result.RecentMessages[19].Id != "m029" {
+	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m010" || result.RecentMessages[19].MsgId != "m029" {
 		t.Fatalf("recent window = %s..%s len=%d, want m010..m029 len=20",
-			result.RecentMessages[0].Id, result.RecentMessages[len(result.RecentMessages)-1].Id, len(result.RecentMessages))
+			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
 	}
 }
 
@@ -67,14 +67,14 @@ func TestSummaryManagerCompactsOldestTenAndKeepsTwentyRecent(t *testing.T) {
 		saved.TokenCount != 123 {
 		t.Fatalf("saved summary = %+v", saved)
 	}
-	if len(result.RecentMessages) != 20 || result.RecentMessages[0].Id != "m011" || result.RecentMessages[19].Id != "m030" {
+	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m011" || result.RecentMessages[19].MsgId != "m030" {
 		t.Fatalf("recent window = %s..%s len=%d, want m011..m030 len=20",
-			result.RecentMessages[0].Id, result.RecentMessages[len(result.RecentMessages)-1].Id, len(result.RecentMessages))
+			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
 	}
 	for _, compressed := range summarizer.messages {
 		for _, recent := range result.RecentMessages {
-			if compressed.Id == recent.Id {
-				t.Fatalf("message %s appears in both summary input and recent window", compressed.Id)
+			if compressed.MsgId == recent.MsgId {
+				t.Fatalf("message %s appears in both summary input and recent window", compressed.MsgId)
 			}
 		}
 	}
@@ -96,9 +96,9 @@ func TestSummaryManagerCompactsMultipleRoundsWhenBacklogExceedsTrigger(t *testin
 	if store.saved[0].CoveredUntilMessageID != "m010" || store.saved[1].CoveredUntilMessageID != "m020" {
 		t.Fatalf("watermarks = %s,%s want m010,m020", store.saved[0].CoveredUntilMessageID, store.saved[1].CoveredUntilMessageID)
 	}
-	if len(result.RecentMessages) != 20 || result.RecentMessages[0].Id != "m026" || result.RecentMessages[19].Id != "m045" {
+	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m026" || result.RecentMessages[19].MsgId != "m045" {
 		t.Fatalf("recent window = %s..%s len=%d, want m026..m045 len=20",
-			result.RecentMessages[0].Id, result.RecentMessages[len(result.RecentMessages)-1].Id, len(result.RecentMessages))
+			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
 	}
 }
 
@@ -118,9 +118,9 @@ func TestSummaryManagerStopsAfterMaxRefreshRounds(t *testing.T) {
 	if store.saved[2].CoveredUntilMessageID != "m030" {
 		t.Fatalf("final watermark = %s, want m030", store.saved[2].CoveredUntilMessageID)
 	}
-	if len(result.RecentMessages) != 20 || result.RecentMessages[0].Id != "m051" || result.RecentMessages[19].Id != "m070" {
+	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m051" || result.RecentMessages[19].MsgId != "m070" {
 		t.Fatalf("recent window = %s..%s len=%d, want m051..m070 len=20",
-			result.RecentMessages[0].Id, result.RecentMessages[len(result.RecentMessages)-1].Id, len(result.RecentMessages))
+			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
 	}
 }
 
@@ -180,9 +180,9 @@ func TestSummaryManagerKeepsPreviousSummaryWhenModelOutputInvalid(t *testing.T) 
 	if result.Summary == nil || result.Summary.Summary != "旧摘要" {
 		t.Fatalf("result summary = %+v, want previous summary", result.Summary)
 	}
-	if len(result.RecentMessages) != 20 || result.RecentMessages[0].Id != "m011" || result.RecentMessages[19].Id != "m030" {
+	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m011" || result.RecentMessages[19].MsgId != "m030" {
 		t.Fatalf("recent window = %s..%s len=%d, want m011..m030 len=20",
-			result.RecentMessages[0].Id, result.RecentMessages[len(result.RecentMessages)-1].Id, len(result.RecentMessages))
+			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
 	}
 }
 
@@ -233,7 +233,7 @@ func newSummaryMessages(count int, start time.Time) []*aimessages.AiMessages {
 	rows := make([]*aimessages.AiMessages, 0, count)
 	for i := 1; i <= count; i++ {
 		rows = append(rows, &aimessages.AiMessages{
-			Id:             fmt.Sprintf("m%03d", i),
+			MsgId:          fmt.Sprintf("m%03d", i),
 			UserId:         42,
 			ConversationId: "conv-1",
 			Role:           map[bool]string{true: domain.ContextRoleUser, false: domain.ContextRoleAssistant}[i%2 == 1],
@@ -278,7 +278,7 @@ func (f *fakeSummaryMessagesStore) filterUnsummarized(userID uint64, conversatio
 			continue
 		}
 		if !afterCreatedAt.IsZero() {
-			if message.CreatedAt.Before(afterCreatedAt) || (message.CreatedAt.Equal(afterCreatedAt) && message.Id <= afterMessageID) {
+			if message.CreatedAt.Before(afterCreatedAt) || (message.CreatedAt.Equal(afterCreatedAt) && message.MsgId <= afterMessageID) {
 				continue
 			}
 		}

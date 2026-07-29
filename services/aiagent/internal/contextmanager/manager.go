@@ -124,8 +124,8 @@ func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*d
 		result.Messages = append(result.Messages, domain.ContextMessage{Role: row.Role, Content: redactSensitiveContext(row.Content)})
 	}
 	if len(recent) > 0 {
-		result.RecentMessageStartID = recent[0].Id
-		result.RecentMessageEndID = recent[len(recent)-1].Id
+		result.RecentMessageStartID = recent[0].MsgId
+		result.RecentMessageEndID = recent[len(recent)-1].MsgId
 	}
 
 	if req.Mode == domain.AgentContextMode {
@@ -253,7 +253,7 @@ func (m *manager) appendUserProfile(ctx context.Context, req domain.BuildContext
 func selectRecentMessages(rows []*aimessages.AiMessages, currentMessageID string, summary *domain.ConversationSummary) []*aimessages.AiMessages {
 	recent := make([]*aimessages.AiMessages, 0, len(rows))
 	for _, row := range rows {
-		if row == nil || row.Id == currentMessageID || row.Content == "" {
+		if row == nil || row.MsgId == currentMessageID || row.Content == "" {
 			continue
 		}
 		if row.Role != domain.ContextRoleUser && row.Role != domain.ContextRoleAssistant {
@@ -266,7 +266,7 @@ func selectRecentMessages(rows []*aimessages.AiMessages, currentMessageID string
 	}
 	sort.SliceStable(recent, func(i, j int) bool {
 		if recent[i].CreatedAt.Equal(recent[j].CreatedAt) {
-			return recent[i].Id < recent[j].Id
+			return recent[i].MsgId < recent[j].MsgId
 		}
 		return recent[i].CreatedAt.Before(recent[j].CreatedAt)
 	})
@@ -283,7 +283,7 @@ func coveredBySummary(message *aimessages.AiMessages, summary *domain.Conversati
 	if message.CreatedAt.Before(summary.CoveredUntilCreatedAt) {
 		return true
 	}
-	return message.CreatedAt.Equal(summary.CoveredUntilCreatedAt) && message.Id <= summary.CoveredUntilMessageID
+	return message.CreatedAt.Equal(summary.CoveredUntilCreatedAt) && message.MsgId <= summary.CoveredUntilMessageID
 }
 
 func structuredContextMessage(label string, value any) (domain.ContextMessage, bool) {
