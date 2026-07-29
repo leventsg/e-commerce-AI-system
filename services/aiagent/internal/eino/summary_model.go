@@ -108,7 +108,7 @@ func buildSummaryMessagePrompts(messages []*aimessages.AiMessages) []summaryMess
 			continue
 		}
 		result = append(result, summaryMessagePrompt{
-			ID:        message.Id,
+			ID:        message.MsgId,
 			Role:      message.Role,
 			Content:   redactSummarySensitiveContext(message.Content),
 			CreatedAt: formatSummaryTime(message.CreatedAt),

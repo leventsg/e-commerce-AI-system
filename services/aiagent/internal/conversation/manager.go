@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +31,7 @@ type conversationsModel interface {
 type messagesModel interface {
 	Insert(ctx context.Context, data *aimessages.AiMessages) (sql.Result, error)
 	FindRecentByConversationID(ctx context.Context, conversationID string, limit int) ([]*aimessages.AiMessages, error)
+	FindUserMessageByClientMessageID(ctx context.Context, userID uint64, clientMessageID string) (*aimessages.AiMessages, error)
 }
 
 type Manager interface {
@@ -40,17 +40,20 @@ type Manager interface {
 }
 
 type PrepareRequest struct {
-	UserID         uint64
-	ConversationID string
-	MessageID      string
-	Content        string
-	Metadata       sql.NullString
+	UserID          uint64
+	ConversationID  string
+	MessageID       string
+	ClientMessageID string
+	Content         string
+	Metadata        sql.NullString
 }
 
 type PreparedConversation struct {
-	ConversationID string
-	UserMessageID  string
-	History        []*aimessages.AiMessages
+	ConversationID  string
+	UserMessageID   string
+	UserMessageSeq  uint64
+	ClientMessageID string
+	Duplicate       bool
 }
 
 type manager struct {
@@ -81,9 +84,29 @@ func NewManager(conversations conversationsModel, messages messagesModel, opts .
 	return m
 }
 
-// AI 对话预处理：会话初始化、消息存储和历史加载
+// AI 对话预处理：会话初始化、消息存储
 func (m *manager) Prepare(ctx context.Context, req PrepareRequest) (*PreparedConversation, error) {
-	conversationID := strings.TrimSpace(req.ConversationID)
+	conversationID := req.ConversationID
+	clientMessageID := req.ClientMessageID
+	if clientMessageID != "" {
+		existing, err := m.messages.FindUserMessageByClientMessageID(ctx, req.UserID, clientMessageID)
+		// 请求已经处理过，则Duplicate设为true
+		if err == nil && existing != nil {
+			if conversationID != "" && existing.ConversationId != conversationID {
+				return nil, ErrConversationForbidden
+			}
+			return &PreparedConversation{
+				ConversationID:  existing.ConversationId,
+				UserMessageID:   existing.MsgId,
+				UserMessageSeq:  existing.Seq,
+				ClientMessageID: clientMessageID,
+				Duplicate:       true,
+			}, nil
+		}
+		if err != nil && !errors.Is(err, aimessages.ErrNotFound) {
+			return nil, err
+		}
+	}
 	if conversationID == "" {
 		conversationID = newID("conv")
 		if _, err := m.conversations.Insert(ctx, &aiconversations.AiConversations{
@@ -105,33 +128,29 @@ func (m *manager) Prepare(ctx context.Context, req PrepareRequest) (*PreparedCon
 		}
 	}
 
-	messageID := strings.TrimSpace(req.MessageID)
+	messageID := req.MessageID
 	if messageID == "" {
 		messageID = newID("msg")
 	}
 
 	// 插入用户消息到数据库
 	if _, err := m.messages.Insert(ctx, &aimessages.AiMessages{
-		Id:             messageID,
-		ConversationId: conversationID,
-		UserId:         req.UserID,
-		Role:           RoleUser,
-		Content:        req.Content,
-		Metadata:       req.Metadata,
-		CreatedAt:      time.Now(),
+		MsgId:           messageID,
+		ConversationId:  conversationID,
+		UserId:          req.UserID,
+		Role:            RoleUser,
+		Content:         req.Content,
+		Metadata:        req.Metadata,
+		ClientMessageId: sql.NullString{String: clientMessageID, Valid: clientMessageID != ""},
+		CreatedAt:       time.Now(),
 	}); err != nil {
 		return nil, err
 	}
 
-	// 查询会话近期历史消息
-	history, err := m.messages.FindRecentByConversationID(ctx, conversationID, m.historyLimit)
-	if err != nil {
-		return nil, err
-	}
 	return &PreparedConversation{
-		ConversationID: conversationID,
-		UserMessageID:  messageID,
-		History:        history,
+		ConversationID:  conversationID,
+		UserMessageID:   messageID,
+		ClientMessageID: clientMessageID,
 	}, nil
 }
 

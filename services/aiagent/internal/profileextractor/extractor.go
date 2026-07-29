@@ -186,7 +186,7 @@ func validCandidate(event UpdateEvent, messages []*aimessages.AiMessages, candid
 	allowedEvidence := make(map[string]bool, len(messages))
 	for _, message := range messages {
 		if message != nil && message.UserId == event.UserID && message.ConversationId == event.ConversationID {
-			allowedEvidence[message.Id] = true
+			allowedEvidence[message.MsgId] = true
 		}
 	}
 	// 如果候选证据消息中有不属于当前用户会话的消息，则拒绝

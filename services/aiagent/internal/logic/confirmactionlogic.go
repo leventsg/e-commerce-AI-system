@@ -109,7 +109,7 @@ func (l *ConfirmActionLogic) persistConfirmationEvents(userID uint64, businessEx
 		}
 		domainEvents = append(domainEvents, domain.AgentEvent{Type: event.Type, ConversationID: event.ConversationId, MessageID: event.MessageId, Content: event.Content, Tool: event.Tool, Status: event.Status, DataJSON: event.DataJson, ConfirmationID: event.ConfirmationId, Action: event.Action, Summary: event.Summary, ExpiresAt: event.ExpiresAt, Done: event.Done, BusinessExecuted: businessExecuted})
 	}
-	messages, err := agentEventsToMessages(userID, domainEvents)
+	messages, err := agentEventsToMessages(userID, "", domainEvents)
 	if err == nil {
 		err = l.svcCtx.MessagesModel.InsertBatch(l.ctx, messages)
 	}

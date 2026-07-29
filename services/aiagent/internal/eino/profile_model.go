@@ -171,7 +171,7 @@ func buildProfileMessagePrompts(messages []*aimessages.AiMessages) []profileMess
 			continue
 		}
 		result = append(result, profileMessagePrompt{
-			ID:        message.Id,
+			ID:        message.MsgId,
 			Role:      message.Role,
 			Content:   redactProfileSensitiveContext(message.Content),
 			CreatedAt: formatProfileTime(message.CreatedAt),

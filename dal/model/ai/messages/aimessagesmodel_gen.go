@@ -21,18 +21,22 @@ import (
 var (
 	aiMessagesFieldNames          = builder.RawFieldNames(&AiMessages{})
 	aiMessagesRows                = strings.Join(aiMessagesFieldNames, ",")
-	aiMessagesRowsExpectAutoSet   = strings.Join(stringx.Remove(aiMessagesFieldNames, "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), ",")
-	aiMessagesRowsWithPlaceHolder = strings.Join(stringx.Remove(aiMessagesFieldNames, "`id`", "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), "=?,") + "=?"
+	aiMessagesRowsExpectAutoSet   = strings.Join(stringx.Remove(aiMessagesFieldNames, "`seq`", "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), ",")
+	aiMessagesRowsWithPlaceHolder = strings.Join(stringx.Remove(aiMessagesFieldNames, "`seq`", "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), "=?,") + "=?"
 
-	cacheAiMessagesIdPrefix = "cache:aiMessages:id:"
+	cacheAiMessagesSeqPrefix                         = "cache:aiMessages:seq:"
+	cacheAiMessagesMsgIdPrefix                       = "cache:aiMessages:msgId:"
+	cacheAiMessagesUserIdDedupeClientMessageIdPrefix = "cache:aiMessages:userId:dedupeClientMessageId:"
 )
 
 type (
 	aiMessagesModel interface {
 		Insert(ctx context.Context, data *AiMessages) (sql.Result, error)
-		FindOne(ctx context.Context, id string) (*AiMessages, error)
+		FindOne(ctx context.Context, seq uint64) (*AiMessages, error)
+		FindOneByMsgId(ctx context.Context, msgId string) (*AiMessages, error)
+		FindOneByUserIdDedupeClientMessageId(ctx context.Context, userId uint64, dedupeClientMessageId sql.NullString) (*AiMessages, error)
 		Update(ctx context.Context, data *AiMessages) error
-		Delete(ctx context.Context, id string) error
+		Delete(ctx context.Context, seq uint64) error
 	}
 
 	defaultAiMessagesModel struct {
@@ -41,13 +45,16 @@ type (
 	}
 
 	AiMessages struct {
-		Id             string         `db:"id"`              // 消息ID
-		ConversationId string         `db:"conversation_id"` // 会话ID
-		UserId         uint64         `db:"user_id"`         // 用户ID
-		Role           string         `db:"role"`            // user/assistant/tool
-		Content        string         `db:"content"`         // 消息内容
-		Metadata       sql.NullString `db:"metadata"`        // 扩展信息
-		CreatedAt      time.Time      `db:"created_at"`
+		Seq                   uint64         `db:"seq"`                      // 消息自增序号
+		MsgId                 string         `db:"msg_id"`                   // 消息ID
+		ConversationId        string         `db:"conversation_id"`          // 会话ID
+		UserId                uint64         `db:"user_id"`                  // 用户ID
+		Role                  string         `db:"role"`                     // user/assistant/tool
+		Content               string         `db:"content"`                  // 消息内容
+		Metadata              sql.NullString `db:"metadata"`                 // 扩展信息
+		ClientMessageId       sql.NullString `db:"client_message_id"`        // 前端生成的用户消息幂等ID
+		DedupeClientMessageId sql.NullString `db:"dedupe_client_message_id"` // 仅用户消息参与幂等唯一约束
+		CreatedAt             time.Time      `db:"created_at"`
 	}
 )
 
@@ -58,21 +65,28 @@ func newAiMessagesModel(conn sqlx.SqlConn, c cache.CacheConf, opts ...cache.Opti
 	}
 }
 
-func (m *defaultAiMessagesModel) Delete(ctx context.Context, id string) error {
-	aiMessagesIdKey := fmt.Sprintf("%s%v", cacheAiMessagesIdPrefix, id)
-	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
-		query := fmt.Sprintf("delete from %s where `id` = ?", m.table)
-		return conn.ExecCtx(ctx, query, id)
-	}, aiMessagesIdKey)
+func (m *defaultAiMessagesModel) Delete(ctx context.Context, seq uint64) error {
+	data, err := m.FindOne(ctx, seq)
+	if err != nil {
+		return err
+	}
+
+	aiMessagesMsgIdKey := fmt.Sprintf("%s%v", cacheAiMessagesMsgIdPrefix, data.MsgId)
+	aiMessagesSeqKey := fmt.Sprintf("%s%v", cacheAiMessagesSeqPrefix, seq)
+	aiMessagesUserIdDedupeClientMessageIdKey := fmt.Sprintf("%s%v:%v", cacheAiMessagesUserIdDedupeClientMessageIdPrefix, data.UserId, data.DedupeClientMessageId)
+	_, err = m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
+		query := fmt.Sprintf("delete from %s where `seq` = ?", m.table)
+		return conn.ExecCtx(ctx, query, seq)
+	}, aiMessagesMsgIdKey, aiMessagesSeqKey, aiMessagesUserIdDedupeClientMessageIdKey)
 	return err
 }
 
-func (m *defaultAiMessagesModel) FindOne(ctx context.Context, id string) (*AiMessages, error) {
-	aiMessagesIdKey := fmt.Sprintf("%s%v", cacheAiMessagesIdPrefix, id)
+func (m *defaultAiMessagesModel) FindOne(ctx context.Context, seq uint64) (*AiMessages, error) {
+	aiMessagesSeqKey := fmt.Sprintf("%s%v", cacheAiMessagesSeqPrefix, seq)
 	var resp AiMessages
-	err := m.QueryRowCtx(ctx, &resp, aiMessagesIdKey, func(ctx context.Context, conn sqlx.SqlConn, v any) error {
-		query := fmt.Sprintf("select %s from %s where `id` = ? limit 1", aiMessagesRows, m.table)
-		return conn.QueryRowCtx(ctx, v, query, id)
+	err := m.QueryRowCtx(ctx, &resp, aiMessagesSeqKey, func(ctx context.Context, conn sqlx.SqlConn, v any) error {
+		query := fmt.Sprintf("select %s from %s where `seq` = ? limit 1", aiMessagesRows, m.table)
+		return conn.QueryRowCtx(ctx, v, query, seq)
 	})
 	switch err {
 	case nil:
@@ -84,30 +98,79 @@ func (m *defaultAiMessagesModel) FindOne(ctx context.Context, id string) (*AiMes
 	}
 }
 
+func (m *defaultAiMessagesModel) FindOneByMsgId(ctx context.Context, msgId string) (*AiMessages, error) {
+	aiMessagesMsgIdKey := fmt.Sprintf("%s%v", cacheAiMessagesMsgIdPrefix, msgId)
+	var resp AiMessages
+	err := m.QueryRowIndexCtx(ctx, &resp, aiMessagesMsgIdKey, m.formatPrimary, func(ctx context.Context, conn sqlx.SqlConn, v any) (i any, e error) {
+		query := fmt.Sprintf("select %s from %s where `msg_id` = ? limit 1", aiMessagesRows, m.table)
+		if err := conn.QueryRowCtx(ctx, &resp, query, msgId); err != nil {
+			return nil, err
+		}
+		return resp.Seq, nil
+	}, m.queryPrimary)
+	switch err {
+	case nil:
+		return &resp, nil
+	case sqlc.ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultAiMessagesModel) FindOneByUserIdDedupeClientMessageId(ctx context.Context, userId uint64, dedupeClientMessageId sql.NullString) (*AiMessages, error) {
+	aiMessagesUserIdDedupeClientMessageIdKey := fmt.Sprintf("%s%v:%v", cacheAiMessagesUserIdDedupeClientMessageIdPrefix, userId, dedupeClientMessageId)
+	var resp AiMessages
+	err := m.QueryRowIndexCtx(ctx, &resp, aiMessagesUserIdDedupeClientMessageIdKey, m.formatPrimary, func(ctx context.Context, conn sqlx.SqlConn, v any) (i any, e error) {
+		query := fmt.Sprintf("select %s from %s where `user_id` = ? and `dedupe_client_message_id` = ? limit 1", aiMessagesRows, m.table)
+		if err := conn.QueryRowCtx(ctx, &resp, query, userId, dedupeClientMessageId); err != nil {
+			return nil, err
+		}
+		return resp.Seq, nil
+	}, m.queryPrimary)
+	switch err {
+	case nil:
+		return &resp, nil
+	case sqlc.ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
 func (m *defaultAiMessagesModel) Insert(ctx context.Context, data *AiMessages) (sql.Result, error) {
-	aiMessagesIdKey := fmt.Sprintf("%s%v", cacheAiMessagesIdPrefix, data.Id)
+	aiMessagesMsgIdKey := fmt.Sprintf("%s%v", cacheAiMessagesMsgIdPrefix, data.MsgId)
+	aiMessagesSeqKey := fmt.Sprintf("%s%v", cacheAiMessagesSeqPrefix, data.Seq)
+	aiMessagesUserIdDedupeClientMessageIdKey := fmt.Sprintf("%s%v:%v", cacheAiMessagesUserIdDedupeClientMessageIdPrefix, data.UserId, data.DedupeClientMessageId)
 	ret, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
-		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?)", m.table, aiMessagesRowsExpectAutoSet)
-		return conn.ExecCtx(ctx, query, data.Id, data.ConversationId, data.UserId, data.Role, data.Content, data.Metadata)
-	}, aiMessagesIdKey)
+		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?, ?)", m.table, aiMessagesRowsExpectAutoSet)
+		return conn.ExecCtx(ctx, query, data.MsgId, data.ConversationId, data.UserId, data.Role, data.Content, data.Metadata, data.ClientMessageId, data.DedupeClientMessageId)
+	}, aiMessagesMsgIdKey, aiMessagesSeqKey, aiMessagesUserIdDedupeClientMessageIdKey)
 	return ret, err
 }
 
-func (m *defaultAiMessagesModel) Update(ctx context.Context, data *AiMessages) error {
-	aiMessagesIdKey := fmt.Sprintf("%s%v", cacheAiMessagesIdPrefix, data.Id)
-	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
-		query := fmt.Sprintf("update %s set %s where `id` = ?", m.table, aiMessagesRowsWithPlaceHolder)
-		return conn.ExecCtx(ctx, query, data.ConversationId, data.UserId, data.Role, data.Content, data.Metadata, data.Id)
-	}, aiMessagesIdKey)
+func (m *defaultAiMessagesModel) Update(ctx context.Context, newData *AiMessages) error {
+	data, err := m.FindOne(ctx, newData.Seq)
+	if err != nil {
+		return err
+	}
+
+	aiMessagesMsgIdKey := fmt.Sprintf("%s%v", cacheAiMessagesMsgIdPrefix, data.MsgId)
+	aiMessagesSeqKey := fmt.Sprintf("%s%v", cacheAiMessagesSeqPrefix, data.Seq)
+	aiMessagesUserIdDedupeClientMessageIdKey := fmt.Sprintf("%s%v:%v", cacheAiMessagesUserIdDedupeClientMessageIdPrefix, data.UserId, data.DedupeClientMessageId)
+	_, err = m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
+		query := fmt.Sprintf("update %s set %s where `seq` = ?", m.table, aiMessagesRowsWithPlaceHolder)
+		return conn.ExecCtx(ctx, query, newData.MsgId, newData.ConversationId, newData.UserId, newData.Role, newData.Content, newData.Metadata, newData.ClientMessageId, newData.DedupeClientMessageId, newData.Seq)
+	}, aiMessagesMsgIdKey, aiMessagesSeqKey, aiMessagesUserIdDedupeClientMessageIdKey)
 	return err
 }
 
 func (m *defaultAiMessagesModel) formatPrimary(primary any) string {
-	return fmt.Sprintf("%s%v", cacheAiMessagesIdPrefix, primary)
+	return fmt.Sprintf("%s%v", cacheAiMessagesSeqPrefix, primary)
 }
 
 func (m *defaultAiMessagesModel) queryPrimary(ctx context.Context, conn sqlx.SqlConn, v, primary any) error {
-	query := fmt.Sprintf("select %s from %s where `id` = ? limit 1", aiMessagesRows, m.table)
+	query := fmt.Sprintf("select %s from %s where `seq` = ? limit 1", aiMessagesRows, m.table)
 	return conn.QueryRowCtx(ctx, v, query, primary)
 }
 

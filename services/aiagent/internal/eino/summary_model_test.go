@@ -39,8 +39,8 @@ func TestSummarySummarizerUsesLLMWithPreviousSummaryAndMessages(t *testing.T) {
 			OpenTasks: []string{"等待选择品牌"},
 		},
 		Messages: []*aimessages.AiMessages{
-			{Id: "m001", Role: domain.ContextRoleUser, Content: "我想要轻薄一点", CreatedAt: time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)},
-			{Id: "m002", Role: domain.ContextRoleAssistant, Content: "可以看看 p100", CreatedAt: time.Date(2026, 7, 24, 10, 1, 0, 0, time.UTC)},
+			{MsgId: "m001", Role: domain.ContextRoleUser, Content: "我想要轻薄一点", CreatedAt: time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)},
+			{MsgId: "m002", Role: domain.ContextRoleAssistant, Content: "可以看看 p100", CreatedAt: time.Date(2026, 7, 24, 10, 1, 0, 0, time.UTC)},
 		},
 	})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestSummarySummarizerRejectsEmptyModelResponse(t *testing.T) {
 	_, err := summarizer.Summarize(context.Background(), contextmanager.SummarizeRequest{
 		UserID:         42,
 		ConversationID: "conv-1",
-		Messages:       []*aimessages.AiMessages{{Id: "m001", Role: domain.ContextRoleUser, Content: "你好"}},
+		Messages:       []*aimessages.AiMessages{{MsgId: "m001", Role: domain.ContextRoleUser, Content: "你好"}},
 	})
 	if !errors.Is(err, contextmanager.ErrInvalidSummaryOutput) {
 		t.Fatalf("Summarize() error = %v, want ErrInvalidSummaryOutput", err)

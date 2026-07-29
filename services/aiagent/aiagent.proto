@@ -8,6 +8,7 @@ message ChatRequest {
   string message_id = 3;
   string content = 4;
   string source = 5;
+  string client_message_id = 6;
 }
 
 message AgentEvent {

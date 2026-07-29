@@ -12,12 +12,13 @@ type ClientMetadata struct {
 }
 
 type ClientMessage struct {
-	Type           string          `json:"type"`
-	Content        string          `json:"content,omitempty"`
-	Metadata       ClientMetadata  `json:"metadata,omitempty"`
-	ConfirmationID string          `json:"confirmation_id,omitempty"`
-	Approved       *bool           `json:"approved,omitempty"`
-	UserID         json.RawMessage `json:"user_id,omitempty"`
+	Type            string          `json:"type"`
+	Content         string          `json:"content,omitempty"`
+	ClientMessageID string          `json:"client_message_id,omitempty"`
+	Metadata        ClientMetadata  `json:"metadata,omitempty"`
+	ConfirmationID  string          `json:"confirmation_id,omitempty"`
+	Approved        *bool           `json:"approved,omitempty"`
+	UserID          json.RawMessage `json:"user_id,omitempty"`
 }
 
 type ServerEvent struct {

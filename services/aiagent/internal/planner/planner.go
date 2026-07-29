@@ -93,18 +93,21 @@ func (p *Planner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error)
 
 	// 意图识别(llm)
 	if p.modelFactory != nil {
-		if result, ok := p.planWithLLM(ctx, text, req.Messages); ok {
+		if result, ok := p.planWithLLM(ctx, req.Messages); ok {
 			return result, nil
 		}
 	}
 
+	logx.WithContext(ctx).Infow("降级处理意图识别", logx.Field("text", text))
 	// 当llm识别失败时，使用规则匹配意图（降级处理）
 	return p.rulePlan(text)
 }
 
-func (p *Planner) planWithLLM(ctx context.Context, text string, messages []domain.ContextMessage) (PlanResult, bool) {
+func (p *Planner) planWithLLM(ctx context.Context, messages []domain.ContextMessage) (PlanResult, bool) {
 	for attempt := 0; attempt < p.maxLLMAttempts; attempt++ {
+		logx.WithContext(ctx).Infow("llm意图识别上下文", logx.Field("messages", messages))
 		result, err := p.callLLMPlannerOnce(ctx, messages)
+		logx.WithContext(ctx).Infow("llm意图识别结果:", logx.Field("result", result), logx.Field("attempt", attempt+1))
 		if err != nil {
 			logx.WithContext(ctx).Errorw("ai intent planner attempt failed", logx.Field("component", "intent_planner"), logx.Field("attempt", attempt+1), logx.Field("stage", plannerErrorStage(err)), logx.Field("reason", plannerErrorReason(err)), logx.Field("err", err))
 			continue

@@ -142,7 +142,7 @@ func (f *fakeToolMessagesModel) FindRecentToolMessages(context.Context, uint64, 
 }
 
 func (f *fakeToolMessagesModel) FindToolMessageByID(_ context.Context, userID uint64, conversationID, messageID string) (*aimessages.AiMessages, error) {
-	if f.one == nil || f.one.UserId != userID || f.one.ConversationId != conversationID || f.one.Id != messageID {
+	if f.one == nil || f.one.UserId != userID || f.one.ConversationId != conversationID || f.one.MsgId != messageID {
 		return nil, sql.ErrNoRows
 	}
 	return f.one, nil
@@ -159,7 +159,7 @@ func toolMessage(t *testing.T, id string, userID uint64, conversationID, toolNam
 
 func rawToolMessage(id string, userID uint64, conversationID string, createdAt time.Time, metadata string) *aimessages.AiMessages {
 	return &aimessages.AiMessages{
-		Id:             id,
+		MsgId:          id,
 		ConversationId: conversationID,
 		UserId:         userID,
 		Role:           conversation.RoleTool,

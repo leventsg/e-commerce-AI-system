@@ -34,7 +34,7 @@ func TestProfileExtractorModelUsesStructuredChatModel(t *testing.T) {
 		Event: profileextractor.UpdateEvent{
 			EventID: "evt-1", UserID: 42, ConversationID: "conv-1", MessageIDs: []string{"msg-1"}, CreatedAt: time.Now(),
 		},
-		Messages: []*aimessages.AiMessages{{Id: "msg-1", UserId: 42, ConversationId: "conv-1", Role: "user", Content: "以后推荐轻薄手机"}},
+		Messages: []*aimessages.AiMessages{{MsgId: "msg-1", UserId: 42, ConversationId: "conv-1", Role: "user", Content: "以后推荐轻薄手机"}},
 	})
 	if err != nil {
 		t.Fatalf("Extract() error = %v", err)
