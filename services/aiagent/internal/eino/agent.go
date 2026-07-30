@@ -8,14 +8,22 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
+	einotool "github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
+const defaultReActMaxStep = 8
+
 type RunRequest struct {
+	UserID         uint64
 	ConversationID string
 	MessageID      string
+	ClientIP       string
 	Messages       []domain.ContextMessage
 }
 
@@ -30,6 +38,15 @@ type runner struct {
 
 func NewRunner(chatModel model.BaseChatModel) Runner {
 	return &runner{model: chatModel}
+}
+
+type reActRunner struct {
+	model model.ToolCallingChatModel
+	tools []einotool.InvokableTool
+}
+
+func NewReActRunner(chatModel model.ToolCallingChatModel, tools []einotool.InvokableTool) Runner {
+	return &reActRunner{model: chatModel, tools: tools}
 }
 
 func (r *runner) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error) {
@@ -98,4 +115,61 @@ func assistantEvent(req RunRequest, content string, done bool) domain.AgentEvent
 		Content:        content,
 		Done:           done,
 	}
+}
+
+func (r *reActRunner) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error) {
+	if r == nil || r.model == nil {
+		return nil, ErrModelUnavailable
+	}
+	input, err := buildInputMessages(req)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := react.NewAgent(ctx, &react.AgentConfig{
+		ToolCallingModel: r.model,
+		ToolsConfig: compose.ToolsNodeConfig{
+			Tools: toBaseTools(r.tools),
+		},
+		MaxStep: defaultReActMaxStep,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	}
+	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		MessageID:      req.MessageID,
+		ClientIP:       req.ClientIP,
+	})
+	response, err := agent.Generate(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	}
+	if response == nil || strings.TrimSpace(response.Content) == "" {
+		return nil, ErrEmptyModelResponse
+	}
+	return []domain.AgentEvent{assistantEvent(req, response.Content, true)}, nil
+}
+
+func (r *reActRunner) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
+	events, err := r.Run(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan domain.AgentEvent, len(events))
+	for _, event := range events {
+		out <- event
+	}
+	close(out)
+	return out, nil
+}
+
+func toBaseTools(tools []einotool.InvokableTool) []einotool.BaseTool {
+	result := make([]einotool.BaseTool, 0, len(tools))
+	for _, item := range tools {
+		if item != nil {
+			result = append(result, item)
+		}
+	}
+	return result
 }

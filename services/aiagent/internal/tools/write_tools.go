@@ -68,7 +68,7 @@ func (t *writeInvokableTool) Info(ctx context.Context) (*schema.ToolInfo, error)
 
 func (t *writeInvokableTool) InvokableRun(ctx context.Context, arguments string, _ ...einotool.Option) (string, error) {
 	// 获取工具执行上下文
-	execution, ok := ctx.Value(toolExecutionContextKey{}).(ToolExecutionContext)
+	execution, ok := ToolExecutionFromContext(ctx)
 	if !ok || execution.UserID == 0 {
 		return "", ErrToolExecutionContext
 	}

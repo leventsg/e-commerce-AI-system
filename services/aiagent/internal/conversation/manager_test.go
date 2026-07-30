@@ -162,7 +162,8 @@ func TestPrepareRejectsConversationOwnedByAnotherUser(t *testing.T) {
 	}
 }
 
-func TestPrepareUsesRecentHistoryLimitInChronologicalOrder(t *testing.T) {
+func TestPrepareDoesNotLoadHistoryBecauseContextManagerOwnsContext(t *testing.T) {
+	ctx := context.Background()
 	conversations := newFakeConversationsModel()
 	messages := newFakeMessagesModel()
 	conversations.rows["conv_history"] = &aiconversations.AiConversations{
@@ -180,10 +181,24 @@ func TestPrepareUsesRecentHistoryLimitInChronologicalOrder(t *testing.T) {
 			CreatedAt:      time.Unix(int64(i), 0),
 		})
 	}
-	if messages.lastLimit != 3 {
-		t.Fatalf("FindRecentByConversationID limit = %d, want 3", messages.lastLimit)
+	manager := NewManager(conversations, messages, WithHistoryLimit(3))
+
+	prepared, err := manager.Prepare(ctx, PrepareRequest{
+		UserID:          8,
+		ConversationID:  "conv_history",
+		ClientMessageID: "client-4",
+		Content:         "最新消息",
+	})
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
 	}
 
+	if prepared.ConversationID != "conv_history" || prepared.UserMessageID == "" {
+		t.Fatalf("prepared = %+v", prepared)
+	}
+	if messages.lastLimit != 0 || messages.lastConversation != "" {
+		t.Fatalf("conversation manager should not load history, lastConversation=%q lastLimit=%d", messages.lastConversation, messages.lastLimit)
+	}
 }
 
 type fakeConversationsModel struct {

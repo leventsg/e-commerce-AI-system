@@ -189,7 +189,7 @@ func defaultToolSpecs(queryTimeout, writeTimeout int64) []toolSpec {
 			integerParam("product_id", "Product ID.", true),
 		)),
 		queryTool(domain.ToolProductRecommend, "Recommend products for a user's stated shopping need.", queryTimeout, "ProductCatalogService", "RecommendProduct", params(
-			stringParam("query", "Natural language recommendation need.", true),
+			stringParam("query", "user query.", false),
 			stringParam("category", "Preferred product category.", false),
 			numberParam("min_price", "Minimum acceptable price.", false),
 			numberParam("max_price", "Maximum acceptable price.", false),

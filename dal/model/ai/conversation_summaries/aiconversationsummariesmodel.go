@@ -29,7 +29,7 @@ func (m *customAiConversationSummariesModel) FindLatestByUserConversation(ctx co
 	var row AiConversationSummaries
 	query := fmt.Sprintf("select %s from %s where `user_id` = ? and `conversation_id` = ? order by `covered_until_created_at` desc, `covered_until_message_id` desc limit 1", aiConversationSummariesRows, m.table)
 	err := m.CachedConn.QueryRowNoCacheCtx(ctx, &row, query, userID, conversationID)
-	if errors.Is(err, sqlc.ErrNotFound) || errors.Is(err, sqlx.ErrNotFound) {
+	if errors.Is(err, sqlc.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {

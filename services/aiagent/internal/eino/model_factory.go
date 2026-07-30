@@ -9,15 +9,15 @@ import (
 
 	openai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/eino-contrib/jsonschema"
+	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 )
 
 var ErrModelUnavailable = errors.New("ai model unavailable, please retry later")
 
 type ModelFactory interface {
-	NewChatModel(ctx context.Context, cfg config.EinoConfig) (model.BaseChatModel, error)
-	NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig) (model.BaseChatModel, error)
+	NewChatModel(ctx context.Context, cfg config.EinoConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error)
+	NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error)
 }
 
 type ChatModelBuilder func(ctx context.Context, provider string, cfg config.EinoConfig) (model.BaseChatModel, error)
@@ -26,8 +26,6 @@ type StructuredChatModelBuilder func(ctx context.Context, provider string, cfg c
 type StructuredOutputConfig struct {
 	Name        string
 	Description string
-	Strict      bool
-	Schema      *jsonschema.Schema
 }
 
 type modelFactory struct {
@@ -60,7 +58,7 @@ func NewModelFactory(opts ...ModelFactoryOption) ModelFactory {
 	return f
 }
 
-func (f *modelFactory) NewChatModel(ctx context.Context, cfg config.EinoConfig) (model.BaseChatModel, error) {
+func (f *modelFactory) NewChatModel(ctx context.Context, cfg config.EinoConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error) {
 	provider, err := normalizeProvider(cfg.Provider)
 	if err != nil {
 		return nil, err
@@ -76,11 +74,11 @@ func (f *modelFactory) NewChatModel(ctx context.Context, cfg config.EinoConfig) 
 	if chatModel == nil {
 		return nil, fmt.Errorf("%w: nil chat model", ErrModelUnavailable)
 	}
-	return chatModel, nil
+	return bindToolsIfProvided(chatModel, tools)
 }
 
 // NewStructuredChatModel 创建结构化输出模型
-func (f *modelFactory) NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig) (model.BaseChatModel, error) {
+func (f *modelFactory) NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error) {
 	provider, err := normalizeProvider(cfg.Provider)
 	if err != nil {
 		return nil, err
@@ -99,7 +97,26 @@ func (f *modelFactory) NewStructuredChatModel(ctx context.Context, cfg config.Ei
 	if chatModel == nil {
 		return nil, fmt.Errorf("%w: nil chat model", ErrModelUnavailable)
 	}
-	return chatModel, nil
+	return bindToolsIfProvided(chatModel, tools)
+}
+
+// bindToolsIfProvided 绑定工具到模型
+func bindToolsIfProvided(chatModel model.BaseChatModel, tools []*schema.ToolInfo) (model.BaseChatModel, error) {
+	if len(tools) == 0 {
+		return chatModel, nil
+	}
+	toolCallingModel, ok := chatModel.(model.ToolCallingChatModel)
+	if !ok {
+		return nil, fmt.Errorf("%w: model does not support tool calling", ErrModelUnavailable)
+	}
+	bound, err := toolCallingModel.WithTools(tools)
+	if err != nil {
+		return nil, fmt.Errorf("%w: bind tools: %v", ErrModelUnavailable, err)
+	}
+	if bound == nil {
+		return nil, fmt.Errorf("%w: nil tool calling model", ErrModelUnavailable)
+	}
+	return bound, nil
 }
 
 func normalizeProvider(provider string) (string, error) {
@@ -139,13 +156,7 @@ func buildOpenAICompatibleModelConfig(cfg config.EinoConfig, structured *Structu
 	}
 	if structured != nil {
 		openAIConfig.ResponseFormat = &openai.ChatCompletionResponseFormat{
-			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
-			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
-				Name:        structured.Name,
-				Description: structured.Description,
-				Strict:      structured.Strict,
-				JSONSchema:  structured.Schema,
-			},
+			Type: openai.ChatCompletionResponseFormatTypeJSONObject,
 		}
 	}
 	return openAIConfig
@@ -154,9 +165,6 @@ func buildOpenAICompatibleModelConfig(cfg config.EinoConfig, structured *Structu
 func validateStructuredOutputConfig(structured StructuredOutputConfig) error {
 	if strings.TrimSpace(structured.Name) == "" {
 		return errors.New("structured output schema name is required")
-	}
-	if structured.Schema == nil {
-		return errors.New("structured output json schema is required")
 	}
 	return nil
 }

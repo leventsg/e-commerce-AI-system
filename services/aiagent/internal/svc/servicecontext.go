@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
 	aiconversationsummaries "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversation_summaries"
@@ -177,8 +178,16 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	)
 	intentPlanner := planner.New(toolRegistry, planner.WithIntentModel(eino.NewIntentModelFactory(modelFactory), c.IntentModel))
 	var agentRunner eino.Runner
-	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino); err == nil {
-		agentRunner = eino.NewRunner(chatModel)
+	toolInfos, toolInfoErr := toolRegistry.ToolInfos(context.Background())
+	if toolInfoErr != nil {
+		logx.Errorw("ai tool info initialization failed", logx.Field("component", "tool_registry"), logx.Field("stage", "initialize"), logx.Field("err", toolInfoErr))
+	}
+	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino, toolInfos...); err == nil {
+		if toolCallingModel, ok := chatModel.(model.ToolCallingChatModel); ok {
+			agentRunner = eino.NewReActRunner(toolCallingModel, toolRegistry.Tools())
+		} else {
+			logx.Errorw("ai chat model does not support tool calling", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model))
+		}
 	} else {
 		logx.Errorw("ai chat model initialization failed", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("reason", "model_init_failed"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model), logx.Field("base_url_host", modelBaseURLHost(c.Eino.BaseURL)), logx.Field("err", err))
 	}

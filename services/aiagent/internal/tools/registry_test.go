@@ -171,6 +171,20 @@ func TestRegistryPlaceholderToolReturnsNotImplemented(t *testing.T) {
 	}
 }
 
+func TestRegisteredQueryToolBecomesExecutableAfterBindingHandlers(t *testing.T) {
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+	NewQueryTools(NewExecutor(registry), QueryToolClients{Product: &fakeProductQueryRPC{}})
+	tool, err := registry.Tool(domain.ToolProductSearch)
+	if err != nil {
+		t.Fatalf("Tool returned error: %v", err)
+	}
+
+	_, err = tool.InvokableRun(context.Background(), `{}`)
+	if errors.Is(err, ErrToolHandlerNotImplemented) {
+		t.Fatalf("bound query tool still returns ErrToolHandlerNotImplemented")
+	}
+}
+
 func TestRegistryHighRiskOrderAndCheckoutSchemasMatchRPCContracts(t *testing.T) {
 	registry := NewRegistry(config.ToolTimeoutConfig{})
 

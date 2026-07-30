@@ -9,7 +9,6 @@ require (
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/dtm-labs/client v1.17.3
 	github.com/dtm-labs/driver-gozero v0.0.7
-	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/elastic/go-elasticsearch/v7 v7.17.10
 	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/google/uuid v1.6.0
@@ -21,7 +20,6 @@ require (
 	github.com/shopspring/decimal v1.4.0
 	github.com/smartwalle/alipay/v3 v3.2.25
 	github.com/stretchr/testify v1.11.1
-	github.com/wk8/go-ordered-map/v2 v2.1.8
 	github.com/zeromicro/go-queue v1.2.2
 	github.com/zeromicro/go-zero v1.7.6
 	github.com/zeromicro/x v0.0.0-20240408115609-8224c482b07e
@@ -39,6 +37,7 @@ require (
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/evanphx/json-patch v4.12.0+incompatible // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
@@ -54,6 +53,7 @@ require (
 	github.com/smartwalle/nsign v1.0.9 // indirect
 	github.com/smarty/assertions v1.16.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	golang.org/x/arch v0.15.0 // indirect
 )

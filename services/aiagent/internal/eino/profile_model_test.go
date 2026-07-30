@@ -42,13 +42,10 @@ func TestProfileExtractorModelUsesStructuredChatModel(t *testing.T) {
 	if plainCalls != 0 || structuredCalls != 1 {
 		t.Fatalf("plainCalls=%d structuredCalls=%d", plainCalls, structuredCalls)
 	}
-	if captured.Name != "ai_user_profile_update" || !captured.Strict || captured.Schema == nil {
+	if captured.Name != "ai_user_profile_update" {
 		t.Fatalf("structured output config = %+v", captured)
 	}
-	if _, ok := captured.Schema.Properties.Get("should_update"); !ok {
-		t.Fatalf("profile schema missing should_update: %+v", captured.Schema)
-	}
-	if _, ok := captured.Schema.Properties.Get("profile_patch"); !ok {
-		t.Fatalf("profile schema missing profile_patch: %+v", captured.Schema)
+	if captured.Description == "" {
+		t.Fatalf("structured output config missing description: %+v", captured)
 	}
 }
