@@ -27,8 +27,11 @@ func (s *SummaryModelStore) FindLatest(ctx context.Context, userID uint64, conve
 		return nil, ErrContextManagerUnavailable
 	}
 	row, err := s.model.FindLatestByUserConversation(ctx, userID, conversationID)
-	if err != nil || row == nil {
+	if err != nil {
 		return nil, err
+	}
+	if row == nil {
+		return nil, nil
 	}
 	return conversationSummaryFromRow(row)
 }

@@ -42,6 +42,11 @@ func WithToolExecutionContext(ctx context.Context, execution ToolExecutionContex
 	return context.WithValue(ctx, toolExecutionContextKey{}, execution)
 }
 
+func ToolExecutionFromContext(ctx context.Context) (ToolExecutionContext, bool) {
+	execution, ok := ctx.Value(toolExecutionContextKey{}).(ToolExecutionContext)
+	return execution, ok
+}
+
 // 包含所有查询工具的 RPC 客户端接口
 type QueryToolClients struct {
 	Product   ProductQueryRPC
@@ -107,7 +112,7 @@ func (t *queryInvokableTool) Info(ctx context.Context) (*schema.ToolInfo, error)
 
 func (t *queryInvokableTool) InvokableRun(ctx context.Context, arguments string, _ ...einotool.Option) (string, error) {
 	// 获取工具执行上下文
-	execution, ok := ctx.Value(toolExecutionContextKey{}).(ToolExecutionContext)
+	execution, ok := ToolExecutionFromContext(ctx)
 	// 校验userid
 	if !ok || execution.UserID == 0 {
 		return "", ErrToolExecutionContext

@@ -237,8 +237,10 @@ func (l *ChatLogic) executePlan(in *aiagent.ChatRequest, prepared *conversation.
 			return []domain.AgentEvent{{Type: domain.EventError, ConversationID: prepared.ConversationID, Content: "AI 服务暂时不可用，请稍后重试", Done: true}}
 		}
 		events, err := l.svcCtx.AgentRunner.Run(l.ctx, eino.RunRequest{
+			UserID:         uint64(in.UserId),
 			ConversationID: prepared.ConversationID,
 			MessageID:      newChatMessageID(),
+			ClientIP:       clientIPFromContext(l.ctx),
 			Messages:       agentMessages,
 		})
 		if err != nil {

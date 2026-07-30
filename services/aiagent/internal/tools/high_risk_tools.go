@@ -292,7 +292,7 @@ func (t *highRiskInvokableTool) Info(ctx context.Context) (*schema.ToolInfo, err
 }
 
 func (t *highRiskInvokableTool) InvokableRun(ctx context.Context, arguments string, _ ...einotool.Option) (string, error) {
-	execution, ok := ctx.Value(toolExecutionContextKey{}).(ToolExecutionContext)
+	execution, ok := ToolExecutionFromContext(ctx)
 	if !ok || execution.UserID == 0 || strings.TrimSpace(execution.ConversationID) == "" {
 		return "", ErrToolExecutionContext
 	}

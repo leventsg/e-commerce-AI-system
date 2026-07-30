@@ -398,7 +398,8 @@ Expected: `go.mod` 和 `go.sum` 新增 Eino 依赖。
 
 ```go
 type ModelFactory interface {
-	NewChatModel(ctx context.Context, cfg config.EinoConfig) (model.ChatModel, error)
+	NewChatModel(ctx context.Context, cfg config.EinoConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error)
+	NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured StructuredOutputConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error)
 }
 ```
 
@@ -412,7 +413,7 @@ type ModelFactory interface {
 
 - [x] **Step 5: 实现 Agent Runner**
 
-Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。首期允许内部使用 Eino Chain/Graph 或 ADK Agent，但对外只暴露稳定接口：
+Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。当前实现使用 Eino ReAct Agent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ReAct 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。对外只暴露稳定接口：
 
 ```go
 type Runner interface {

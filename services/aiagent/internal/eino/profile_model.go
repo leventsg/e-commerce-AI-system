@@ -9,13 +9,11 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/eino-contrib/jsonschema"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	profileprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/profile"
-	orderedmap "github.com/wk8/go-ordered-map/v2"
 )
 
 type profileExtractorModel struct {
@@ -57,58 +55,6 @@ func profileStructuredOutputConfig() StructuredOutputConfig {
 	return StructuredOutputConfig{
 		Name:        "ai_user_profile_update",
 		Description: "candidate JSON patch for updating an AI chat derived user profile",
-		Strict:      true,
-		Schema:      profileCandidateJSONSchema(),
-	}
-}
-
-func profileCandidateJSONSchema() *jsonschema.Schema {
-	return &jsonschema.Schema{
-		Type: string(schema.Object),
-		Properties: orderedmap.New[string, *jsonschema.Schema](
-			orderedmap.WithInitialData[string, *jsonschema.Schema](
-				orderedmap.Pair[string, *jsonschema.Schema]{
-					Key:   "should_update",
-					Value: &jsonschema.Schema{Type: string(schema.Boolean)},
-				},
-				orderedmap.Pair[string, *jsonschema.Schema]{
-					Key: "update_type",
-					Value: &jsonschema.Schema{
-						Type: string(schema.String),
-						Enum: []any{
-							profileextractor.UpdateTypeExplicitPreference,
-							profileextractor.UpdateTypeStablePattern,
-							profileextractor.UpdateTypeCorrection,
-							profileextractor.UpdateTypeDeleteOrForget,
-							profileextractor.UpdateTypeNone,
-						},
-					},
-				},
-				orderedmap.Pair[string, *jsonschema.Schema]{
-					Key: "profile_patch",
-					Value: &jsonschema.Schema{
-						Type:                 string(schema.Object),
-						AdditionalProperties: jsonschema.TrueSchema,
-					},
-				},
-				orderedmap.Pair[string, *jsonschema.Schema]{
-					Key: "evidence_message_ids",
-					Value: &jsonschema.Schema{
-						Type:  string(schema.Array),
-						Items: &jsonschema.Schema{Type: string(schema.String)},
-					},
-				},
-				orderedmap.Pair[string, *jsonschema.Schema]{
-					Key:   "confidence",
-					Value: &jsonschema.Schema{Type: string(schema.Number)},
-				},
-				orderedmap.Pair[string, *jsonschema.Schema]{
-					Key:   "reason",
-					Value: &jsonschema.Schema{Type: string(schema.String)},
-				},
-			),
-		),
-		Required: []string{"should_update", "update_type", "profile_patch", "evidence_message_ids", "confidence", "reason"},
 	}
 }
 
