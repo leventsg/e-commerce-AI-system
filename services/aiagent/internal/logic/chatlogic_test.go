@@ -10,20 +10,19 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/planner"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 )
 
-func TestChatLogicPersistsADKToolAndAssistantEventsViaCallback(t *testing.T) {
+func TestChatLogicRunsSupervisorWithAgentContextAndPersistsEventsViaCallback(t *testing.T) {
 	messages := &fakeChatMessagesModel{}
+	contexts := &fakeContextManager{}
 	logic := NewChatLogic(context.Background(), &svc.ServiceContext{
 		ConversationManager: &fakeConversationManager{prepared: &conversation.PreparedConversation{
 			ConversationID:  "conv-1",
 			UserMessageID:   "msg-user",
 			ClientMessageID: "client-1",
 		}},
-		ContextManager: &fakeContextManager{},
-		IntentPlanner:  fakeIntentPlanner{plan: planner.PlanResult{Intent: planner.IntentChat}},
+		ContextManager: contexts,
 		AgentRunner: fakeRunner{events: []domain.AgentEvent{
 			{Type: domain.EventToolResult, ConversationID: "conv-1", MessageID: "msg-tool", ToolCallID: "call-1", Tool: "cart.list", Status: "success", Content: `{"items":[]}`, DataJSON: `{"items":[]}`, Done: true},
 			{Type: domain.EventAssistantMessage, ConversationID: "conv-1", MessageID: "msg-assistant", Content: "购物车为空", Done: true},
@@ -42,6 +41,9 @@ func TestChatLogicPersistsADKToolAndAssistantEventsViaCallback(t *testing.T) {
 	}
 	if resp.StatusCode != 0 || len(resp.Events) != 2 {
 		t.Fatalf("response = %+v", resp)
+	}
+	if len(contexts.modes) != 1 || contexts.modes[0] != domain.AgentContextMode {
+		t.Fatalf("context modes = %+v, want only AgentContextMode", contexts.modes)
 	}
 	if len(messages.batches) != 2 {
 		t.Fatalf("InsertBatch calls = %d, want callback-only 2 calls", len(messages.batches))
@@ -65,18 +67,13 @@ func (f *fakeConversationManager) Prepare(context.Context, conversation.PrepareR
 	return f.prepared, nil
 }
 
-type fakeContextManager struct{}
+type fakeContextManager struct {
+	modes []domain.ContextMode
+}
 
 func (f *fakeContextManager) Build(_ context.Context, req domain.BuildContextRequest) (*domain.BuildContextResult, error) {
+	f.modes = append(f.modes, req.Mode)
 	return &domain.BuildContextResult{Messages: []domain.ContextMessage{{Role: domain.ContextRoleUser, Content: req.CurrentInput}}}, nil
-}
-
-type fakeIntentPlanner struct {
-	plan planner.PlanResult
-}
-
-func (f fakeIntentPlanner) Plan(context.Context, planner.PlanRequest) (planner.PlanResult, error) {
-	return f.plan, nil
 }
 
 type fakeRunner struct {

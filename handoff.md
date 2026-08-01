@@ -35,7 +35,7 @@
 
 - 原始消息完整保存到 `ai_messages`。
 - 模型调用前临时组装 `[]domain.ContextMessage`。
-- IntentContext 和 AgentContext 分开构建。
+- 在线聊天只构建 AgentContext；旧 IntentContext / IntentPlanner 已被 Supervisor Agent 入口取代。
 - 长对话通过滚动摘要压缩。
 - 摘要由 Eino LLM summarizer 生成，不再用规则拼接。
 - active memories 和 active user profile 可注入上下文。

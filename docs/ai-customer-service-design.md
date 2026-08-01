@@ -132,12 +132,12 @@ Conversation Manager 不再直接决定模型上下文。原始消息是不可�
 
 ### 3.4 Context Manager
 
-Context Manager 是 Planner 和 Agent ChatModel 的统一上下文入口，详细方案见 `docs/ai-agent-context-optimization.md`。
+Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 `docs/ai-agent-context-optimization.md`。
 
 职责：
 
 - 组合 system prompt、当前用户输入、当前任务状态、待确认动作、近期消息、会话摘要、长期记忆、最小用户画像和必要工具上下文。
-- 生成 `IntentContext` 和 `AgentContext` 两种领域无关的临时 ContextMessages。
+- 生成 `AgentContext` 领域无关临时 ContextMessages。
 - 通过滚动摘要和固定近期窗口从源头节省 token：默认保留最近 20 条未压缩消息；未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
 - 每条消息只进入摘要或近期原文之一，不重复注入。
 - 工具结果只直接保留最近一次完整结果；其他历史工具调用只注入固定数量的 ToolCallRef，需要完整结果时按 `tool_call_id` 受控读取。
@@ -160,33 +160,32 @@ Context Manager 是 Planner 和 Agent ChatModel 的统一上下文入口，详�
 - 所有上下文 Store 必须同时按 user ID 和 conversation ID 查询。
 - UserMemory、ConversationSummary、ToolFact 和 UserProfile 都是不可信数据，不能覆盖 system prompt、工具白名单、确认规则和 Execution Guard。
 - 动态 ToolFact 过期后只用于理解历史，写操作前必须重新调用业务 RPC 校验。
-- Context Manager 不包含 Eino 类型；Intent Planner 依赖无 Eino 类型的 `IntentModel` 接口，只有 `internal/eino` 的 IntentModel/Runner 适配器可以把领域消息转换为 `schema.Message`。
+- Context Manager 不包含 Eino 类型；只有 `internal/eino` 的 Supervisor Runner 适配器可以把领域消息转换为 `schema.Message`。
 
 当前方案已收敛为轻量 Context Manager：Planner 和 Agent Runner 默认消费临时组装的 ContextMessages；不持久化模型输入，不做运行时 token 上限裁剪。Conversation Manager 继续负责会话归属校验和原始消息持久化，不再决定模型输入窗口。
 
-### 3.5 Intent Planner
+### 3.5 Supervisor Agent
 职责：
 - 判断用户意图。
-- 生成工具调用计划。
-- 判断是否缺少参数。
-- 判断是否需要确认。
-- 将自然语言请求转换为结构化工具调用。
+- 拆解多步骤业务任务。
+- 路由到合适的领域 SubAgent。
+- 协调多个 SubAgent 的执行顺序。
+- 汇总最终中文回复。
 
-意图类型：
-- chat：闲聊。
-- query：查询。
-- recommend：商品推荐。
-- action：自动化操作。
-- confirm：用户确认。
-- cancel：用户取消。
+领域 SubAgent：
+- product_agent：商品搜索、商品详情、商品推荐、库存查询。
+- order_agent：订单查询、订单列表、取消订单确认。
+- cart_checkout_agent：购物车、结算、创建订单确认。
+- coupon_agent：优惠券查询、领取、我的券、优惠计算。
+- general_agent：普通客服解释、闲聊、无法归类问题。
 
 实现方式：
-- 首期优先使用 Eino Tool Calling 让模型选择工具。
-- Intent Planner 优先使用 fast LLM 返回结构化 JSON 做意图识别和参数抽取；调用失败或返回非法结果时重试一次。
-- 两次 fast LLM 均不可用或结果不可用时，回退规则 Planner；明确中文意图仍可处理订单查询、取消订单、加购物车等请求。
-- Planner 的输出必须经过 Tool Registry 和 Execution Guard 校验后才能执行。
-- Prompt 文本集中放在 `services/aiagent/internal/prompts`，Planner 和 Eino 编排代码不得直接硬编码长 prompt。
-- Planner 迁移后只消费轻量 `IntentContext`，不再自行执行固定 8 条、单条 300 字符的历史裁剪。
+- 使用 Eino ADK `ChatModelAgent + AgentTool`，不使用 `prebuilt/supervisor` / AgentTransfer。
+- Supervisor Agent 不直接绑定业务 RPC 工具，只通过 AgentTool 调度 SubAgent。
+- SubAgent 默认只接收 Supervisor 传入的紧凑 `request`，不共享完整聊天历史。
+- SubAgent 只绑定本领域 ToolInfo 和可执行工具。
+- 工具调用必须经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。
+- Prompt 文本集中放在 `services/aiagent/internal/prompts`，Eino 编排代码不得直接硬编码长 prompt。
 
 ### 3.6 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
@@ -413,12 +412,12 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 ### 5.5 上下文构建流程
 
 1. Conversation Manager 校验会话归属并保存当前用户原始消息。
-2. Context Manager 根据调用方选择 `IntentContext` 或 `AgentContext`。
+2. Context Manager 构建 `AgentContext`。
 3. 加载最新会话摘要、水位后的近期原文、有效长期记忆、活跃 TaskState、pending confirmation、最近一次完整工具结果和历史 ToolCallRef。
 4. 如果未压缩消息达到 30 条，异步将最早 10 条与旧摘要合并成新摘要，之后仍保留最近 20 条原文。
-5. IntentContext 只包含当前用户输入、最近对话、当前 TaskState 和长期记忆摘要。
-6. AgentContext 包含摘要、近期 20 条原文、最近一次完整工具结果、历史工具引用、TaskState、UserMemory 和可选 UserProfile。
-7. Planner 通过领域 `IntentModel` 接口调用 `internal/eino` 适配器，AgentRunner 同样在 `internal/eino` 边界转换消息后调用 ChatModel。
+5. AgentContext 包含当前用户输入、摘要、近期 20 条原文、最近一次完整工具结果、历史工具引用、TaskState、UserMemory 和可选 UserProfile。
+6. Supervisor Runner 在 `internal/eino` 边界转换消息后调用 ADK Supervisor。
+7. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 负责本领域工具选择与执行。
 8. 工具和 assistant 结果持久化后更新 TaskState，并异步评估是否需要生成新摘要或长期记忆候选。
 9. 摘要、记忆或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
 
@@ -426,7 +425,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 
 ## 6. 测试方案
 ### 6.1 单元测试
-- Intent Planner 意图识别。
+- Supervisor Agent 路由、任务拆解和 SubAgent 协调。
 - Eino Tool schema 注册和本地工具风险等级。
 - Confirmation Manager 确认创建、确认、拒绝、过期。
 - Execution Guard 用户 ID 注入和参数校验。

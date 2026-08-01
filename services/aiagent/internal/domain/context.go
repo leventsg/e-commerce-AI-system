@@ -8,8 +8,7 @@ import (
 type ContextMode string
 
 const (
-	IntentContextMode ContextMode = "intent"
-	AgentContextMode  ContextMode = "agent"
+	AgentContextMode ContextMode = "agent"
 
 	ContextRoleSystem    = "system"
 	ContextRoleUser      = "user"

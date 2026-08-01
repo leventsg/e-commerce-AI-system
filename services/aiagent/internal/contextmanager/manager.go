@@ -12,7 +12,6 @@ import (
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	agentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/agent"
-	intentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/intent"
 )
 
 const (
@@ -36,7 +35,6 @@ type SummaryStore interface {
 }
 
 type MemoryStore interface {
-	SummarizeForIntent(ctx context.Context, userID uint64, limit int) (string, error)
 	ListActive(ctx context.Context, userID uint64, limit int) ([]domain.UserMemory, error)
 }
 
@@ -91,7 +89,7 @@ func NewManager(messages MessageStore, tools ToolContextStore, opts ...Option) M
 func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*domain.BuildContextResult, error) {
 	// 验证请求参数
 	if req.UserID == 0 || req.ConversationID == "" || req.CurrentInput == "" ||
-		(req.Mode != domain.IntentContextMode && req.Mode != domain.AgentContextMode) {
+		req.Mode != domain.AgentContextMode {
 		return nil, ErrInvalidContextRequest
 	}
 	if m == nil || m.messages == nil {
@@ -113,12 +111,8 @@ func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*d
 		Messages: make([]domain.ContextMessage, 0, len(recent)+8),
 	}
 
-	if req.Mode == domain.IntentContextMode {
-		result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleSystem, Content: intentprompt.SystemPrompt})
-	} else {
-		result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleSystem, Content: agentprompt.SystemPrompt})
-		appendSummary(summary, result)
-	}
+	result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleSystem, Content: agentprompt.SystemPrompt})
+	appendSummary(summary, result)
 
 	for _, row := range recent {
 		result.Messages = append(result.Messages, domain.ContextMessage{Role: row.Role, Content: redactSensitiveContext(row.Content)})
@@ -128,16 +122,10 @@ func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*d
 		result.RecentMessageEndID = recent[len(recent)-1].MsgId
 	}
 
-	if req.Mode == domain.AgentContextMode {
-		m.appendToolContext(ctx, req, result)
-	}
+	m.appendToolContext(ctx, req, result)
 	m.appendTaskState(ctx, req, result)
-	if req.Mode == domain.IntentContextMode {
-		m.appendIntentMemory(ctx, req, result)
-	} else {
-		m.appendAgentMemory(ctx, req, result)
-		m.appendUserProfile(ctx, req, result)
-	}
+	m.appendAgentMemory(ctx, req, result)
+	m.appendUserProfile(ctx, req, result)
 
 	result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleUser, Content: req.CurrentInput})
 	result.EstimatedInputTokens = estimateInputTokens(result.Messages)
@@ -208,19 +196,6 @@ func (m *manager) appendTaskState(ctx context.Context, req domain.BuildContextRe
 	if message, ok := structuredContextMessage("task_state", state); ok {
 		result.Messages = append(result.Messages, message)
 	}
-}
-
-func (m *manager) appendIntentMemory(ctx context.Context, req domain.BuildContextRequest, result *domain.BuildContextResult) {
-	if m.memories == nil {
-		return
-	}
-	summary, err := m.memories.SummarizeForIntent(ctx, req.UserID, activeMemoryLimit)
-	if err != nil || summary == "" {
-		return
-	}
-	result.Messages = append(result.Messages, domain.ContextMessage{
-		Role: domain.ContextRoleAssistant, Content: "[user_memory_summary]\n" + summary,
-	})
 }
 
 func (m *manager) appendAgentMemory(ctx context.Context, req domain.BuildContextRequest, result *domain.BuildContextResult) {

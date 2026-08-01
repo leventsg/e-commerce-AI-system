@@ -146,6 +146,31 @@ func TestRegistryToolInfoSchemaDoesNotExposeUserID(t *testing.T) {
 	}
 }
 
+func TestRegistryReturnsToolsAndInfosByNamesInRequestedOrder(t *testing.T) {
+	ctx := context.Background()
+	registry := NewRegistry(config.ToolTimeoutConfig{})
+
+	tools, err := registry.ToolsByNames(domain.ToolOrderGet, domain.ToolProductSearch)
+	if err != nil {
+		t.Fatalf("ToolsByNames() error = %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("len(ToolsByNames) = %d, want 2", len(tools))
+	}
+
+	infos, err := registry.ToolInfosByNames(ctx, domain.ToolOrderGet, domain.ToolProductSearch)
+	if err != nil {
+		t.Fatalf("ToolInfosByNames() error = %v", err)
+	}
+	if len(infos) != 2 || infos[0].Name != domain.ToolOrderGet || infos[1].Name != domain.ToolProductSearch {
+		t.Fatalf("infos = %+v", infos)
+	}
+
+	if _, err := registry.ToolsByNames("missing.tool"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("ToolsByNames missing error = %v, want ErrToolNotFound", err)
+	}
+}
+
 func TestRegistryUnknownToolReturnsNotFound(t *testing.T) {
 	registry := NewRegistry(config.ToolTimeoutConfig{})
 

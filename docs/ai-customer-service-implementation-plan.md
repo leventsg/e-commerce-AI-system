@@ -10,6 +10,10 @@
 
 ---
 
+## 当前架构修订
+
+本文早期任务中关于 `IntentPlanner`、`IntentContext`、`IntentModel` 和 `services/aiagent/internal/planner` 的实现步骤已被当前 Supervisor Agent 架构取代。在线聊天主链路现在直接构建 `AgentContext`，进入 Eino ADK `ChatModelAgent + AgentTool` 编排；Supervisor 负责意图识别、任务拆解、领域 SubAgent 路由和最终总结。业务工具只绑定到对应 SubAgent，并继续经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。当前不使用 ADK `prebuilt/supervisor` / AgentTransfer。
+
 ## 1. 交付范围
 
 首期交付 PRD 中的核心闭环：
