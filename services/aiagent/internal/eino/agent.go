@@ -22,6 +22,8 @@ const (
 	supervisorAgentName       = "supervisor_agent"
 )
 
+const defaultReActMaxStep = 8
+
 type RunRequest struct {
 	UserID         uint64
 	ConversationID string
