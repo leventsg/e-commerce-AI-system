@@ -89,6 +89,36 @@ func (r *Registry) ToolInfos(ctx context.Context) ([]*schema.ToolInfo, error) {
 	return result, nil
 }
 
+// ToolsByNames returns registered tools in the order requested by names.
+func (r *Registry) ToolsByNames(names ...string) ([]einotool.InvokableTool, error) {
+	result := make([]einotool.InvokableTool, 0, len(names))
+	for _, name := range names {
+		tool, err := r.Tool(name)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, tool)
+	}
+	return result, nil
+}
+
+// ToolInfosByNames returns tool schemas in the order requested by names.
+func (r *Registry) ToolInfosByNames(ctx context.Context, names ...string) ([]*schema.ToolInfo, error) {
+	tools, err := r.ToolsByNames(names...)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*schema.ToolInfo, 0, len(tools))
+	for _, tool := range tools {
+		info, err := tool.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, info)
+	}
+	return result, nil
+}
+
 // 获取所有工具的元数据
 func (r *Registry) AllMetadata() []domain.Metadata {
 	names := r.sortedNames()

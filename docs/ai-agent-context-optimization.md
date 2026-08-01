@@ -15,16 +15,18 @@
 
 本文是目标设计；`docs/ai-agent-memory-context.md` 描述当前实现状态。
 
+> 当前实现已移除旧 `IntentContext` / `IntentPlanner` 双上下文入口。在线聊天只构建 `AgentContext`，并交给 Eino ADK `ChatModelAgent + AgentTool` 组合完成意图识别、任务拆解、领域 Agent 路由和最终回复。
+
 ## 2. 当前问题
 
-当前上下文链路主要依赖固定历史窗口：
+旧上下文链路主要依赖固定历史窗口：
 
 ```text
 ConversationManager
   -> 从 ai_messages 读取最近 20 条
-  -> Intent Planner 再选最近 8 条
+  -> 旧 Intent Planner 再选最近 8 条
   -> 每条最多 300 个 Unicode 字符
-  -> 普通 ChatModel 使用最近 20 条
+  -> 旧普通 ChatModel 使用最近 20 条
 ```
 
 这套实现存在以下问题：
@@ -41,7 +43,7 @@ ConversationManager
 ### 3.1 目标
 
 - 原始消息完整保存，模型输入不再等同于数据库最近 N 条记录。
-- 使用统一 Context Manager 为 Planner 和 Agent 临时组装模型输入。
+- 使用统一 Context Manager 为 Supervisor Agent 临时组装模型输入。
 - 用滚动摘要控制长对话规模：默认保留最近 20 条未压缩消息；当未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
 - 保证每条消息只属于一种上下文来源：要么仍在近期原文窗口，要么已经进入摘要，不重复注入。
 - 保留结构化工具结果，不对 ID、订单号、数量和状态做字符串截断。
@@ -56,7 +58,7 @@ ConversationManager
 - 本阶段不设计独立的上下文快照表。
 - 本阶段不做运行时 token 上限裁剪，也不因为估算 token 偏高而拒绝模型调用。
 - 本阶段不实现向量数据库、Embedding 或语义检索基础设施。
-- 本阶段不重构 Intent Planner 的职责，也不实现 ReAct 多轮循环。
+- 本阶段不设计独立 Context 快照表；当前在线入口已由 Supervisor Agent 承担意图识别、任务拆解和路由。
 - Context Manager 不替代 Tool Registry、Execution Guard 或 Confirmation Manager。
 
 ## 4. 总体架构
@@ -79,8 +81,7 @@ Context Manager
           |
           v
 临时 ContextMessages
-  |-- IntentContext -> Intent Planner -> Eino IntentModel 适配器
-  `-- AgentContext  -> Eino 消息适配器 -> ChatModel / 后续 Agent Graph
+  `-- AgentContext -> Eino 消息适配器 -> ADK ChatModelAgent + AgentTool
           |
           v
 工具执行 / assistant 输出

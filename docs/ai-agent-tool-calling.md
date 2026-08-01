@@ -2,7 +2,7 @@
 
 ## 1. 文档范围
 
-本文说明本项目 AI 智能客服的工具调用实现，覆盖 WebSocket 入口、意图规划、工具注册、Execution Guard、业务 RPC、高风险确认和审计链路。内容以当前代码为准，而不是仅描述目标架构。
+本文说明本项目 AI 智能客服的工具调用实现，覆盖 WebSocket 入口、Supervisor 多 Agent 编排、工具注册、Execution Guard、业务 RPC、高风险确认和审计链路。内容以当前代码为准，而不是仅描述目标架构。
 
 相关基线文档：
 
@@ -19,19 +19,18 @@ WebSocket user_message
   -> apis/ai（从鉴权上下文取得 user_id）
   -> AiAgent.Chat RPC
   -> ConversationManager（会话与消息持久化）
-  -> IntentPlanner
-       -> Eino ChatModel 输出结构化 JSON
-       -> 失败时最多重试一次
-       -> 再失败时进入中文规则 Planner
-  -> Tool Registry 校验工具、参数和确认策略
-  -> ChatLogic 按查询/低风险写/高风险写分流
-  -> Executor（Execution Guard）
-  -> 工具 Handler 转换参数并调用业务 RPC
+  -> ContextManager（构建 AgentContext）
+  -> Eino ADK Supervisor ChatModelAgent
+       -> 识别意图、拆解任务、路由到领域 SubAgent
+       -> SubAgent 通过 ToolsNode 调用本领域工具
+       -> Supervisor 汇总最终回复
+  -> Executor（Execution Guard，执行业务工具时进入）
   -> ai_tool_calls + 写操作 audit RPC
+  -> ai_messages 持久化 assistant/tool 中间事件
   -> AgentEvent -> AiAgent RPC -> WebSocket
 ```
 
-工具已经实现为 Eino `InvokableTool`，并提供 Eino `ToolInfo` schema；但是当前 `internal/eino/agent.go` 的 `Runner` 只调用 ChatModel 的 `Generate/Stream` 生成普通回复，没有组装 Eino `ToolsNode`，也没有运行“模型 tool call -> ToolsNode -> 再次模型总结”的循环。因此，现阶段不能把业务主链路描述为已启用的 Eino 原生 tool-calling。Eino 工具适配层已具备，实际在线调度由 `IntentPlanner + ChatLogic` 完成。
+工具已经实现为 Eino `InvokableTool`，并提供 Eino `ToolInfo` schema。当前 `internal/eino/agent.go` 的 AgentRunner 使用 Eino ADK `ChatModelAgent + AgentTool`：Supervisor Agent 负责意图识别、任务拆解、Agent 路由和最终总结；领域 SubAgent 只绑定本领域工具，工具 schema 通过 ChatModel tool binding 给模型，可执行工具通过 `ToolsConfig.ToolsNodeConfig.Tools` 给 ADK ToolsNode。ADK assistant/tool 中间事件会转换为领域事件并写入 `ai_messages`。
 
 ## 3. 核心组件
 
@@ -39,14 +38,14 @@ WebSocket user_message
 |---|---|---|
 | WebSocket 网关 | `apis/ai/internal/logic/chatlogic.go` | 鉴权用户透传、协议校验、调用 Chat/ConfirmAction RPC、事件回写 |
 | 会话管理 | `services/aiagent/internal/conversation/manager.go` | 创建/校验会话、保存用户消息、加载有界历史 |
-| 意图 Planner | `services/aiagent/internal/planner/planner.go` | 使用 Eino ChatModel 生成结构化计划，校验后失败降级到规则识别 |
+| Supervisor Runner | `services/aiagent/internal/eino/agent.go` | 使用 Eino ADK ChatModelAgent + AgentTool 编排领域 SubAgent，负责意图识别、任务拆解、路由和总结 |
 | Tool Registry | `services/aiagent/internal/tools/registry.go` | 同步维护 Eino schema 与本地风险、超时、读写和 RPC metadata |
 | 工具集合 | `services/aiagent/internal/tools/*_tools.go` | 注册 Handler、转换参数、调用既有业务 RPC、压缩返回结果 |
 | Executor | `services/aiagent/internal/tools/executor.go` | 工具白名单检查、敏感参数剔除、可信用户注入、超时、统一事件和记录 |
 | 高风险工具 | `services/aiagent/internal/tools/high_risk_tools.go` | 首次调用只创建确认；批准后才执行真实 Handler |
 | Confirmation Manager | `services/aiagent/internal/confirmation/manager.go` | 确认状态机、用户/会话归属校验、过期和幂等控制 |
 | 审计 Recorder | `services/aiagent/internal/audit/recorder.go` | 所有调用写 `ai_tool_calls`，写操作额外调用 audit RPC |
-| 普通回复 Runner | `services/aiagent/internal/eino/agent.go` | 无工具计划时调用 ChatModel 生成普通对话回复 |
+| 领域 SubAgent | `services/aiagent/internal/eino/agent.go` | Product/Order/CartCheckout/Coupon/General Agent，各自只暴露本领域工具 |
 
 `services/aiagent/internal/svc/servicecontext.go` 在服务启动时创建并连接上述对象。注册顺序很重要：先创建 Registry 和 Executor，再创建 QueryTools、WriteTools、HighRiskTools；各工具集合会把 Registry 中仅含 schema 的 `staticTool` 替换成可执行的 Eino `InvokableTool` 包装器。
 
@@ -90,41 +89,33 @@ InvokableRun(JSON arguments)
   -> 返回结构化 data_json
 ```
 
-调用这类 Eino 包装器前，编排器必须通过 `tools.WithToolExecutionContext` 注入 `UserID`、`ConversationID`、`MessageID` 和 `ClientIP`。当前在线 `ChatLogic` 直接构造 `ExecuteRequest`，尚未调用这些 Eino 包装器。
+调用这类 Eino 包装器前，编排器必须通过 `tools.WithToolExecutionContext` 注入 `UserID`、`ConversationID`、`MessageID` 和 `ClientIP`。当前在线 `ChatLogic` 通过 ADK Runner 注入该上下文；SubAgent 工具调用进入 Eino 包装器后再由 Execution Guard 执行业务 RPC。
 
-## 5. 意图与工具选择
+## 5. Supervisor 与工具选择
 
-### 5.1 LLM Planner
+### 5.1 Supervisor Agent
 
-`IntentPlanner.Plan` 优先创建 Eino ChatModel，并向模型发送集中维护的 system prompt、最近最多 8 条压缩历史以及当前输入。模型必须返回 JSON：
+Supervisor Agent 是在线主链路入口，不再存在单独的 Intent Planner。Supervisor 消费完整 `AgentContext`，自行完成：
 
-```json
-{
-  "intent": "query|recommend|action|chat",
-  "tool_name": "order.get",
-  "arguments": {"order_id": "202406300001"},
-  "missing_params": [],
-  "assistant_message": ""
-}
-```
+- 意图识别；
+- 多步骤任务拆解；
+- 决定转交给哪个领域 SubAgent；
+- 判断是否需要继续调用其他 SubAgent；
+- 汇总最终中文回复。
 
-Planner 不直接信任该结果。`validatedPlan` 会：
+Supervisor 不直接绑定业务 RPC 工具，避免绕过领域边界和 Execution Guard。它只绑定领域 AgentTool，例如 `product_agent`、`order_agent`、`cart_checkout_agent`、`coupon_agent`、`general_agent`。子 Agent 默认只接收 Supervisor 传入的紧凑 `request`，不共享完整聊天历史；本项目不使用 ADK `prebuilt/supervisor` / AgentTransfer。
 
-- 校验 intent 是否允许；
-- 通过 Registry 拒绝未注册工具；
-- 删除 `user_id`、token、session、auth 等敏感参数；
-- 根据 Eino schema 检查必填参数；
-- 用本地 metadata 覆盖工具规范名称和 `RequireConfirmation`。
+### 5.2 领域 SubAgent
 
-模型初始化、生成、JSON 解析或校验失败时最多尝试两次，之后进入规则 Planner。
+领域 SubAgent 按业务边界拆分：
 
-### 5.2 规则兜底
+- `product_agent`：商品搜索、详情、推荐、库存。
+- `order_agent`：订单查询、订单列表、取消订单确认。
+- `cart_checkout_agent`：购物车、结算、创建订单确认。
+- `coupon_agent`：优惠券查询、领取、我的券、优惠计算。
+- `general_agent`：普通客服解释、闲聊、无法归类问题。
 
-规则 Planner 当前明确覆盖订单取消、订单查询、加入购物车和商品推荐。它仍通过同一个 Registry 生成计划，因此不会绕过工具白名单或确认策略。缺少订单号、商品 ID 等必填信息时返回 `assistant_message` 追问，不执行工具。
-
-### 5.3 普通聊天
-
-Planner 未选择工具时，`ChatLogic` 调用 `AgentRunner.Run`。该路径使用 Eino ChatModel 生成 `assistant_message`；模型不可用、返回空内容或调用失败时返回明确错误，不会编造业务结果。
+SubAgent 只绑定本领域 `ToolInfo` 和可执行工具。缺参追问、参数抽取、工具选择和工具失败处理由 SubAgent 在自己的工具范围内完成。
 
 ## 6. 低风险工具执行流程
 
@@ -132,10 +123,10 @@ Planner 未选择工具时，`ChatLogic` 调用 `AgentRunner.Run`。该路径使
 
 ```text
 用户消息
-  -> Planner: action + cart.add + {product_id, quantity}
-  -> ChatLogic 删除任何 user_id 参数
-  -> 从 ChatRequest.UserId 构造 ExecuteRequest.UserID
-  -> WriteTools.Execute
+  -> Supervisor 判断需要购物车能力
+  -> 调用 cart_checkout_agent AgentTool
+  -> cart_checkout_agent 选择 cart.add 并抽取 {product_id, quantity}
+  -> writeInvokableTool 从 ToolExecutionContext 构造 ExecuteRequest.UserID
   -> Executor 查 Registry metadata
   -> 再次清理敏感参数
   -> 根据 metadata 创建 5 秒 context timeout
@@ -159,9 +150,9 @@ Planner 未选择工具时，`ChatLogic` 调用 `AgentRunner.Run`。该路径使
 ### 7.1 创建确认
 
 ```text
-Planner 选择高风险工具
-  -> ChatLogic 以 Registry metadata 为最终确认依据
-  -> HighRiskTools.RequestConfirmation
+Supervisor 调用领域 AgentTool
+  -> SubAgent 选择高风险工具
+  -> highRiskInvokableTool 调用 HighRiskTools.RequestConfirmation
   -> 校验 risk=high、require_confirmation=true、write=true
   -> 清理敏感参数
   -> 查询必要业务信息并生成用户可读摘要
@@ -289,14 +280,14 @@ WrapperAuthMiddleware
 6. 为 schema、参数转换、用户 ID 覆盖、超时、审计和确认策略补充测试。
 7. 若工具需要被当前在线聊天链路选择，同步更新 intent prompt；明确中文意图还应按需要扩展规则 Planner。
 
-如果后续启用 Eino 原生 tool-calling，还需要在 `internal/eino` 中组装 ChatModel tool binding、`ToolsNode` 和多轮执行图，并在每次 `InvokableRun` 前注入 `ToolExecutionContext`。该改造不能绕开现有 Registry、Executor、Confirmation Manager 和 Recorder。
+Eino 原生 tool-calling 已通过 ADK ChatModelAgent 接入在线主链路。`internal/eino` 负责组装 ChatModel tool binding、ADK ToolsNode 和多轮执行；每次 `InvokableRun` 前仍必须注入可信 `ToolExecutionContext`。该改造不能绕开现有 Registry、Executor、Confirmation Manager 和 Recorder。
 
 ## 13. 设计目标与当前差异
 
 当前实现与设计文档相比主要有以下差异：
 
-1. 设计目标中的 Eino Agent/Graph/ToolsNode 工具循环尚未接入在线主链路；当前由结构化 Intent Planner 和 `ChatLogic` 调度工具。
-2. Eino 工具 schema 和可执行包装器已经存在，可作为后续 ToolsNode 接入基础。
+1. Eino ADK ChatModelAgent 已接入在线主链路；结构化 Intent Planner 仍作为明确中文意图兜底。
+2. Eino 工具 schema 和可执行包装器必须同时注册，分别供模型识别和 ToolsNode 执行。
 3. 当前工具执行后由本地 Handler 的 `Summary` 生成 assistant message，而不是将工具结果再次交给 ChatModel 总结。
 4. `AgentRunner.Stream` 已实现模型流读取，但当前 `AiAgent.Chat` 使用同步 `Run`，RPC 响应和 WebSocket 推送不是逐 token 的端到端流式链路。
 

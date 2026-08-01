@@ -3,7 +3,6 @@ package contextmanager
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"time"
 
 	aiusermemories "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_memories"
@@ -72,18 +71,6 @@ func (s *MemoryModelStore) ListActiveAt(ctx context.Context, userID uint64, limi
 		}
 	}
 	return result, nil
-}
-
-func (s *MemoryModelStore) SummarizeForIntent(ctx context.Context, userID uint64, limit int) (string, error) {
-	memories, err := s.ListActive(ctx, userID, limit)
-	if err != nil || len(memories) == 0 {
-		return "", err
-	}
-	parts := make([]string, 0, len(memories))
-	for _, memory := range memories {
-		parts = append(parts, memory.Type+":"+memory.Content)
-	}
-	return strings.Join(parts, "\n"), nil
 }
 
 func (s *MemoryModelStore) ExpireDue(ctx context.Context, userID uint64, now time.Time) (int, error) {

@@ -1,520 +1,342 @@
-# AI 智能客服 Context / 摘要 / 记忆 / 画像交接文档
+# AI 智能客服 Agent 交接文档
 
-更新时间：2026-07-24
+更新时间：2026-08-01
 
 当前分支：`feat/context_optimization`
 
-写给新会话：你不需要知道前面的聊天历史。从这份文档开始接手即可。先读 `AGENTS.md`，再读本文档里列出的任务和坑。
+写给新会话：你不需要知道之前聊天历史。先读 `AGENTS.md`，再读本文档。这个仓库当前工作区是脏的，里面有连续多轮 AI 客服改造成果；不要随手 reset、checkout 或删除文件。
 
 ## 1. 我们在做什么任务
 
-我们正在做 AI 智能客服的上下文工程优化。当前方案已经明确为轻量 Context Manager，而不是企业级 Context Snapshot 系统。
+我们在改造 `services/aiagent` 这套电商 AI 客服 Agent，目标是让它真正基于 Eino 做模型、工具、上下文、摘要、用户画像和幂等聊天编排。
 
-核心目标：
+最近主线包括：
 
-- 原始消息完整保存到 `ai_messages`。
-- 每次模型调用前临时组装 `[]domain.ContextMessage`。
-- Intent Planner 和 Agent Runner 都消费 Context Manager 产物。
-- 长对话通过滚动摘要压缩。
-- 默认保留最近 20 条未压缩 user/assistant 原文。
-- 未摘要消息达到 30 条时，每轮压缩最早 10 条，并推进摘要水位。
-- 工具上下文只直接注入最近一次完整 tool result。
-- 更早工具调用只注入 ToolCallRef，需要完整结果时再按 `tool_call_id + user_id + conversation_id` 查询。
-- 长期记忆使用 `UserMemory` 保存原子化偏好/指令/证据。
-- 用户画像 `UserProfile` 已重新定义为“从 AI 聊天中由 LLM 异步抽取的 JSON 画像”，不再来自 users RPC。
-- token 估算只用于日志/metadata，不做运行时裁剪，不阻塞模型调用。
+- 去掉 users RPC 来源的账号画像，改成从聊天消息异步抽取 `UserProfile` JSON。
+- `ai_messages` 增加 `client_message_id`、`seq`、`msg_id`，实现重复提交幂等。
+- 将工具注册为 Eino 可执行工具，并把 AgentRunner 从单次 LLM 调用改成 Eino ADK ChatModelAgent。
+- ModelFactory 支持 tools 参数和结构化输出模型。
+- Profile Extractor 改为 DeepSeek/OpenAI-compatible JSON Output：`response_format: {"type":"json_object"}`，不再使用 `json_schema`。
 
 优先阅读：
 
 1. `AGENTS.md`
 2. `docs/ai-customer-service-prd.md`
 3. `docs/ai-customer-service-design.md`
-4. `docs/ai-agent-context-optimization.md`
-5. `docs/ai-customer-service-implementation-plan.md` 的 Task 18/19 相关部分
+4. `docs/ai-customer-service-implementation-plan.md`
+5. `docs/ai-agent-context-optimization.md`
+6. `docs/ai-agent-tool-calling.md`
 
 ## 2. 已经完成了什么
 
-### 2.1 Task 18：轻量 Context Manager 正式接入
+### 2.1 Context Manager / 摘要 / 记忆
 
-已完成的效果：
+已完成轻量 Context Manager 方向：
 
-- `ContextManager` 能构建 IntentContext 和 AgentContext。
-- IntentContext 只包含当前输入、最近对话、当前 TaskState、长期记忆摘要。
-- AgentContext 包含：
-  - agent system prompt；
-  - conversation summary；
-  - 最近 20 条原文；
-  - 最近一次完整工具结果；
-  - 历史 ToolCallRef；
-  - TaskState；
-  - active UserMemory；
-  - 可选 UserProfile JSON。
-- `ChatLogic` 已分别构建 IntentContext 和 AgentContext。
-- Planner / Runner 使用领域 `domain.ContextMessage`，Eino 类型仍隔离在 `internal/eino/**`。
-- token 估算只记录，不裁剪、不阻塞。
+- 原始消息完整保存到 `ai_messages`。
+- 模型调用前临时组装 `[]domain.ContextMessage`。
+- 在线聊天只构建 AgentContext；旧 IntentContext / IntentPlanner 已被 Supervisor Agent 入口取代。
+- 长对话通过滚动摘要压缩。
+- 摘要由 Eino LLM summarizer 生成，不再用规则拼接。
+- active memories 和 active user profile 可注入上下文。
+- token 估算只做日志/metadata，不做运行时阻断。
 
 关键文件：
 
-- `services/aiagent/internal/contextmanager/manager.go`
-- `services/aiagent/internal/domain/context.go`
-- `services/aiagent/internal/logic/chatlogic.go`
-- `services/aiagent/internal/eino/messages.go`
-
-### 2.2 Agent system prompt 已重写
-
-文件：
-
-- `services/aiagent/internal/prompts/agent/agent_system_prompt.txt`
-
-当前 prompt 已覆盖：
-
-- 电商客服身份；
-- 安全与信任边界；
-- 工具使用纪律；
-- 高风险确认规则；
-- 不编造业务事实；
-- 中文客服回答风格。
-
-### 2.3 Task 19：滚动摘要与长期记忆已部分完成
-
-已完成：
-
-- 新增 `ai_conversation_summaries` SQL/model。
-- 扩展 `ai_user_memories` 的 key/source/status/TTL/source message/last confirmed 等字段。
-- `SummaryManager` 已实现滚动摘要。
-- `MemoryPolicy` 已实现显式记忆、受控推断记忆、删除和过期。
-- `MemoryStore` 已能读取 active memories，并为 IntentContext 生成简短记忆摘要。
-- `ContextManager` 已接入摘要和 active memories。
-- `ChatLogic` 在消息持久化后触发摘要刷新，失败只记录日志，不阻塞聊天。
-
-关键文件：
-
-- `services/aiagent/internal/contextmanager/summary.go`
-- `services/aiagent/internal/contextmanager/summary_store.go`
-- `services/aiagent/internal/contextmanager/summary_message_store.go`
-- `services/aiagent/internal/contextmanager/memory_policy.go`
-- `services/aiagent/internal/contextmanager/memory_store.go`
-- `dal/model/ai/conversation_summaries/**`
-- `dal/model/ai/user_memories/**`
-
-### 2.4 摘要生成已改为 LLM 压缩
-
-之前错误地用规则拼接摘要，已经改掉。
-
-现在：
-
-- `ExtractiveSummarizer` 已移除。
-- 新增 Eino LLM summarizer。
-- 摘要模型无工具权限。
-- 输入：上一版摘要 + 本轮待压缩消息。
-- 输出：严格 JSON：
-  - `summary`
-  - `key_facts`
-  - `open_tasks`
-- 摘要 prompt 单独放在 `services/aiagent/internal/prompts/summary/summary_system_prompt.txt`。
-
-关键文件：
-
+- `services/aiagent/internal/contextmanager/**`
 - `services/aiagent/internal/eino/summary_model.go`
 - `services/aiagent/internal/prompts/summary/summary_system_prompt.txt`
-- `services/aiagent/internal/svc/servicecontext.go`
-- `services/aiagent/internal/config/config.go`
-- `services/aiagent/etc/aiagent.yaml`
-- `services/aiagent/etc/aiagent.prod.yaml`
+- `services/aiagent/internal/logic/chatlogic.go`
 
-配置新增：
+### 2.2 聊天来源 UserProfile JSON
 
-- `SummaryModel config.EinoConfig`
+旧方向已经废弃：不要再从 users RPC 取昵称、邮箱、locale 这类账号资料作为画像。
 
-未配置 `SummaryModel` 时，当前接线 fallback 到 `IntentModel` 配置。
+当前方向：
 
-### 2.5 摘要 token 计算已改进
-
-之前 `ConversationSummary.TokenCount` 使用估算值。现在已经改为：
-
-- `RollingSummarizer` 返回 `SummarizeResult`。
-- Eino adapter 从 `response.ResponseMeta.Usage` 读取：
-  - `PromptTokens`
-  - `CompletionTokens`
-  - `TotalTokens`
-- `ConversationSummary.TokenCount` 优先使用真实 `CompletionTokens`。
-- provider 未返回 usage 时才 fallback 到 `estimateSummaryContentTokens`。
-
-注意语义：
-
-- `ConversationSummary.TokenCount` 表示“摘要内容未来注入上下文时大约占多少 token”。
-- 不表示“本次 LLM 调用总成本”。
-- `PromptTokens` / `TotalTokens` 后续如果要做成本统计，应另设计日志或 usage 表。
-
-### 2.6 摘要 backlog 问题已优化
-
-用户指出：`ChatLogic` 批量插入消息可能一次让水位后未摘要消息超过 30，而旧 `MaybeRefresh` 每次只 `limit=30`，不能感知真实 backlog。
-
-已完成优化：
-
-- DAL 新增：
-  - `CountUnsummarizedContextMessages`
-  - `FindRecentUnsummarizedContextMessages`
-- `SummaryMessagesStore` 新增：
-  - `CountUnsummarized`
-  - `FindRecentUnsummarized`
-- `SummaryManager.MaybeRefresh` 现在：
-  - 先按摘要水位 count；
-  - 未满 30 不压缩；
-  - 满 30 后每轮读取最早 30 条；
-  - 每轮压缩最早 10 条；
-  - 单次最多压缩 3 轮；
-  - 最终 `RecentMessages` 返回最终水位后的最近 20 条。
-
-测试覆盖：
-
-- 29 条不压缩；
-- 30 条压缩 1 轮；
-- 45 条压缩多轮；
-- 70 条最多压缩 3 轮；
-- 第二轮 LLM 失败时保留第一轮已保存摘要，不推进失败轮水位；
-- DAL count 查询与 watermark 条件一致；
-- recent unsummarized 查询返回正序窗口。
-
-### 2.7 存储职责边界已重构
-
-用户质疑 `persistence.go` 放在业务目录且命名含混。已按职责边界拆分：
-
-- `dal/model/ai/**` 只做 SQL / go-zero model / row 级 CRUD 和查询。
-- `contextmanager` 保留业务策略和上下文组装。
-- DB row 与 domain object 的转换放在明确命名的 store adapter。
-
-现在相关文件：
-
-- `summary_store.go`
-- `memory_store.go`
-- `summary_message_store.go`
-
-已删除/不再使用：
-
-- `services/aiagent/internal/contextmanager/persistence.go`
-
-### 2.8 用户画像文档已重新定义
-
-最后一轮用户明确：
-
-- 现在不需要 RPC 来源的 `AccountProfile`。
-- 不需要 users RPC 来源的账号画像。
-- 只需要从聊天中提取的用户画像 `UserProfile`。
-- UserProfile 保存为 JSON，便于 LLM 识别。
-- 每轮聊天消息持久化后，通过 Kafka MQ 异步触发画像更新。
-
-已经只更新文档，未改代码。
-
-文档现已统一：
-
-- `UserProfile` 只来源于 AI 聊天过程中的用户表达和稳定行为模式。
+- `UserProfile` 是从聊天消息里异步抽取的长期偏好/稳定模式 JSON。
 - `UserMemory` 是原子化记忆/证据。
-- `UserProfile` 是面向 LLM 注入的聚合 JSON 画像。
-- UserProfile 更新四类时机：
-  1. 用户明确表达长期偏好；
-  2. 多次行为表现出稳定模式；
-  3. 用户主动纠正画像；
-  4. 用户主动要求删除、遗忘或不再使用某类偏好。
-- 画像更新通过 Kafka topic `AiUserProfileUpdates` 异步触发。
-- 建议新增 `ai_user_profiles` 表。
-- `docs/ai-agent-context-optimization.md` 和 `docs/ai-customer-service-implementation-plan.md` 已删除“users RPC 生成最小 UserProfile”的旧口径。
+- `UserProfile` 是面向 LLM 注入的聚合画像 JSON。
+- 每轮聊天消息持久化后通过 Kafka topic `ai-user-profile-updates` 触发画像更新。
+- LLM 只能输出候选 patch，后端负责校验、敏感信息拒绝、证据归属、用户隔离和 upsert。
 
-注意：代码里当前仍存在 users RPC `UserProfileSource` 实现和接线，这是旧实现残留，后续需要按新文档移除/替换。最后一轮用户只要求更新文档，所以没有改代码。
+已实现的核心文件包括：
+
+- `services/aiagent/internal/profileextractor/**`
+- `services/aiagent/internal/eino/profile_model.go`
+- `services/aiagent/internal/prompts/profile/profile_system_prompt.txt`
+- `services/aiagent/internal/consumer/profile_update/**`
+- `dal/model/ai/user_profiles/**`
+- `services/aiagent/internal/contextmanager/user_profile.go`
+
+注意：画像抽取现在仍在修结构化输出透传问题，见第 3 节。
+
+### 2.3 ai_messages 幂等与 UUIDv7
+
+已按用户要求完成：
+
+- 前端聊天请求增加 `client_message_id`。
+- 同一轮 user/assistant/tool 消息保存同一个 `client_message_id`。
+- `msg_id` 使用 UUIDv7。
+- `seq` 作为 DB 内部自增顺序 ID。
+- 重复提交按同一用户的 user 消息幂等判断。
+- 重放旧响应时只查同一会话、同一 `client_message_id` 的 assistant 消息，并按 `seq asc` 返回。
+
+重要概念：
+
+- `client_message_id` 是前端生成的一轮请求幂等 ID。
+- `dedupe_client_message_id` 是 MySQL 生成列，只用于 user 消息唯一索引。
+- 不能直接唯一约束 `(user_id, client_message_id)`，因为同一轮 assistant/tool 也要保存相同 `client_message_id`。
+
+### 2.4 Eino Tool Calling / ADK
+
+已按用户要求把工具接入 Eino：
+
+- 不新增 `NewToolCallingChatModel`。
+- 原地改了：
+  - `NewChatModel(ctx, cfg, tools ...*schema.ToolInfo)`
+  - `NewStructuredChatModel(ctx, cfg, structured, tools ...*schema.ToolInfo)`
+- tools 非空时使用 `ToolCallingChatModel.WithTools(tools)`，不用 deprecated `BindTools`。
+- Query/Write/HighRisk 工具包装为 Eino `InvokableTool`。
+- `AgentRunner` 改为 Eino ADK ChatModelAgent，内部使用 ToolsNode 执行工具。
+- Runner 执行前注入可信 `ToolExecutionContext`：authenticated user ID、conversation ID、message ID、client IP。
+- Eino tool 参数里的 `user_id` 仍不可信，Execution Guard 必须覆盖。
+
+关键文件：
+
+- `services/aiagent/internal/eino/model_factory.go`
+- `services/aiagent/internal/eino/agent.go`
+- `services/aiagent/internal/tools/query_tools.go`
+- `services/aiagent/internal/tools/write_tools.go`
+- `services/aiagent/internal/tools/high_risk_tools.go`
+- `services/aiagent/internal/svc/servicecontext.go`
+
+重要限制：
+
+- ADK assistant/tool 中间事件需要写入 `ai_messages`；工具审计仍由现有 recorder/Execution Guard 负责。
+
+### 2.5 ModelFactory 结构化输出改为 json_object
+
+最近已把结构化输出从 `json_schema` 改成 `json_object`：
+
+- `StructuredOutputConfig` 只保留 `Name`、`Description`。
+- 删除 profile schema 构造函数。
+- 不再发送 `json_schema`。
+- 目标是 DeepSeek JSON Output：`response_format: {"type":"json_object"}`。
+- profile prompt 已明确要求只返回 JSON 对象，并提供固定示例格式。
+
+关键文件：
+
+- `services/aiagent/internal/eino/model_factory.go`
+- `services/aiagent/internal/eino/profile_model.go`
+- `services/aiagent/internal/eino/model_factory_test.go`
+- `services/aiagent/internal/eino/profile_model_test.go`
+
+最近验证通过：
+
+```bash
+go test ./services/aiagent/internal/eino -count=1
+go test ./services/aiagent/internal/profileextractor -count=1
+go test ./services/aiagent/... -count=1
+git diff --check
+```
 
 ## 3. 当前卡在哪儿
 
-没有外部阻塞，但有几个明确的未完成点：
+当前最新问题：用户指出 DeepSeek JSON Output 要求真实请求体里传：
 
-### 3.1 文档新方案尚未实现：聊天来源 UserProfile JSON
-
-现在文档已经改成：
-
-- `ai_user_profiles`
-- Kafka `AiUserProfileUpdates`
-- 异步 Profile Extractor
-- LLM JSON patch
-
-但代码还没实现。
-
-当前代码里仍有旧的：
-
-- `services/aiagent/internal/contextmanager/user_profile.go`
-- users RPC `UserProfileSource`
-- `servicecontext.go` 里 `NewUserProfileSource(userRPC)` 接线
-
-下一步实现画像任务时，必须移除/替换这些旧路径。
-
-### 3.2 Task 19 文档状态是“部分完成”
-
-`docs/ai-customer-service-implementation-plan.md` 里 Task 19：
-
-- 摘要和记忆相关步骤已完成。
-- `ai_user_profiles`、Kafka 异步画像、`profileextractor` 仍待实现。
-- Step 2 / Step 5 / Step 6 已按新画像方案标成未完成。
-
-不要把 Task 19 整体说成完全完成。
-
-### 3.3 工作区有大量未提交/未跟踪文件
-
-当前不是一个小 diff。接手先跑：
-
-```bash
-git status --short
+```json
+"response_format": {"type": "json_object"}
 ```
 
-预计会看到：
+但他观察到当前没有传 `response_format` 参数。
 
-- `construct/depend/sql/init.sql`
-- `dal/model/ai/messages/aimessagesmodel.go`
-- `dal/model/ai/messages/aimessagesmodel_test.go`
-- `dal/model/ai/user_memories/**`
-- `dal/model/ai/conversation_summaries/**`
-- `docs/ai-customer-service-implementation-plan.md`
-- `docs/ai-agent-context-optimization.md`
-- `services/aiagent/etc/aiagent*.yaml`
-- `services/aiagent/internal/contextmanager/**`
-- `services/aiagent/internal/eino/summary_model.go`
-- `services/aiagent/internal/prompts/summary/**`
-- 等等
+已检查到的事实：
 
-不要随手 `git reset`、`git checkout --` 或删除未跟踪文件。这些是本轮连续任务的成果。
+- `services/aiagent/internal/eino/model_factory.go` 里 `buildOpenAICompatibleModelConfig(..., structured != nil)` 当前设置了：
+  - `ResponseFormat.Type = openai.ChatCompletionResponseFormatTypeJSONObject`
+- Eino 依赖源码 `github.com/cloudwego/eino-ext/libs/acl/openai@v0.1.17/chat_model.go` 会在请求组装时读取 `c.config.ResponseFormat` 并设置 `req.ResponseFormat`。
+- 但是我们自己的测试目前只断言本地 config struct，没有真实 HTTP 请求体级别的回归测试。
+
+所以真正卡点不是“代码里完全没写 response_format”，而是：
+
+- 还没有证明真实 DeepSeek/OpenAI-compatible HTTP body 一定带了 `response_format`。
+- 如果用户抓包确实没看到，可能是结构化模型没有走 `NewStructuredChatModel`、配置被覆盖、Eino 传参链路没有按预期进入请求体，或测试没覆盖实际调用路径。
+
+下一步必须先写真实请求体测试，不要继续靠猜。
 
 ## 4. 下一步计划
 
-建议下一会话按下面顺序推进。
+### Step 1：只读确认当前状态
 
-### Step 1：先做只读状态确认
-
-```bash
-git status --short
-rg -n "users RPC|UserProfileSource|NewUserProfileSource|UserProfileStore|ai_user_profiles|AiUserProfileUpdates|profileextractor" docs services dal construct
-rg -n "CountUnsummarizedContextMessages|FindRecentUnsummarizedContextMessages|maxSummaryRefreshRounds|NewSummarySummarizer|SummarizeResult" services/aiagent dal/model/ai
-```
-
-### Step 2：实现聊天来源 UserProfile JSON 的数据库层
-
-按文档新增：
-
-- `dal/model/ai/user_profiles/ai_user_profiles.sql`
-- `dal/model/ai/user_profiles/**`
-- migration 和 init SQL。
-
-建议表结构以 `docs/ai-agent-context-optimization.md` 的 `ai_user_profiles` 为准：
-
-- `user_id`
-- `profile_json`
-- `version`
-- `source`
-- `status`
-- `last_event_id`
-
-### Step 3：实现 UserProfileStore 和策略层
-
-目标：
-
-- 不再从 users RPC 读画像。
-- 从 `ai_user_profiles.profile_json` 读画像。
-- 保存时校验 JSON 合法性、用户隔离、敏感信息和删除请求。
-- `UserProfile` 是非可信上下文，不能覆盖 system prompt、工具白名单、user ID 或确认策略。
-
-可能新增：
-
-- `services/aiagent/internal/contextmanager/user_profile_store.go`
-- `services/aiagent/internal/profileextractor/**`
-
-### Step 4：实现 Kafka 异步画像更新
-
-项目已有 Kafka 封装：
-
-- `common/mq`
-- `common/config.KafkaConfig`
-
-建议沿用现有服务模式：
-
-- `Config` 增加 `KafkaMQ config.KafkaConfig`
-- `aiagent.yaml` / `aiagent.prod.yaml` 增加 `AiUserProfileUpdates` topic
-- `ChatLogic` 在 `MessagesModel.InsertBatch` 成功后投递事件
-- key 使用 `user_id`
-- payload 包含：
-  - `event_id`
-  - `user_id`
-  - `conversation_id`
-  - `message_ids`
-  - `created_at`
-
-投递失败只记录日志，不影响聊天响应。
-
-### Step 5：实现 LLM Profile Extractor
-
-要求：
-
-- 异步 consumer 收到 Kafka 事件后执行。
-- 输入：本轮消息、已有 UserProfile JSON、相关 UserMemory/最近消息。
-- 输出严格 JSON，建议字段：
-  - `should_update`
-  - `update_type`
-  - `profile_patch`
-  - `evidence_message_ids`
-  - `confidence`
-  - `reason`
-- `update_type`：
-  - `explicit_preference`
-  - `stable_pattern`
-  - `correction`
-  - `delete_or_forget`
-  - `none`
-- LLM 不能直接写库，只能产生候选 patch。
-
-### Step 6：替换旧 users RPC UserProfile
-
-删除或停用：
-
-- `UserRPCProfileSource`
-- `NewUserProfileSource(userRPC)`
-- `WithUserProfileSource(contextmanager.NewUserProfileSource(userRPC))`
-
-替换为：
-
-- `UserProfileStore`
-- 读取 `ai_user_profiles.profile_json`
-
-注意：如果代码里 `UserProfile` domain 结构只有 `DisplayName/Locale`，需要改成 JSON 画像结构或 RawMessage/结构化 profile。
-
-### Step 7：验证
-
-至少跑：
-
-```bash
-GOCACHE=/private/tmp/go-build-task19 go test ./services/aiagent/internal/contextmanager -count=1
-GOCACHE=/private/tmp/go-build-task19 go test ./dal/model/ai/... -count=1
-GOCACHE=/private/tmp/go-build-task19 go test ./services/aiagent/... -count=1
-git diff --check
-```
-
-如果改到 WebSocket/API：
-
-```bash
-GOCACHE=/private/tmp/go-build-task19 go test ./apis/ai/... -count=1
-```
-
-注意：之前 `apis/ai/...` 在 sandbox 中可能因为 `httptest` 监听本地端口失败：
-
-```text
-bind: operation not permitted
-```
-
-这不是业务断言失败。如果需要验证，要在允许本地端口监听的环境里重跑。
-
-## 5. 绝对不要再踩的坑
-
-1. 不要再把 `UserProfile` 设计成 users RPC 来源的账号资料。
-
-   用户已经明确：当前不需要 RPC 来源 AccountProfile。`UserProfile` 只表示从 AI 聊天中抽取的 JSON 画像。
-
-2. 不要把 `UserMemory` 和 `UserProfile` 混成一个东西。
-
-   `UserMemory` 是原子化记忆/证据；`UserProfile` 是给 LLM 使用的聚合 JSON 画像。
-
-3. 不要同步阻塞聊天主流程来更新画像。
-
-   用户明确希望每轮聊天消息持久化后异步执行，可通过 Kafka MQ。
-
-4. 不要让 LLM 直接写数据库。
-
-   LLM 只能输出候选 JSON patch。后端策略必须校验来源、置信度、敏感信息、删除请求和用户隔离。
-
-5. 不要保存敏感画像。
-
-   禁止保存 token、session、auth、密码、支付凭据、银行卡、身份证、完整地址等。
-
-6. 不要把单次订单状态、库存状态、临时优惠写成长期画像。
-
-   这些是动态业务事实，不是用户长期偏好。
-
-7. 不要忽略“删除/遗忘偏好”。
-
-   第四类画像更新时机是用户主动要求删除、遗忘或不再使用某类偏好。这个优先级必须高。
-
-8. 不要恢复规则拼接摘要。
-
-   摘要必须由 LLM 压缩生成，规则拼接已经被明确否定。
-
-9. 不要把摘要 token 主路径改回估算。
-
-   LLM 返回 usage 时优先用 `CompletionTokens`；估算只作为 provider 不返回 usage 时的 fallback。
-
-10. 不要把摘要刷新又改回固定 `limit=30` 的隐式判断。
-
-    现在应先 count 水位后未摘要数量，再最多 3 轮压缩 backlog。
-
-11. 不要一次性读取全部未摘要消息。
-
-    长会话/异常批量插入会造成大查询。每轮只读最早 30 条即可。
-
-12. 不要无限循环压缩。
-
-    单次 `MaybeRefresh` 最多 3 轮，避免一次 chat 触发过多 LLM 调用。
-
-13. 不要让同一条消息既进入摘要又作为近期原文注入。
-
-    摘要水位推进后，被压缩消息不能再进 recent window。
-
-14. 不要恢复 Context Snapshot / TokenBudget / Shadow 灰度方案。
-
-    当前是轻量 Context Manager。本地开发不需要 `ai_context_snapshots`、`SnapshotStore`、`TokenBudget`、`ShadowMode`、`RolloutPercent`、`Context.Enabled`。
-
-15. 不要信任客户端、模型输出、历史消息或 metadata 里的 `user_id`。
-
-    认证上下文是唯一可信来源。工具执行和上下文读取都必须强制 user ID + conversation ID 隔离。
-
-16. 不要把旧 `metadata.data_json` 当完整成功 tool_result envelope。
-
-    旧数据最多生成有限 ToolCallRef。完整结果只能来自合法 `metadata.tool_result` envelope。
-
-17. 不要对任何非 LLM 回复字符串调用 `strings.TrimSpace` 或 `strings.ToLower`。
-
-    只有处理 LLM 回复字符串时允许使用 `strings.TrimSpace` / `strings.ToLower`。业务入参、用户消息、ID、状态、工具参数、数据库字段、上下文内容等字符串都不要做这两个转换；需要校验时保留原值，用明确业务规则处理。
-
-18. 不要手改 go-zero 生成文件，除非本仓库对该文件已有手改惯例。
-
-    新 model 用 goctl 生成；自定义查询放在 custom model 文件。
-
-19. 不要声称测试通过，除非刚刚实际跑过。
-
-    必须给出命令和结果。环境失败要说明具体原因。
-
-## 6. 本轮最后验证过的命令
-
-最近一次代码验证曾通过：
-
-```bash
-GOCACHE=/private/tmp/go-build-task19 go test ./services/aiagent/internal/contextmanager -count=1
-GOCACHE=/private/tmp/go-build-task19 go test ./dal/model/ai/messages -count=1
-GOCACHE=/private/tmp/go-build-task19 go test ./dal/model/ai/... -count=1
-GOCACHE=/private/tmp/go-build-task19 go test ./services/aiagent/... -count=1
-git diff --check
-```
-
-最后一轮只改了文档和本 handoff，没有改 Go 代码；针对文档跑过：
-
-```bash
-git diff --check -- docs/ai-customer-service-implementation-plan.md docs/ai-agent-context-optimization.md
-```
-
-结果通过。
-
-## 7. 快速恢复命令
-
-新会话建议先执行：
+新会话先跑：
 
 ```bash
 git status --short
 git rev-parse --abbrev-ref HEAD
-rg -n "users RPC|UserProfileSource|NewUserProfileSource|UserProfileStore|ai_user_profiles|AiUserProfileUpdates|profileextractor" docs services dal construct
-rg -n "NewExtractiveSummarizer|ExtractiveSummarizer|NewSummarySummarizer|SummarizeResult|CountUnsummarizedContextMessages|FindRecentUnsummarizedContextMessages|maxSummaryRefreshRounds" services/aiagent dal/model/ai
-rg -n "strings\\.TrimSpace|strings\\.ToLower" services/aiagent/internal/contextmanager dal/model/ai -g '*.go'
+rg -n "ChatCompletionResponseFormatTypeJSONObject|ResponseFormat|NewStructuredChatModel|profileStructuredOutputConfig|response_format|json_object" services/aiagent/internal/eino docs
+```
+
+确认当前修改还在。
+
+### Step 2：给 response_format 写真实 HTTP 请求体测试
+
+在 `services/aiagent/internal/eino/model_factory_test.go` 增加一个 `httptest.Server` 测试，名字建议：
+
+```go
+TestStructuredChatModelSendsJSONObjectResponseFormatInRequestBody
+```
+
+测试目标：
+
+- 用真实 `NewModelFactory()`。
+- 配置 `Provider: "deepseek"` 或 `openai-compatible`。
+- `BaseURL` 指向 `httptest.Server`。
+- 调用：
+  - `factory.NewStructuredChatModel(ctx, cfg, StructuredOutputConfig{Name: "profile"})`
+  - `chatModel.Generate(ctx, []*schema.Message{...})`
+- 服务端捕获 JSON request body。
+- 断言：
+  - `response_format.type == "json_object"`
+  - 不存在 `response_format.json_schema`
+  - messages 里包含明确 JSON 输出要求或至少包含测试 system prompt。
+
+如果这个测试通过，说明用户看到“没传”的路径不是 ModelFactory 结构化模型路径，需要继续查实际运行调用的是不是 `NewChatModel` 而不是 `NewStructuredChatModel`。
+
+如果这个测试失败，按失败请求体修。
+
+### Step 3：如果真实请求没有 response_format，就在工厂层强制注入
+
+优先使用 Eino/OpenAI 官方支持路径：
+
+- 初始化 `openai.ChatModelConfig.ResponseFormat`。
+
+如果真实请求体仍没有，退一步使用 Eino OpenAI 的 generation option 或 request payload modifier，在结构化模型 wrapper 层注入：
+
+```json
+"response_format": {"type": "json_object"}
+```
+
+最终以 Step 2 的真实 HTTP 请求体测试为准。
+
+### Step 4：检查 Profile Extractor 是否真的走结构化模型
+
+确认：
+
+- `profile_model.go` 调用的是 `NewStructuredChatModel`。
+- `svc/servicecontext.go` 创建 `NewProfileExtractorModel(modelFactory, selectProfileModelConfig(...))`。
+- consumer 使用的是这个 profile extractor。
+
+相关搜索：
+
+```bash
+rg -n "NewProfileExtractorModel|ProfileExtractor|NewStructuredChatModel|NewChatModel" services/aiagent/internal
+```
+
+### Step 5：跑验证
+
+修完后跑：
+
+```bash
+go test ./services/aiagent/internal/eino -count=1
+go test ./services/aiagent/internal/profileextractor -count=1
+go test ./services/aiagent/... -count=1
 git diff --check
 ```
 
-接手实现前，先确认用户要的是“只继续文档”还是“开始实现聊天来源 UserProfile JSON + Kafka 异步画像更新”。如果要实现，优先从 `docs/ai-agent-context-optimization.md` 的第 11 章和第 13.4 节开始。
+## 5. 踩过的坑，绝对不要再踩
+
+1. 不要再用 `json_schema`。
+
+   DeepSeek 当前报过：`This response_format type is unavailable now`。本项目结构化输出统一使用 `json_object`。
+
+2. 不要只测本地 config struct。
+
+   用户现在质疑的是“真实请求没有传 response_format”。必须用 `httptest.Server` 捕获真实 HTTP body。
+
+3. 不要把 prompt 约束当成 response_format。
+
+   DeepSeek JSON Output 需要两者都满足：请求体 `response_format: {"type":"json_object"}`，prompt 明确要求输出 JSON 并给示例。
+
+4. 不要让 Profile Extractor 回退到普通 `NewChatModel`。
+
+   画像抽取必须走 `NewStructuredChatModel`，否则可能没有 `response_format`。
+
+5. 不要让 LLM 直接写用户画像。
+
+   LLM 只能输出候选 JSON。后端必须校验证据消息归属、置信度、敏感信息、删除/遗忘优先级和用户隔离。
+
+6. 不要再从 users RPC 获取 UserProfile。
+
+   用户画像只来自聊天消息抽取，不是账号昵称、邮箱、locale。
+
+7. 不要混淆 `ai_user_memories` 和 `ai_user_profiles`。
+
+   memories 是原子记忆/证据；profiles 是聚合 JSON 画像。
+
+8. 不要同步阻塞聊天主流程更新画像。
+
+   消息落库后投 Kafka，画像异步更新；投递失败只记录日志，不影响聊天响应。
+
+9. 不要破坏 `client_message_id` 的一轮关联。
+
+   同一轮 user/assistant/tool 都要保存相同 `client_message_id`。幂等唯一只约束 user 消息。
+
+10. 不要把 `dedupe_client_message_id` 当业务字段。
+
+    它只是 MySQL 生成列，用于让 user 消息唯一，同时允许 assistant/tool 多行复用同一 `client_message_id`。
+
+11. 不要信任客户端、模型输出、metadata 或工具参数里的 `user_id`。
+
+    认证上下文是唯一可信来源。
+
+12. 不要绕开 Execution Guard。
+
+    Query/Write/HighRisk Eino tools 调业务 RPC 前必须经过 Guard，写操作必须审计，高风险操作必须确认。
+
+13. 不要把工具失败总结成成功。
+
+    失败就是失败，不能生成“已完成”“已取消”“已加入购物车”之类的假成功话术。
+
+14. 不要恢复单次 ChatModel runner。
+
+    用户已经指出必须使用 ADK ChatModelAgent，让模型看到 tools，并让 ADK ToolsNode 执行工具。
+
+15. 不要随手清理当前脏工作区。
+
+    这里包含多轮未提交成果。只改和当前任务相关的文件。
+
+## 6. 当前工作区提醒
+
+最近 `git status --short` 显示有大量修改，包括但不限于：
+
+- `docs/ai-customer-service-design.md`
+- `docs/ai-customer-service-implementation-plan.md`
+- `go.mod`
+- `services/aiagent/internal/eino/model_factory.go`
+- `services/aiagent/internal/eino/profile_model.go`
+- `services/aiagent/internal/eino/agent.go`
+- `services/aiagent/internal/tools/**`
+- `services/aiagent/internal/logic/chatlogic.go`
+- `services/aiagent/internal/svc/servicecontext.go`
+- `dal/model/ai/conversation_summaries/aiconversationsummariesmodel.go`
+
+实际接手前一定重新跑：
+
+```bash
+git status --short
+git diff --check
+```
+
+## 7. 推荐恢复命令
+
+```bash
+git status --short
+git rev-parse --abbrev-ref HEAD
+rg -n "response_format|json_object|json_schema|NewStructuredChatModel|NewProfileExtractorModel" services/aiagent/internal/eino services/aiagent/internal/svc services/aiagent/internal/consumer docs
+rg -n "WithTools|NewADKRunner|ChatModelAgent|ToolExecutionContext|InvokableTool" services/aiagent/internal/eino services/aiagent/internal/tools services/aiagent/internal/svc
+rg -n "client_message_id|dedupe_client_message_id|msg_id|uuidv7|Replay" apis services dal construct
+go test ./services/aiagent/internal/eino -count=1
+```
+
+如果下一会话要继续实现，第一件事就是补 `httptest.Server` 请求体测试，确认 `response_format.type=json_object` 到底有没有真实发出去。

@@ -36,7 +36,6 @@ type Config struct {
 	RedisConf    redis.RedisConf
 	Cache        cache.CacheConf
 	Eino         EinoConfig
-	IntentModel  EinoConfig
 	SummaryModel EinoConfig
 	ProfileModel EinoConfig
 	KafkaMQ      config.KafkaConfig

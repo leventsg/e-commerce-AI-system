@@ -50,15 +50,6 @@ Eino:
   MaxTokens: 2048
   Temperature: 0.2
 
-IntentModel:
-  Provider: ${AI_INTENT_MODEL_PROVIDER}
-  APIKey: ${AI_INTENT_MODEL_API_KEY}
-  BaseURL: ${AI_INTENT_MODEL_BASE_URL}
-  Model: ${AI_INTENT_MODEL_NAME}
-  Timeout: 10
-  MaxTokens: 512
-  Temperature: 0
-
 SummaryModel:
   Provider: ${AI_SUMMARY_MODEL_PROVIDER}
   APIKey: ${AI_SUMMARY_MODEL_API_KEY}

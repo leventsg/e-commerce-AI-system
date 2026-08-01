@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
 	aiconversationsummaries "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversation_summaries"
@@ -21,7 +20,6 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/planner"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
@@ -51,19 +49,6 @@ type HighRiskToolExecutor interface {
 	ExecuteConfirmed(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
 }
 
-type ChatToolExecutor interface {
-	Execute(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
-}
-
-type ConfirmationRequester interface {
-	RequestConfirmation(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
-}
-
-type IntentPlanner interface {
-	// 根据用户消息和历史对话进行意图识别和规划，返回计划结果
-	Plan(ctx context.Context, req planner.PlanRequest) (planner.PlanResult, error)
-}
-
 type ServiceContext struct {
 	Config                 config.Config
 	Mysql                  sqlx.SqlConn
@@ -84,8 +69,6 @@ type ServiceContext struct {
 	AuditRpc               auditclient.Audit
 	ToolRegistry           *aitools.Registry
 	ToolExecutor           *aitools.Executor
-	QueryTools             *aitools.QueryTools
-	WriteTools             *aitools.WriteTools
 	ConfirmationManager    ConfirmationManager
 	HighRiskTools          HighRiskToolExecutor
 	ConversationManager    conversation.Manager
@@ -95,11 +78,7 @@ type ServiceContext struct {
 	UserProfileStore       *contextmanager.UserProfileModelStore
 	ProfileUpdatePublisher profileextractor.Publisher
 	ProfileExtractor       *profileextractor.Extractor
-	IntentPlanner          IntentPlanner
 	AgentRunner            eino.Runner
-	QueryChatTools         ChatToolExecutor
-	WriteChatTools         ChatToolExecutor
-	HighRiskChatTools      ConfirmationRequester
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -117,7 +96,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	toolRegistry := aitools.NewRegistry(c.ToolTimeout)
 	toolRecorder := aiaudit.NewRecorder(toolCallsModel, auditRPC)
 	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
-	queryTools := aitools.NewQueryTools(toolExecutor, aitools.QueryToolClients{
+	aitools.NewQueryTools(toolExecutor, aitools.QueryToolClients{
 		Product:   productRPC,
 		Inventory: inventoryRPC,
 		Order:     orderRPC,
@@ -125,7 +104,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Coupon:    couponRPC,
 		Checkout:  checkoutRPC,
 	})
-	writeTools := aitools.NewWriteTools(toolExecutor, aitools.WriteToolClients{
+	aitools.NewWriteTools(toolExecutor, aitools.WriteToolClients{
 		Cart:     cartRPC,
 		Coupon:   couponRPC,
 		Checkout: checkoutRPC,
@@ -166,7 +145,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	summaryManager := contextmanager.NewSummaryManager(
 		summaryStore,
 		contextmanager.NewSummaryMessageStore(messagesModel),
-		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.IntentModel)),
+		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.Eino)),
 	)
 	memoryPolicy := contextmanager.NewMemoryPolicy(memoryStore)
 	profileUpdatePublisher := newProfileUpdatePublisher(c)
@@ -174,20 +153,11 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		messagesModel,
 		userProfileStore,
 		memoryStore,
-		eino.NewProfileExtractorModel(modelFactory, selectProfileModelConfig(c.ProfileModel, c.SummaryModel, c.IntentModel)),
+		eino.NewProfileExtractorModel(modelFactory, selectProfileModelConfig(c.ProfileModel, c.SummaryModel, c.Eino)),
 	)
-	intentPlanner := planner.New(toolRegistry, planner.WithIntentModel(eino.NewIntentModelFactory(modelFactory), c.IntentModel))
 	var agentRunner eino.Runner
-	toolInfos, toolInfoErr := toolRegistry.ToolInfos(context.Background())
-	if toolInfoErr != nil {
-		logx.Errorw("ai tool info initialization failed", logx.Field("component", "tool_registry"), logx.Field("stage", "initialize"), logx.Field("err", toolInfoErr))
-	}
-	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino, toolInfos...); err == nil {
-		if toolCallingModel, ok := chatModel.(model.ToolCallingChatModel); ok {
-			agentRunner = eino.NewReActRunner(toolCallingModel, toolRegistry.Tools())
-		} else {
-			logx.Errorw("ai chat model does not support tool calling", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model))
-		}
+	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry); err == nil {
+		agentRunner = runner
 	} else {
 		logx.Errorw("ai chat model initialization failed", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("reason", "model_init_failed"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model), logx.Field("base_url_host", modelBaseURLHost(c.Eino.BaseURL)), logx.Field("err", err))
 	}
@@ -212,8 +182,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AuditRpc:               auditRPC,
 		ToolRegistry:           toolRegistry,
 		ToolExecutor:           toolExecutor,
-		QueryTools:             queryTools,
-		WriteTools:             writeTools,
 		ConfirmationManager:    confirmationManager,
 		HighRiskTools:          highRiskTools,
 		ConversationManager:    conversationManager,
@@ -223,11 +191,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		UserProfileStore:       userProfileStore,
 		ProfileUpdatePublisher: profileUpdatePublisher,
 		ProfileExtractor:       profileExtractor,
-		IntentPlanner:          intentPlanner,
 		AgentRunner:            agentRunner,
-		QueryChatTools:         queryTools,
-		WriteChatTools:         writeTools,
-		HighRiskChatTools:      highRiskTools,
 	}
 }
 

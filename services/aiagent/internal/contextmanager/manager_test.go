@@ -12,62 +12,6 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
 
-func TestManagerBuildsIntentContextFromLightweightSources(t *testing.T) {
-	messages := &fakeContextMessageStore{messages: []*aimessages.AiMessages{
-		contextMessage("m1", "user", "之前想买手机", baseTime()),
-		contextMessage("m2", "assistant", "可以看看学生机型", baseTime().Add(time.Minute)),
-		contextMessage("current", "user", "加两件", baseTime().Add(2*time.Minute)),
-	}}
-	taskStates := &fakeTaskStateStore{state: &domain.TaskState{Goal: "把选中的商品加入购物车", MissingParameters: []string{"product_id"}}}
-	memories := &fakeMemoryStore{
-		intentSummary: "用户偏好 2000 元以内的手机",
-		active:        []domain.UserMemory{{Key: "brand", Content: "偏好品牌 A"}},
-	}
-	summaries := &fakeSummaryStore{summary: &domain.ConversationSummary{Summary: "不应进入 IntentContext"}}
-	tools := &fakeToolContextStore{
-		latest: &domain.ToolResultEnvelope{ToolCallID: "call-1", ToolName: domain.ToolCartList, Status: "success", Data: []byte(`{"items":[]}`)},
-		refs:   []domain.ToolCallRef{{ToolCallID: "call-0", ToolName: domain.ToolProductRecommend}},
-	}
-	profiles := &fakeUserProfileStore{profile: &domain.UserProfile{ProfileJSON: json.RawMessage(`{"preferences":{"categories":["不应进入 IntentContext"]}}`)}}
-	manager := NewManager(messages, tools,
-		WithSummaryStore(summaries),
-		WithMemoryStore(memories),
-		WithTaskStateStore(taskStates),
-		WithUserProfileStore(profiles),
-	)
-
-	result, err := manager.Build(context.Background(), domain.BuildContextRequest{
-		UserID: 42, ConversationID: "conv-1", RunID: "run-1",
-		Mode: domain.IntentContextMode, CurrentMessageID: "current", CurrentInput: "加两件",
-	})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-
-	joined := joinContextContents(result.Messages)
-	for _, want := range []string{"之前想买手机", "可以看看学生机型", "加两件", "把选中的商品加入购物车", "2000 元以内"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("IntentContext missing %q: %s", want, joined)
-		}
-	}
-	for _, forbidden := range []string{"不应进入 IntentContext", "call-1", "call-0", "偏好品牌 A"} {
-		if strings.Contains(joined, forbidden) {
-			t.Fatalf("IntentContext unexpectedly contains %q: %s", forbidden, joined)
-		}
-	}
-	if got := countContextContent(result.Messages, "加两件"); got != 1 {
-		t.Fatalf("current input count = %d, want 1", got)
-	}
-	if result.RecentMessageStartID != "m1" || result.RecentMessageEndID != "m2" {
-		t.Fatalf("recent range = %q..%q", result.RecentMessageStartID, result.RecentMessageEndID)
-	}
-	if summaries.calls != 0 || tools.latestCalls != 0 || tools.refsCalls != 0 || profiles.calls != 0 || memories.activeCalls != 0 {
-		t.Fatalf("IntentContext loaded agent-only sources: summaries=%d latest=%d refs=%d profiles=%d active_memories=%d",
-			summaries.calls, tools.latestCalls, tools.refsCalls, profiles.calls, memories.activeCalls)
-	}
-	assertTrustedContextQuery(t, messages.userID, messages.conversationID)
-}
-
 func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *testing.T) {
 	rows := make([]*aimessages.AiMessages, 0, 23)
 	for i := 1; i <= 22; i++ {
@@ -151,10 +95,10 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 func TestManagerFailsWithoutRequiredMessageSourceAndRejectsInvalidRequests(t *testing.T) {
 	manager := NewManager(nil, nil)
 	for _, req := range []domain.BuildContextRequest{
-		{ConversationID: "conv-1", Mode: domain.IntentContextMode, CurrentInput: "hello"},
-		{UserID: 42, Mode: domain.IntentContextMode, CurrentInput: "hello"},
+		{ConversationID: "conv-1", Mode: domain.AgentContextMode, CurrentInput: "hello"},
+		{UserID: 42, Mode: domain.AgentContextMode, CurrentInput: "hello"},
 		{UserID: 42, ConversationID: "conv-1", Mode: "unknown", CurrentInput: "hello"},
-		{UserID: 42, ConversationID: "conv-1", Mode: domain.IntentContextMode},
+		{UserID: 42, ConversationID: "conv-1", Mode: domain.AgentContextMode},
 	} {
 		if _, err := manager.Build(context.Background(), req); err == nil {
 			t.Fatalf("Build(%+v) error = nil", req)
@@ -164,7 +108,7 @@ func TestManagerFailsWithoutRequiredMessageSourceAndRejectsInvalidRequests(t *te
 	messageErr := errors.New("messages unavailable")
 	manager = NewManager(&fakeContextMessageStore{err: messageErr}, nil)
 	_, err := manager.Build(context.Background(), domain.BuildContextRequest{
-		UserID: 42, ConversationID: "conv-1", Mode: domain.IntentContextMode, CurrentInput: "hello",
+		UserID: 42, ConversationID: "conv-1", Mode: domain.AgentContextMode, CurrentInput: "hello",
 	})
 	if !errors.Is(err, messageErr) {
 		t.Fatalf("Build() error = %v, want %v", err, messageErr)
@@ -178,7 +122,7 @@ func TestManagerRedactsSensitiveValuesFromRecentMessagesWithoutCropping(t *testi
 	}}, nil)
 
 	result, err := manager.Build(context.Background(), domain.BuildContextRequest{
-		UserID: 42, ConversationID: "conv-1", Mode: domain.IntentContextMode, CurrentInput: "继续",
+		UserID: 42, ConversationID: "conv-1", Mode: domain.AgentContextMode, CurrentInput: "继续",
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -263,16 +207,9 @@ func (f *fakeSummaryStore) FindLatest(context.Context, uint64, string) (*domain.
 }
 
 type fakeMemoryStore struct {
-	intentSummary string
-	active        []domain.UserMemory
-	err           error
-	intentCalls   int
-	activeCalls   int
-}
-
-func (f *fakeMemoryStore) SummarizeForIntent(context.Context, uint64, int) (string, error) {
-	f.intentCalls++
-	return f.intentSummary, f.err
+	active      []domain.UserMemory
+	err         error
+	activeCalls int
 }
 
 func (f *fakeMemoryStore) ListActive(context.Context, uint64, int) ([]domain.UserMemory, error) {
