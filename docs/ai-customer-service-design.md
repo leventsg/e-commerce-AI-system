@@ -110,13 +110,13 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 职责：
 - 将会话上下文转换为 Eino message。
 - 构建系统提示词，约束模型只能调用已注册工具。
-- 使用 Eino ReAct Agent 编排“模型推理 -> ToolsNode 工具调用 -> 工具结果回填 -> 最终回复”流程。
+- 使用 Eino ADK ChatModelAgent 编排“模型推理 -> ToolsNode 工具调用 -> 工具结果回填 -> 最终回复”流程。
 - 对流式输出进行事件转换，推送为 WebSocket `assistant_message`。
 - 将 Eino callback 或本地包装器中的工具调用事件写入 `ai_tool_calls`。
 - 在 Eino 执行工具前调用本地风险策略，拦截高风险工具并创建确认请求。
 
 设计约束：
-- Eino 负责模型、工具调用协议和 ReAct 编排流程。
+- Eino ADK 负责模型、工具调用协议和 ChatModelAgent 编排流程。
 - 本地代码负责用户身份、权限隔离、确认状态、审计、限流和业务 RPC 参数转换。
 - 模型和 Eino 工具入参中的 `user_id` 不可信，执行前必须由本地 Execution Guard 覆盖。
 

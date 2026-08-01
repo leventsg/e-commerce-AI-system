@@ -184,7 +184,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	}
 	if chatModel, err := modelFactory.NewChatModel(context.Background(), c.Eino, toolInfos...); err == nil {
 		if toolCallingModel, ok := chatModel.(model.ToolCallingChatModel); ok {
-			agentRunner = eino.NewReActRunner(toolCallingModel, toolRegistry.Tools())
+			agentRunner = eino.NewAgent(toolCallingModel, toolRegistry.Tools())
 		} else {
 			logx.Errorw("ai chat model does not support tool calling", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model))
 		}

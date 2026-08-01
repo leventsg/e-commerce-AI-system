@@ -31,7 +31,7 @@ WebSocket user_message
   -> AgentEvent -> AiAgent RPC -> WebSocket
 ```
 
-工具已经实现为 Eino `InvokableTool`，并提供 Eino `ToolInfo` schema；但是当前 `internal/eino/agent.go` 的 `Runner` 只调用 ChatModel 的 `Generate/Stream` 生成普通回复，没有组装 Eino `ToolsNode`，也没有运行“模型 tool call -> ToolsNode -> 再次模型总结”的循环。因此，现阶段不能把业务主链路描述为已启用的 Eino 原生 tool-calling。Eino 工具适配层已具备，实际在线调度由 `IntentPlanner + ChatLogic` 完成。
+工具已经实现为 Eino `InvokableTool`，并提供 Eino `ToolInfo` schema。当前 `internal/eino/agent.go` 的 AgentRunner 使用 Eino ADK ChatModelAgent：工具 schema 通过 ChatModel tool binding 给模型，可执行工具通过 `ToolsConfig.ToolsNodeConfig.Tools` 给 ADK ToolsNode。在线主链路已经运行“模型 tool call -> ToolsNode -> 工具结果回填 -> 最终回复”的循环，ADK assistant/tool 中间事件会转换为领域事件并写入 `ai_messages`。
 
 ## 3. 核心组件
 
@@ -124,7 +124,7 @@ Planner 不直接信任该结果。`validatedPlan` 会：
 
 ### 5.3 普通聊天
 
-Planner 未选择工具时，`ChatLogic` 调用 `AgentRunner.Run`。该路径使用 Eino ChatModel 生成 `assistant_message`；模型不可用、返回空内容或调用失败时返回明确错误，不会编造业务结果。
+Planner 未选择工具时，`ChatLogic` 调用 `AgentRunner.Run`。该路径使用 Eino ADK ChatModelAgent 生成 assistant/tool 事件；tool 中间结果和最终 assistant 回复都会持久化到 `ai_messages`。模型不可用、返回空内容或调用失败时返回明确错误，不会编造业务结果。
 
 ## 6. 低风险工具执行流程
 
@@ -289,14 +289,14 @@ WrapperAuthMiddleware
 6. 为 schema、参数转换、用户 ID 覆盖、超时、审计和确认策略补充测试。
 7. 若工具需要被当前在线聊天链路选择，同步更新 intent prompt；明确中文意图还应按需要扩展规则 Planner。
 
-如果后续启用 Eino 原生 tool-calling，还需要在 `internal/eino` 中组装 ChatModel tool binding、`ToolsNode` 和多轮执行图，并在每次 `InvokableRun` 前注入 `ToolExecutionContext`。该改造不能绕开现有 Registry、Executor、Confirmation Manager 和 Recorder。
+Eino 原生 tool-calling 已通过 ADK ChatModelAgent 接入在线主链路。`internal/eino` 负责组装 ChatModel tool binding、ADK ToolsNode 和多轮执行；每次 `InvokableRun` 前仍必须注入可信 `ToolExecutionContext`。该改造不能绕开现有 Registry、Executor、Confirmation Manager 和 Recorder。
 
 ## 13. 设计目标与当前差异
 
 当前实现与设计文档相比主要有以下差异：
 
-1. 设计目标中的 Eino Agent/Graph/ToolsNode 工具循环尚未接入在线主链路；当前由结构化 Intent Planner 和 `ChatLogic` 调度工具。
-2. Eino 工具 schema 和可执行包装器已经存在，可作为后续 ToolsNode 接入基础。
+1. Eino ADK ChatModelAgent 已接入在线主链路；结构化 Intent Planner 仍作为明确中文意图兜底。
+2. Eino 工具 schema 和可执行包装器必须同时注册，分别供模型识别和 ToolsNode 执行。
 3. 当前工具执行后由本地 Handler 的 `Summary` 生成 assistant message，而不是将工具结果再次交给 ChatModel 总结。
 4. `AgentRunner.Stream` 已实现模型流读取，但当前 `AiAgent.Chat` 使用同步 `Run`，RPC 响应和 WebSocket 推送不是逐 token 的端到端流式链路。
 

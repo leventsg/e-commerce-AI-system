@@ -11,6 +11,7 @@ type AgentEvent struct {
 	Type             string
 	ConversationID   string
 	MessageID        string
+	ToolCallID       string
 	Content          string
 	Tool             string
 	Status           string

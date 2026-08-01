@@ -413,7 +413,7 @@ type ModelFactory interface {
 
 - [x] **Step 5: 实现 Agent Runner**
 
-Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。当前实现使用 Eino ReAct Agent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ReAct 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。对外只暴露稳定接口：
+Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。ADK assistant/tool 中间事件会转换为领域事件并写入 `ai_messages`。对外只暴露稳定接口：
 
 ```go
 type Runner interface {
