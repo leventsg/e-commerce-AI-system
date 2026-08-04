@@ -51,7 +51,6 @@ type PrepareRequest struct {
 type PreparedConversation struct {
 	ConversationID  string
 	UserMessageID   string
-	UserMessageSeq  uint64
 	ClientMessageID string
 	Duplicate       bool
 }
@@ -98,7 +97,6 @@ func (m *manager) Prepare(ctx context.Context, req PrepareRequest) (*PreparedCon
 			return &PreparedConversation{
 				ConversationID:  existing.ConversationId,
 				UserMessageID:   existing.MsgId,
-				UserMessageSeq:  existing.Seq,
 				ClientMessageID: clientMessageID,
 				Duplicate:       true,
 			}, nil

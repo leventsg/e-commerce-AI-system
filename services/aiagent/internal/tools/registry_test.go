@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
+
+var openAIToolNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 func TestRegistryRegistersDefaultTools(t *testing.T) {
 	registry := NewRegistry(config.ToolTimeoutConfig{})
@@ -133,6 +136,9 @@ func TestRegistryToolInfoSchemaDoesNotExposeUserID(t *testing.T) {
 		if info.Name != metadata.Name {
 			t.Fatalf("ToolInfo name = %q, metadata name = %q", info.Name, metadata.Name)
 		}
+		if !openAIToolNamePattern.MatchString(info.Name) {
+			t.Fatalf("ToolInfo(%q) name is not OpenAI-compatible", info.Name)
+		}
 		if info.Desc == "" {
 			t.Fatalf("ToolInfo(%q) description should not be empty", info.Name)
 		}
@@ -215,45 +221,45 @@ func TestRegistryHighRiskOrderAndCheckoutSchemasMatchRPCContracts(t *testing.T) 
 
 	checkoutTool, err := registry.Tool(domain.ToolCheckoutPrepare)
 	if err != nil {
-		t.Fatalf("checkout.prepare tool: %v", err)
+		t.Fatalf("checkout_prepare tool: %v", err)
 	}
 	checkoutInfo, err := checkoutTool.Info(context.Background())
 	if err != nil {
-		t.Fatalf("checkout.prepare info: %v", err)
+		t.Fatalf("checkout_prepare info: %v", err)
 	}
 	checkoutSchema, err := checkoutInfo.ParamsOneOf.ToJSONSchema()
 	if err != nil {
-		t.Fatalf("checkout.prepare schema: %v", err)
+		t.Fatalf("checkout_prepare schema: %v", err)
 	}
 	if !containsString(checkoutSchema.Required, "order_items") {
-		t.Fatalf("checkout.prepare required = %#v, want order_items", checkoutSchema.Required)
+		t.Fatalf("checkout_prepare required = %#v, want order_items", checkoutSchema.Required)
 	}
 	if _, ok := checkoutSchema.Properties.Get("order_items"); !ok {
-		t.Fatal("checkout.prepare schema missing order_items")
+		t.Fatal("checkout_prepare schema missing order_items")
 	}
 	if _, ok := checkoutSchema.Properties.Get("user_id"); ok {
-		t.Fatal("checkout.prepare schema must not expose user_id")
+		t.Fatal("checkout_prepare schema must not expose user_id")
 	}
 
 	orderTool, err := registry.Tool(domain.ToolOrderCreate)
 	if err != nil {
-		t.Fatalf("order.create tool: %v", err)
+		t.Fatalf("order_create tool: %v", err)
 	}
 	orderInfo, err := orderTool.Info(context.Background())
 	if err != nil {
-		t.Fatalf("order.create info: %v", err)
+		t.Fatalf("order_create info: %v", err)
 	}
 	orderSchema, err := orderInfo.ParamsOneOf.ToJSONSchema()
 	if err != nil {
-		t.Fatalf("order.create schema: %v", err)
+		t.Fatalf("order_create schema: %v", err)
 	}
 	for _, name := range []string{"pre_order_id", "address_id", "payment_method"} {
 		if !containsString(orderSchema.Required, name) {
-			t.Fatalf("order.create required = %#v, want %s", orderSchema.Required, name)
+			t.Fatalf("order_create required = %#v, want %s", orderSchema.Required, name)
 		}
 	}
 	if _, ok := orderSchema.Properties.Get("user_id"); ok {
-		t.Fatal("order.create schema must not expose user_id")
+		t.Fatal("order_create schema must not expose user_id")
 	}
 }
 

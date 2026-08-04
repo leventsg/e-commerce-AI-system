@@ -30,7 +30,7 @@ func TestHighRiskEinoToolsCreateConfirmationWithoutExecutingBusinessRPC(t *testi
 	NewHighRiskTools(NewExecutor(registry), creator, HighRiskToolClients{Cart: cartRPC})
 	tool, err := registry.Tool(domain.ToolCartDelete)
 	if err != nil {
-		t.Fatalf("cart.delete tool: %v", err)
+		t.Fatalf("cart_delete tool: %v", err)
 	}
 	ctx := WithToolExecutionContext(context.Background(), ToolExecutionContext{
 		UserID: 42, ConversationID: "conv-1", MessageID: "msg-1",
@@ -38,7 +38,7 @@ func TestHighRiskEinoToolsCreateConfirmationWithoutExecutingBusinessRPC(t *testi
 
 	raw, err := tool.InvokableRun(ctx, `{"cart_item_id":8,"user_id":999}`)
 	if err != nil {
-		t.Fatalf("cart.delete confirmation: %v", err)
+		t.Fatalf("cart_delete confirmation: %v", err)
 	}
 	if cartRPC.deleteCalls != 0 || cartRPC.listCalls != 0 {
 		t.Fatalf("business RPC called before confirmation: list=%d delete=%d", cartRPC.listCalls, cartRPC.deleteCalls)

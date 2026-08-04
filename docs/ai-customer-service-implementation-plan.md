@@ -168,7 +168,7 @@ CREATE TABLE `ai_conversations` (
 
 ```sql
 CREATE TABLE `ai_messages` (
-  `seq` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '消息自增序号',
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '消息自增序号',
   `msg_id` varchar(64) NOT NULL COMMENT '消息ID',
   `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
   `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
@@ -178,12 +178,12 @@ CREATE TABLE `ai_messages` (
   `client_message_id` varchar(128) DEFAULT NULL COMMENT '前端生成的用户消息幂等ID',
   `dedupe_client_message_id` varchar(128) GENERATED ALWAYS AS (case when `role` = 'user' then `client_message_id` else NULL end) STORED COMMENT '仅用户消息参与幂等唯一约束',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`seq`),
+  PRIMARY KEY (`id`),
   UNIQUE KEY `uk_msg_id` (`msg_id`),
   UNIQUE KEY `uk_user_client_message` (`user_id`, `dedupe_client_message_id`),
-  KEY `idx_conversation_seq` (`conversation_id`, `seq`),
-  KEY `idx_user_seq` (`user_id`, `seq`),
-  KEY `idx_user_conversation_client_role_seq` (`user_id`, `conversation_id`, `client_message_id`, `role`, `seq`)
+  KEY `idx_conversation_id` (`conversation_id`, `id`),
+  KEY `idx_user_id` (`user_id`, `id`),
+  KEY `idx_user_conversation_client_role_id` (`user_id`, `conversation_id`, `client_message_id`, `role`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
@@ -510,33 +510,33 @@ type Metadata struct {
 
 低风险：
 
-- `product.search`
-- `product.detail`
-- `product.recommend`
-- `inventory.get`
-- `order.get`
-- `order.list`
-- `checkout.prepare`
-- `checkout.detail`
-- `cart.list`
-- `cart.add`
-- `cart.sub`
-- `coupon.list`
-- `coupon.detail`
-- `coupon.claim`
-- `coupon.my_list`
-- `coupon.usage_list`
-- `coupon.calculate`
+- `product_search`
+- `product_detail`
+- `product_recommend`
+- `inventory_get`
+- `order_get`
+- `order_list`
+- `checkout_prepare`
+- `checkout_detail`
+- `cart_list`
+- `cart_add`
+- `cart_sub`
+- `coupon_list`
+- `coupon_detail`
+- `coupon_claim`
+- `coupon_my_list`
+- `coupon_usage_list`
+- `coupon_calculate`
 
 高风险：
 
-- `cart.delete`
-- `order.create`
-- `order.cancel`
+- `cart_delete`
+- `order_create`
+- `order_cancel`
 
 - [ ] **Step 4: 单测确认策略**
 
-断言 `cart.delete`、`order.create`、`order.cancel` 必须确认，查询和低风险写操作不需要确认。
+断言 `cart_delete`、`order_create`、`order_cancel` 必须确认，查询和低风险写操作不需要确认。
 
 - [ ] **Step 5: 单测 Eino Tool schema**
 
@@ -569,8 +569,8 @@ Expected: Eino Tool 注册、本地白名单、风险等级、超时配置全部
 
 覆盖：
 
-- fake LLM 返回 `product.recommend` JSON 时优先使用 LLM 结果。
-- fake LLM 返回 `order.cancel` JSON 时确认策略来自 Tool Registry metadata。
+- fake LLM 返回 `product_recommend` JSON 时优先使用 LLM 结果。
+- fake LLM 返回 `order_cancel` JSON 时确认策略来自 Tool Registry metadata。
 - fake LLM 参数包含 `user_id` 时必须删除。
 - 第一次 LLM 错误或返回非法 JSON，第二次成功时使用第二次结果。
 - 两次 LLM 都失败或都返回未注册工具时回退规则 Planner。
@@ -580,11 +580,11 @@ Expected: Eino Tool 注册、本地白名单、风险等级、超时配置全部
 覆盖中文输入：
 
 - “你好” -> `chat`
-- “推荐几款适合学生党的手机” -> `recommend` + `product.recommend`
-- “查一下订单 202406300001” -> `query` + `order.get`
-- “帮我加入购物车，商品 12 买 2 件” -> `action` + `cart.add`
-- “购物车条目 8 减少 2 件” -> `action` + `cart.sub`
-- “取消订单 202406300001” -> `action` + `order.cancel` + 需要确认
+- “推荐几款适合学生党的手机” -> `recommend` + `product_recommend`
+- “查一下订单 202406300001” -> `query` + `order_get`
+- “帮我加入购物车，商品 12 买 2 件” -> `action` + `cart_add`
+- “购物车条目 8 减少 2 件” -> `action` + `cart_sub`
+- “取消订单 202406300001” -> `action` + `order_cancel` + 需要确认
 
 - [ ] **Step 3: 实现 fast LLM + 重试 + 规则兜底 Planner**
 
@@ -657,28 +657,28 @@ Expected: 用户隔离、超时、失败降级均通过。
 
 RPC 对应：
 
-- `product.search` -> `ProductCatalogService.QueryProduct`
-- `product.detail` -> `ProductCatalogService.GetProduct`
-- `product.recommend` -> `ProductCatalogService.RecommendProduct`
+- `product_search` -> `ProductCatalogService.QueryProduct`
+- `product_detail` -> `ProductCatalogService.GetProduct`
+- `product_recommend` -> `ProductCatalogService.RecommendProduct`
 
 - [x] **Step 2: 实现订单 Eino Tool handler**
 
 RPC 对应：
 
-- `order.get` -> `OrderService.GetOrder`
-- `order.list` -> `OrderService.ListOrders`
+- `order_get` -> `OrderService.GetOrder`
+- `order_list` -> `OrderService.ListOrders`
 
 - [x] **Step 3: 实现购物车、优惠券、结算 Eino Tool handler**
 
 RPC 对应：
 
-- `cart.list` -> `Cart.CartItemList`
-- `coupon.list` -> `Coupons.ListCoupons`
-- `coupon.detail` -> `Coupons.GetCoupon`
-- `coupon.my_list` -> `Coupons.ListUserCoupons`
-- `coupon.usage_list` -> `Coupons.ListCouponUsages`
-- `coupon.calculate` -> `Coupons.CalculateCoupon`
-- `checkout.detail` -> `CheckoutService.GetCheckoutDetail`
+- `cart_list` -> `Cart.CartItemList`
+- `coupon_list` -> `Coupons.ListCoupons`
+- `coupon_detail` -> `Coupons.GetCoupon`
+- `coupon_my_list` -> `Coupons.ListUserCoupons`
+- `coupon_usage_list` -> `Coupons.ListCouponUsages`
+- `coupon_calculate` -> `Coupons.CalculateCoupon`
+- `checkout_detail` -> `CheckoutService.GetCheckoutDetail`
 
 - [x] **Step 4: 运行工具单测**
 
@@ -707,11 +707,11 @@ Expected: Eino Tool 入参转换、用户 ID 注入、RPC 调用、结果摘要�
 
 RPC 对应：
 
-- `cart.add` -> `Cart.CreateCartItem`
-- `cart.sub` -> `Cart.SubCartItem`
-- `coupon.claim` -> `Coupons.ClaimCoupon`
+- `cart_add` -> `Cart.CreateCartItem`
+- `cart_sub` -> `Cart.SubCartItem`
+- `coupon_claim` -> `Coupons.ClaimCoupon`
 
-`Cart.CreateCartItem` 和 `Cart.SubCartItem` 的现有 RPC 语义均为单次增减 1。AI 工具层按 `quantity` 重复调用以适配 Tool schema；`cart.sub` 先通过当前用户的 `CartItemList` 将 `cart_item_id` 转换为 RPC 所需的 `product_id`，并禁止将数量减少到 0，删除操作仍由后续高风险确认流程处理。
+`Cart.CreateCartItem` 和 `Cart.SubCartItem` 的现有 RPC 语义均为单次增减 1。AI 工具层按 `quantity` 重复调用以适配 Tool schema；`cart_sub` 先通过当前用户的 `CartItemList` 将 `cart_item_id` 转换为 RPC 所需的 `product_id`，并禁止将数量减少到 0，删除操作仍由后续高风险确认流程处理。
 
 - [x] **Step 2: 写操作记录审计**
 
@@ -803,37 +803,37 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 
 这些工具首次规划后只返回 `confirmation_required`，不调用业务 RPC：
 
-- `cart.delete`
-- `order.create`
-- `order.cancel`
+- `cart_delete`
+- `order_create`
+- `order_cancel`
 
 - [x] **Step 2: 用户确认后通过 Execution Guard 执行业务 RPC**
 
 RPC 对应：
 
-- `cart.delete` -> `Cart.DeleteCartItem`
-- `order.create` -> `OrderService.CreateOrder`
-- `order.cancel` -> `OrderService.CancelOrder`
+- `cart_delete` -> `Cart.DeleteCartItem`
+- `order_create` -> `OrderService.CreateOrder`
+- `order_cancel` -> `OrderService.CancelOrder`
 
 - [x] **Step 3: 创建订单前置结算**
 
 若用户表达购买意图且没有 `pre_order_id`：
 
-1. 调用 `checkout.prepare` 创建预结算。
+1. 调用 `checkout_prepare` 创建预结算。
 2. 返回结算金额与 `pre_order_id`。
-3. 再创建 `order.create` 确认请求。
+3. 再创建 `order_create` 确认请求。
 
 工具参数契约同步为真实 RPC 结构：
 
-- `checkout.prepare` 必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
-- `order.create` 必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选。
+- `checkout_prepare` 必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
+- `order_create` 必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选。
 - `payment_method` 使用 1（微信）或 2（支付宝）。
 
 - [x] **Step 4: 使用优惠券下单必须确认**
 
-当 `order.create` 参数包含 `coupon_id` 时，确认摘要必须展示优惠券 ID、应付金额和商品数量。
+当 `order_create` 参数包含 `coupon_id` 时，确认摘要必须展示优惠券 ID、应付金额和商品数量。
 
-应付金额通过当前用户、预结算商品快照和该 `coupon_id` 调用 `coupon.calculate` 得到；优惠券不可用或计算失败时不得创建确认。业务 RPC 已执行但审计写入失败时返回明确失败事件并标记 `business_executed=true`，确认记录仍进入 `executed`，防止重复执行。
+应付金额通过当前用户、预结算商品快照和该 `coupon_id` 调用 `coupon_calculate` 得到；优惠券不可用或计算失败时不得创建确认。业务 RPC 已执行但审计写入失败时返回明确失败事件并标记 `business_executed=true`，确认记录仍进入 `executed`，防止重复执行。
 
 - [x] **Step 5: 运行测试**
 
@@ -937,7 +937,7 @@ Expected: API 包全部可编译。
 
 - [ ] **Step 3: 测试高风险确认**
 
-发送取消订单消息后，期望收到 `confirmation_required`，且没有直接调用 `order.cancel`。
+发送取消订单消息后，期望收到 `confirmation_required`，且没有直接调用 `order_cancel`。
 
 - [ ] **Step 4: 运行测试**
 

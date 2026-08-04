@@ -38,7 +38,7 @@ func TestCheckoutPrepareInjectsUserAndConvertsOrderItems(t *testing.T) {
 	}
 	data := decodeEventData(t, event)
 	if data["pre_order_id"] != "pre-1" || data["expire_time"] != float64(12345) {
-		t.Fatalf("checkout.prepare data = %#v", data)
+		t.Fatalf("checkout_prepare data = %#v", data)
 	}
 }
 

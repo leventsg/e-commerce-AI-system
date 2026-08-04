@@ -69,12 +69,12 @@ func cartDeleteHandler(rpc CartHighRiskRPC) HandlerFunc {
 		}
 		listResp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("cart.delete list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("cart_delete list rpc: %w", err)
 		}
 		if listResp == nil {
-			return HandlerResult{}, fmt.Errorf("cart.delete list returned nil response")
+			return HandlerResult{}, fmt.Errorf("cart_delete list returned nil response")
 		}
-		if err := validateRPCResponse("cart.delete list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
+		if err := validateRPCResponse("cart_delete list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		item := ownedCartItem(listResp.Data, cartItemID, userID)
@@ -87,12 +87,12 @@ func cartDeleteHandler(rpc CartHighRiskRPC) HandlerFunc {
 			ProductId: item.ProductId,
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("cart.delete rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("cart_delete rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("cart.delete returned nil response")
+			return HandlerResult{}, fmt.Errorf("cart_delete returned nil response")
 		}
-		if err := validateRPCResponse("cart.delete", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("cart_delete", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		return HandlerResult{
@@ -134,13 +134,13 @@ func cartAddHandler(rpc CartWriteRPC) HandlerFunc {
 				Quantity:  0,
 			})
 			if callErr != nil {
-				return HandlerResult{}, fmt.Errorf("cart.add completed %d of %d units: %w", completed, quantity, callErr)
+				return HandlerResult{}, fmt.Errorf("cart_add completed %d of %d units: %w", completed, quantity, callErr)
 			}
 			if resp == nil {
-				return HandlerResult{}, fmt.Errorf("cart.add completed %d of %d units: nil response", completed, quantity)
+				return HandlerResult{}, fmt.Errorf("cart_add completed %d of %d units: nil response", completed, quantity)
 			}
-			if err := validateRPCResponse("cart.add", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
-				return HandlerResult{}, fmt.Errorf("cart.add completed %d of %d units: %w", completed, quantity, err)
+			if err := validateRPCResponse("cart_add", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+				return HandlerResult{}, fmt.Errorf("cart_add completed %d of %d units: %w", completed, quantity, err)
 			}
 			cartItemID = resp.Id
 		}
@@ -180,12 +180,12 @@ func cartSubHandler(rpc CartWriteRPC) HandlerFunc {
 		// 获取该用户的购物车列表
 		resp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("cart.sub list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("cart_sub list rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("cart.sub list returned nil response")
+			return HandlerResult{}, fmt.Errorf("cart_sub list returned nil response")
 		}
-		if err := validateRPCResponse("cart.sub list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("cart_sub list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		// 检查购物车项是否属于该用户
@@ -194,7 +194,7 @@ func cartSubHandler(rpc CartWriteRPC) HandlerFunc {
 			return HandlerResult{}, invalidArgument("cart_item_id", "does not belong to authenticated user")
 		}
 		if quantity >= item.Quantity {
-			return HandlerResult{}, invalidArgument("quantity", "would remove the cart item; use cart.delete with confirmation")
+			return HandlerResult{}, invalidArgument("quantity", "would remove the cart item; use cart_delete with confirmation")
 		}
 
 		// 循环减少购物车项的数量
@@ -206,13 +206,13 @@ func cartSubHandler(rpc CartWriteRPC) HandlerFunc {
 				ProductId: item.ProductId,
 			})
 			if callErr != nil {
-				return HandlerResult{}, fmt.Errorf("cart.sub completed %d of %d units: %w", completed, quantity, callErr)
+				return HandlerResult{}, fmt.Errorf("cart_sub completed %d of %d units: %w", completed, quantity, callErr)
 			}
 			if result == nil {
-				return HandlerResult{}, fmt.Errorf("cart.sub completed %d of %d units: nil response", completed, quantity)
+				return HandlerResult{}, fmt.Errorf("cart_sub completed %d of %d units: nil response", completed, quantity)
 			}
-			if err := validateRPCResponse("cart.sub", result, int64(result.StatusCode), result.StatusMsg); err != nil {
-				return HandlerResult{}, fmt.Errorf("cart.sub completed %d of %d units: %w", completed, quantity, err)
+			if err := validateRPCResponse("cart_sub", result, int64(result.StatusCode), result.StatusMsg); err != nil {
+				return HandlerResult{}, fmt.Errorf("cart_sub completed %d of %d units: %w", completed, quantity, err)
 			}
 		}
 
@@ -268,12 +268,12 @@ func cartListHandler(rpc CartQueryRPC) HandlerFunc {
 		}
 		resp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("cart.list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("cart_list rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: cart.list returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: cart_list returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("cart.list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("cart_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		pageItems := paginateCartItems(resp.Data, page, pageSize)

@@ -12,7 +12,7 @@ func TestConvertContextMessagesPreservesRolesAndToolMetadata(t *testing.T) {
 		{Role: domain.ContextRoleSystem, Content: "system"},
 		{Role: domain.ContextRoleUser, Content: "user"},
 		{Role: domain.ContextRoleAssistant, Content: "assistant"},
-		{Role: domain.ContextRoleTool, Content: `{"ok":true}`, ToolCallID: "call-1", ToolName: "cart.list"},
+		{Role: domain.ContextRoleTool, Content: `{"ok":true}`, ToolCallID: "call-1", ToolName: "cart_list"},
 	})
 	if err != nil {
 		t.Fatalf("ConvertContextMessages() error = %v", err)
@@ -23,7 +23,7 @@ func TestConvertContextMessagesPreservesRolesAndToolMetadata(t *testing.T) {
 			t.Fatalf("message %d role = %q, want %q", i, converted[i].Role, want)
 		}
 	}
-	if converted[3].ToolCallID != "call-1" || converted[3].ToolName != "cart.list" {
+	if converted[3].ToolCallID != "call-1" || converted[3].ToolName != "cart_list" {
 		t.Fatalf("tool message = %+v", converted[3])
 	}
 }

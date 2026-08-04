@@ -82,16 +82,16 @@ func orderCreateHandler(rpc OrderHighRiskRPC) HandlerFunc {
 			PaymentMethod: paymentMethod,
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("order.create rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("order_create rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("order.create returned nil response")
+			return HandlerResult{}, fmt.Errorf("order_create returned nil response")
 		}
-		if err := validateRPCResponse("order.create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("order_create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		if resp.Order == nil {
-			return HandlerResult{}, fmt.Errorf("order.create returned empty order")
+			return HandlerResult{}, fmt.Errorf("order_create returned empty order")
 		}
 		return HandlerResult{
 			Data: map[string]any{
@@ -124,12 +124,12 @@ func orderCancelHandler(rpc OrderHighRiskRPC) HandlerFunc {
 			Initiative:   true,
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("order.cancel rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("order_cancel rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("order.cancel returned nil response")
+			return HandlerResult{}, fmt.Errorf("order_cancel returned nil response")
 		}
-		if err := validateRPCResponse("order.cancel", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("order_cancel", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		return HandlerResult{
@@ -152,16 +152,16 @@ func orderGetHandler(rpc OrderQueryRPC) HandlerFunc {
 		}
 		resp, err := rpc.GetOrder(ctx, &orderservice.GetOrderRequest{OrderId: orderID, UserId: uint32(userID)})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("order.get rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("order_get rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: order.get returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: order_get returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("order.get", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("order_get", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		if resp.Order == nil {
-			return HandlerResult{}, fmt.Errorf("%w: order.get returned empty order", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: order_get returned empty order", ErrQueryRPCUnavailable)
 		}
 		data := map[string]any{
 			"order": compactOrder(resp.Order),
@@ -204,12 +204,12 @@ func orderListHandler(rpc OrderQueryRPC) HandlerFunc {
 			Pagination: &orderservice.ListOrdersRequest_Pagination{Page: page, PageSize: pageSize},
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("order.list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("order_list rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: order.list returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: order_list returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("order.list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("order_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		orders := make([]map[string]any, 0, len(resp.Orders))

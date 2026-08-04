@@ -63,7 +63,7 @@ func TestWriteToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing.T
 	}
 	data := decodeEventData(t, event)
 	if data["product_id"] != float64(12) || data["added_quantity"] != float64(3) {
-		t.Fatalf("cart.add data = %#v", data)
+		t.Fatalf("cart_add data = %#v", data)
 	}
 }
 
@@ -97,7 +97,7 @@ func TestWriteToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
 	}
 	data := decodeEventData(t, event)
 	if data["remaining_quantity"] != float64(2) {
-		t.Fatalf("cart.sub remaining quantity = %#v, want 2", data["remaining_quantity"])
+		t.Fatalf("cart_sub remaining quantity = %#v, want 2", data["remaining_quantity"])
 	}
 
 	rpc.subReqs = nil
@@ -190,10 +190,10 @@ func TestWriteToolsCouponClaimUsesAuthenticatedUserAndCompactResult(t *testing.T
 	}
 	data := decodeEventData(t, event)
 	if data["coupon_id"] != "coupon-1" || data["name"] != "新人券" {
-		t.Fatalf("coupon.claim data = %#v", data)
+		t.Fatalf("coupon_claim data = %#v", data)
 	}
 	if _, ok := data["remaining_count"]; ok {
-		t.Fatalf("coupon.claim leaked unrelated coupon fields: %#v", data)
+		t.Fatalf("coupon_claim leaked unrelated coupon fields: %#v", data)
 	}
 }
 

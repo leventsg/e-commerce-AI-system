@@ -119,13 +119,13 @@ SubAgent 只绑定本领域 `ToolInfo` 和可执行工具。缺参追问、参�
 
 ## 6. 低风险工具执行流程
 
-以 `cart.add` 为例：
+以 `cart_add` 为例：
 
 ```text
 用户消息
   -> Supervisor 判断需要购物车能力
   -> 调用 cart_checkout_agent AgentTool
-  -> cart_checkout_agent 选择 cart.add 并抽取 {product_id, quantity}
+  -> cart_checkout_agent 选择 cart_add 并抽取 {product_id, quantity}
   -> writeInvokableTool 从 ToolExecutionContext 构造 ExecuteRequest.UserID
   -> Executor 查 Registry metadata
   -> 再次清理敏感参数
@@ -145,7 +145,7 @@ SubAgent 只绑定本领域 `ToolInfo` 和可执行工具。缺参追问、参�
 
 ## 7. 高风险确认流程
 
-高风险工具为 `cart.delete`、`order.create`、`order.cancel`。
+高风险工具为 `cart_delete`、`order_create`、`order_cancel`。
 
 ### 7.1 创建确认
 
@@ -161,7 +161,7 @@ Supervisor 调用领域 AgentTool
   -> 返回 confirmation_required
 ```
 
-首次请求不会调用目标写 RPC。`order.create` 在创建确认前还会以可信用户查询预结算详情；使用优惠券时调用 `coupon.calculate` 验证可用性并计算最新应付金额。
+首次请求不会调用目标写 RPC。`order_create` 在创建确认前还会以可信用户查询预结算详情；使用优惠券时调用 `coupon_calculate` 验证可用性并计算最新应付金额。
 
 ### 7.2 用户批准或拒绝
 
@@ -236,26 +236,26 @@ WrapperAuthMiddleware
 
 | 工具 | 分类 | 确认 | RPC |
 |---|---|---:|---|
-| `product.search` | 查询 | 否 | `ProductCatalogService.QueryProduct` |
-| `product.detail` | 查询 | 否 | `ProductCatalogService.GetProduct` |
-| `product.recommend` | 查询/推荐 | 否 | `ProductCatalogService.RecommendProduct` |
-| `inventory.get` | 查询 | 否 | `Inventory.GetInventory` |
-| `order.get` | 查询 | 否 | `OrderService.GetOrder` |
-| `order.list` | 查询 | 否 | `OrderService.ListOrders` |
-| `checkout.prepare` | 低风险写 | 否 | `CheckoutService.PrepareCheckout` |
-| `checkout.detail` | 查询 | 否 | `CheckoutService.GetCheckoutDetail` |
-| `cart.list` | 查询 | 否 | `Cart.CartItemList` |
-| `cart.add` | 低风险写 | 否 | `Cart.CreateCartItem` |
-| `cart.sub` | 低风险写 | 否 | `Cart.SubCartItem` |
-| `cart.delete` | 高风险写 | 是 | `Cart.DeleteCartItem` |
-| `coupon.list` | 查询 | 否 | `Coupons.ListCoupons` |
-| `coupon.detail` | 查询 | 否 | `Coupons.GetCoupon` |
-| `coupon.claim` | 低风险写 | 否 | `Coupons.ClaimCoupon` |
-| `coupon.my_list` | 查询 | 否 | `Coupons.ListUserCoupons` |
-| `coupon.usage_list` | 查询 | 否 | `Coupons.ListCouponUsages` |
-| `coupon.calculate` | 查询 | 否 | `Coupons.CalculateCoupon` |
-| `order.create` | 高风险写 | 是 | `OrderService.CreateOrder` |
-| `order.cancel` | 高风险写 | 是 | `OrderService.CancelOrder` |
+| `product_search` | 查询 | 否 | `ProductCatalogService.QueryProduct` |
+| `product_detail` | 查询 | 否 | `ProductCatalogService.GetProduct` |
+| `product_recommend` | 查询/推荐 | 否 | `ProductCatalogService.RecommendProduct` |
+| `inventory_get` | 查询 | 否 | `Inventory.GetInventory` |
+| `order_get` | 查询 | 否 | `OrderService.GetOrder` |
+| `order_list` | 查询 | 否 | `OrderService.ListOrders` |
+| `checkout_prepare` | 低风险写 | 否 | `CheckoutService.PrepareCheckout` |
+| `checkout_detail` | 查询 | 否 | `CheckoutService.GetCheckoutDetail` |
+| `cart_list` | 查询 | 否 | `Cart.CartItemList` |
+| `cart_add` | 低风险写 | 否 | `Cart.CreateCartItem` |
+| `cart_sub` | 低风险写 | 否 | `Cart.SubCartItem` |
+| `cart_delete` | 高风险写 | 是 | `Cart.DeleteCartItem` |
+| `coupon_list` | 查询 | 否 | `Coupons.ListCoupons` |
+| `coupon_detail` | 查询 | 否 | `Coupons.GetCoupon` |
+| `coupon_claim` | 低风险写 | 否 | `Coupons.ClaimCoupon` |
+| `coupon_my_list` | 查询 | 否 | `Coupons.ListUserCoupons` |
+| `coupon_usage_list` | 查询 | 否 | `Coupons.ListCouponUsages` |
+| `coupon_calculate` | 查询 | 否 | `Coupons.CalculateCoupon` |
+| `order_create` | 高风险写 | 是 | `OrderService.CreateOrder` |
+| `order_cancel` | 高风险写 | 是 | `OrderService.CancelOrder` |
 
 ## 11. WebSocket 输出
 

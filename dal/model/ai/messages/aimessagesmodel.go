@@ -61,7 +61,7 @@ func (m *customAiMessagesModel) Insert(ctx context.Context, data *AiMessages) (s
 
 // Update updates a message without writing generated columns.
 func (m *customAiMessagesModel) Update(ctx context.Context, data *AiMessages) error {
-	query := "update " + m.table + " set `msg_id` = ?, `conversation_id` = ?, `user_id` = ?, `role` = ?, `content` = ?, `metadata` = ?, `client_message_id` = ? where `seq` = ?"
+	query := "update " + m.table + " set `msg_id` = ?, `conversation_id` = ?, `user_id` = ?, `role` = ?, `content` = ?, `metadata` = ?, `client_message_id` = ? where `id` = ?"
 	_, err := m.CachedConn.ExecNoCacheCtx(ctx, query,
 		data.MsgId,
 		data.ConversationId,
@@ -70,7 +70,7 @@ func (m *customAiMessagesModel) Update(ctx context.Context, data *AiMessages) er
 		data.Content,
 		data.Metadata,
 		data.ClientMessageId,
-		data.Seq,
+		data.Id,
 	)
 	return err
 }
@@ -115,7 +115,7 @@ func (m *customAiMessagesModel) FindRecentByConversationID(ctx context.Context, 
 	}
 
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `conversation_id` = ? order by `seq` desc limit ?"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `conversation_id` = ? order by `id` desc limit ?"
 	err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, conversationID, limit)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (m *customAiMessagesModel) FindRecentContextMessages(ctx context.Context, u
 	}
 
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `seq` desc limit ?"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `id` desc limit ?"
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "user", "assistant", limit); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (m *customAiMessagesModel) CountUnsummarizedContextMessages(ctx context.Con
 	query := "select count(1) from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
 	args := []any{userID, conversationID, "user", "assistant"}
 	if afterMessageID != "" {
-		query += " and `seq` > (select `seq` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+		query += " and `id` > (select `id` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
 		args = append(args, afterMessageID, userID, conversationID)
 	} else if afterCreatedAt != "" {
 		query += " and `created_at` > ?"
@@ -173,14 +173,14 @@ func (m *customAiMessagesModel) FindUnsummarizedContextMessages(ctx context.Cont
 	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
 	args := []any{userID, conversationID, "user", "assistant"}
 	if afterMessageID != "" {
-		query += " and `seq` > (select `seq` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+		query += " and `id` > (select `id` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
 		args = append(args, afterMessageID, userID, conversationID)
 	} else if afterCreatedAt != "" {
 		query += " and `created_at` > ?"
 		args = append(args, afterCreatedAt)
 	}
 	// 按创建时间升序排序，确保按时间顺序返回
-	query += " order by `seq` asc limit ?"
+	query += " order by `id` asc limit ?"
 	args = append(args, limit)
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
 		return nil, err
@@ -198,13 +198,13 @@ func (m *customAiMessagesModel) FindRecentUnsummarizedContextMessages(ctx contex
 	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?)"
 	args := []any{userID, conversationID, "user", "assistant"}
 	if afterMessageID != "" {
-		query += " and `seq` > (select `seq` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+		query += " and `id` > (select `id` from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
 		args = append(args, afterMessageID, userID, conversationID)
 	} else if afterCreatedAt != "" {
 		query += " and `created_at` > ?"
 		args = append(args, afterCreatedAt)
 	}
-	query += " order by `seq` desc limit ?"
+	query += " order by `id` desc limit ?"
 	args = append(args, limit)
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
 		return nil, err
@@ -222,7 +222,7 @@ func (m *customAiMessagesModel) FindRecentToolMessages(ctx context.Context, user
 	}
 
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` = ? order by `seq` desc limit ?"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` = ? order by `id` desc limit ?"
 	err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "tool", limit)
 	return rows, err
 }
@@ -248,7 +248,7 @@ func (m *customAiMessagesModel) FindMessagesByIDs(ctx context.Context, userID ui
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `msg_id` in (" + strings.Join(placeholders, ",") + ") order by `seq` asc"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `msg_id` in (" + strings.Join(placeholders, ",") + ") order by `id` asc"
 	var rows []*AiMessages
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, args...); err != nil {
 		return nil, err
@@ -267,7 +267,7 @@ func (m *customAiMessagesModel) FindUserMessageByClientMessageID(ctx context.Con
 
 func (m *customAiMessagesModel) FindAssistantMessagesByClientMessageID(ctx context.Context, userID uint64, conversationID, clientMessageID string) ([]*AiMessages, error) {
 	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `client_message_id` = ? and `role` = ? order by `seq` asc"
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `client_message_id` = ? and `role` = ? order by `id` asc"
 	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, clientMessageID, "assistant"); err != nil {
 		return nil, err
 	}

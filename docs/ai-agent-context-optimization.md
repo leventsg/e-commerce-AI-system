@@ -146,7 +146,7 @@ TaskState 是业务状态，不依赖模型从自然语言历史中重新猜测�
 ```json
 {
   "tool_call_id": "call_01",
-  "tool_name": "cart.list",
+  "tool_name": "cart_list",
   "status": "success",
   "data": {
     "items": [
@@ -167,7 +167,7 @@ TaskState 是业务状态，不依赖模型从自然语言历史中重新猜测�
 ```json
 {
   "tool_call_id": "call_01",
-  "tool_name": "cart.list",
+  "tool_name": "cart_list",
   "status": "success",
   "summary": "购物车共有 1 件条目。",
   "entity_ids": {
@@ -783,7 +783,7 @@ go test ./...
 **工作项：**
 
 1. 从 `ai_messages.metadata.data_json`、`metadata.tool_result` 和 `ai_tool_calls` 采集现有工具结果样例。
-2. 为 `product.detail`、`product.recommend`、`cart.list`、`order.get`、`checkout.detail`、`coupon.calculate` 建立结果字段 allowlist。
+2. 为 `product_detail`、`product_recommend`、`cart_list`、`order_get`、`checkout_detail`、`coupon_calculate` 建立结果字段 allowlist。
 3. 标记每个字段的类型、是否关键标识、是否动态、TTL 和是否允许进入模型。
 4. 建立端到端黄金场景：
    - 多轮后引用“刚才那个商品”；
