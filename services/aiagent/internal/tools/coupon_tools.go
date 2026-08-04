@@ -64,16 +64,16 @@ func couponClaimHandler(rpc CouponWriteRPC) HandlerFunc {
 		// 调用优惠券服务的领取接口
 		resp, err := rpc.ClaimCoupon(ctx, &couponsclient.ClaimCouponReq{UserId: userID, CouponId: couponID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("coupon.claim rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("coupon_claim rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("coupon.claim returned nil response")
+			return HandlerResult{}, fmt.Errorf("coupon_claim returned nil response")
 		}
-		if err := validateRPCResponse("coupon.claim", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_claim", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		if resp.Coupon == nil {
-			return HandlerResult{}, fmt.Errorf("coupon.claim returned empty coupon")
+			return HandlerResult{}, fmt.Errorf("coupon_claim returned empty coupon")
 		}
 		return HandlerResult{
 			Data: map[string]any{
@@ -105,12 +105,12 @@ func couponListHandler(rpc CouponQueryRPC) HandlerFunc {
 			Type:       int32(typeValue),
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("coupon.list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("coupon_list rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: coupon.list returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: coupon_list returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("coupon.list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		values := compactCoupons(resp.Coupons)
@@ -134,16 +134,16 @@ func couponDetailHandler(rpc CouponQueryRPC) HandlerFunc {
 		}
 		resp, err := rpc.GetCoupon(ctx, &couponsclient.GetCouponReq{Id: couponID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("coupon.detail rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("coupon_detail rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: coupon.detail returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: coupon_detail returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("coupon.detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		if resp.Coupon == nil {
-			return HandlerResult{}, fmt.Errorf("%w: coupon.detail returned empty coupon", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: coupon_detail returned empty coupon", ErrQueryRPCUnavailable)
 		}
 		return HandlerResult{
 			Data:    map[string]any{"coupon": compactCoupon(resp.Coupon)},
@@ -175,12 +175,12 @@ func couponMyListHandler(rpc CouponQueryRPC) HandlerFunc {
 			Pagination: &couponsclient.PaginationReq{Page: page, Size: pageSize},
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("coupon.my_list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("coupon_my_list rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: coupon.my_list returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: coupon_my_list returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("coupon.my_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_my_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		values := make([]map[string]any, 0, len(resp.UserCoupons))
@@ -221,12 +221,12 @@ func couponUsageListHandler(rpc CouponQueryRPC) HandlerFunc {
 			Pagination: &couponsclient.PaginationReq{Page: page, Size: pageSize},
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("coupon.usage_list rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("coupon_usage_list rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: coupon.usage_list returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: coupon_usage_list returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("coupon.usage_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_usage_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		values := compactCouponUsages(resp.Usages)
@@ -262,12 +262,12 @@ func couponCalculateHandler(rpc CouponQueryRPC) HandlerFunc {
 			Items:    items,
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("coupon.calculate rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("coupon_calculate rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: coupon.calculate returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: coupon_calculate returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("coupon.calculate", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_calculate", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		summary := "该优惠券不可用于当前商品。"

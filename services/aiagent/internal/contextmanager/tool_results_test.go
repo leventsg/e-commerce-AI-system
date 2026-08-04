@@ -40,7 +40,7 @@ func TestToolResultStoreSkipsFailuresInvalidJSONAndUnknownTool(t *testing.T) {
 	model := fakeToolMessagesModel{recent: []*aimessages.AiMessages{
 		toolMessage(t, "call-good", 42, "conv-1", domain.ToolCartList, "success", `{"items":[]}`, "有效", baseTime().Add(3*time.Minute)),
 		rawToolMessage("call-unknown", 42, "conv-1", baseTime().Add(2*time.Minute), `{"tool_call_id":"call-unknown","tool_name":"unknown.tool","status":"success","tool_result":{"tool_call_id":"call-unknown","tool_name":"unknown.tool","status":"success","data":{},"summary":"unknown"}}`),
-		rawToolMessage("call-invalid", 42, "conv-1", baseTime().Add(time.Minute), `{"tool_call_id":"call-invalid","tool_name":"cart.list","status":"success","tool_result":{`),
+		rawToolMessage("call-invalid", 42, "conv-1", baseTime().Add(time.Minute), `{"tool_call_id":"call-invalid","tool_name":"cart_list","status":"success","tool_result":{`),
 		toolMessage(t, "call-failed", 42, "conv-1", domain.ToolCartList, "failed", `{"error":"boom"}`, "失败", baseTime()),
 	}}
 	store := NewToolResultStore(&model)
@@ -55,7 +55,7 @@ func TestToolResultStoreSkipsFailuresInvalidJSONAndUnknownTool(t *testing.T) {
 }
 
 func TestToolResultStoreBuildsRefsAndLegacyDataJSONOnlyAsRefs(t *testing.T) {
-	legacyMetadata := `{"tool_call_id":"call-legacy","tool_name":"cart.list","status":"success","data_json":"{\"items\":[{\"cart_item_id\":7,\"product_id\":11,\"quantity\":2}]}"}`
+	legacyMetadata := `{"tool_call_id":"call-legacy","tool_name":"cart_list","status":"success","data_json":"{\"items\":[{\"cart_item_id\":7,\"product_id\":11,\"quantity\":2}]}"}`
 	model := fakeToolMessagesModel{recent: []*aimessages.AiMessages{
 		toolMessage(t, "call-new", 42, "conv-1", domain.ToolCartAdd, "success", `{"cart_item_id":8,"product_id":12,"quantity":1}`, "已加入购物车", baseTime().Add(time.Minute)),
 		rawToolMessage("call-legacy", 42, "conv-1", baseTime(), legacyMetadata),

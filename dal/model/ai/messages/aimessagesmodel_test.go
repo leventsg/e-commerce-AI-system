@@ -42,7 +42,7 @@ func TestInsertBatchExecutesOneMultiValueInsert(t *testing.T) {
 	defer cleanup()
 	now := time.Now()
 	messages := []*AiMessages{
-		{MsgId: "msg-1", ConversationId: "conv-1", UserId: 42, Role: "tool", Content: "result", Metadata: sql.NullString{String: `{"tool_name":"cart.add"}`, Valid: true}, ClientMessageId: sql.NullString{String: "client-1", Valid: true}, CreatedAt: now},
+		{MsgId: "msg-1", ConversationId: "conv-1", UserId: 42, Role: "tool", Content: "result", Metadata: sql.NullString{String: `{"tool_name":"cart_add"}`, Valid: true}, ClientMessageId: sql.NullString{String: "client-1", Valid: true}, CreatedAt: now},
 		{MsgId: "msg-2", ConversationId: "conv-1", UserId: 42, Role: "assistant", Content: "done", ClientMessageId: sql.NullString{String: "client-1", Valid: true}, CreatedAt: now},
 	}
 	query := "insert into `ai_messages` (`msg_id`, `conversation_id`, `user_id`, `role`, `content`, `metadata`, `client_message_id`) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)"
@@ -78,8 +78,8 @@ func TestFindRecentContextMessagesScopesByUserConversationAndExcludesTools(t *te
 	defer cleanup()
 	newer := time.Date(2026, 7, 24, 10, 1, 0, 0, time.UTC)
 	older := newer.Add(-time.Minute)
-	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `seq` desc limit ?"
-	rows := sqlmock.NewRows([]string{"seq", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
+	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) order by `id` desc limit ?"
+	rows := sqlmock.NewRows([]string{"id", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
 		AddRow(uint64(2), "m2", "conv-1", uint64(42), "assistant", "newer", nil, "client-1", nil, newer).
 		AddRow(uint64(1), "m1", "conv-1", uint64(42), "user", "older", nil, "client-1", "client-1", older)
 	mock.ExpectQuery(query).
@@ -101,7 +101,7 @@ func TestFindRecentContextMessagesScopesByUserConversationAndExcludesTools(t *te
 func TestCountUnsummarizedContextMessagesUsesSameWatermarkAndRoleScope(t *testing.T) {
 	model, mock, cleanup := newBatchTestModel(t)
 	defer cleanup()
-	query := "select count(1) from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) and `seq` > (select `seq` from `ai_messages` where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
+	query := "select count(1) from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) and `id` > (select `id` from `ai_messages` where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1)"
 	rows := sqlmock.NewRows([]string{"count(1)"}).AddRow(int64(17))
 	mock.ExpectQuery(query).
 		WithArgs(uint64(42), "conv-1", "user", "assistant", "m010", uint64(42), "conv-1").
@@ -124,8 +124,8 @@ func TestFindRecentUnsummarizedContextMessagesReturnsOldestFirstRecentWindow(t *
 	defer cleanup()
 	newer := time.Date(2026, 7, 24, 10, 2, 0, 0, time.UTC)
 	older := newer.Add(-time.Minute)
-	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) and `seq` > (select `seq` from `ai_messages` where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1) order by `seq` desc limit ?"
-	rows := sqlmock.NewRows([]string{"seq", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
+	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `role` in (?, ?) and `id` > (select `id` from `ai_messages` where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? limit 1) order by `id` desc limit ?"
+	rows := sqlmock.NewRows([]string{"id", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
 		AddRow(uint64(3), "m3", "conv-1", uint64(42), "assistant", "newer", nil, "client-1", nil, newer).
 		AddRow(uint64(2), "m2", "conv-1", uint64(42), "user", "older", nil, "client-1", "client-1", older)
 	mock.ExpectQuery(query).
@@ -149,7 +149,7 @@ func TestFindUserMessageByClientMessageIDScopesByUserAndRole(t *testing.T) {
 	defer cleanup()
 	createdAt := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
 	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `client_message_id` = ? and `role` = ? limit 1"
-	rows := sqlmock.NewRows([]string{"seq", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
+	rows := sqlmock.NewRows([]string{"id", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
 		AddRow(uint64(7), "msg-user", "conv-1", uint64(42), "user", "你好", nil, "client-1", "client-1", createdAt)
 	mock.ExpectQuery(query).
 		WithArgs(uint64(42), "client-1", "user").
@@ -159,17 +159,17 @@ func TestFindUserMessageByClientMessageIDScopesByUserAndRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindUserMessageByClientMessageID() error = %v", err)
 	}
-	if message.MsgId != "msg-user" || message.Seq != 7 || message.ConversationId != "conv-1" {
+	if message.MsgId != "msg-user" || message.Id != 7 || message.ConversationId != "conv-1" {
 		t.Fatalf("message = %+v", message)
 	}
 }
 
-func TestFindAssistantMessagesByClientMessageIDScopesAndOrdersBySeq(t *testing.T) {
+func TestFindAssistantMessagesByClientMessageIDScopesAndOrdersById(t *testing.T) {
 	model, mock, cleanup := newBatchTestModel(t)
 	defer cleanup()
 	createdAt := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
-	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `client_message_id` = ? and `role` = ? order by `seq` asc"
-	rows := sqlmock.NewRows([]string{"seq", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
+	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? and `client_message_id` = ? and `role` = ? order by `id` asc"
+	rows := sqlmock.NewRows([]string{"id", "msg_id", "conversation_id", "user_id", "role", "content", "metadata", "client_message_id", "dedupe_client_message_id", "created_at"}).
 		AddRow(uint64(8), "assistant-1", "conv-1", uint64(42), "assistant", "旧回复 1", nil, "client-1", nil, createdAt).
 		AddRow(uint64(9), "assistant-2", "conv-1", uint64(42), "assistant", "旧回复 2", nil, "client-1", nil, createdAt)
 	mock.ExpectQuery(query).

@@ -72,7 +72,7 @@ func TestPrepareReturnsDuplicateWhenClientMessageIDAlreadyExists(t *testing.T) {
 	conversations := newFakeConversationsModel()
 	messages := newFakeMessagesModel()
 	messages.duplicate = &aimessages.AiMessages{
-		Seq:             9,
+		Id:              9,
 		MsgId:           "msg_existing",
 		ConversationId:  "conv_existing",
 		UserId:          42,
@@ -94,7 +94,7 @@ func TestPrepareReturnsDuplicateWhenClientMessageIDAlreadyExists(t *testing.T) {
 	if !prepared.Duplicate {
 		t.Fatalf("Duplicate = false, want true")
 	}
-	if prepared.ConversationID != "conv_existing" || prepared.UserMessageID != "msg_existing" || prepared.UserMessageSeq != 9 {
+	if prepared.ConversationID != "conv_existing" || prepared.UserMessageID != "msg_existing" {
 		t.Fatalf("prepared duplicate = %+v", prepared)
 	}
 	if messages.inserted != nil {

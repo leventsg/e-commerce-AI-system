@@ -55,12 +55,12 @@ func checkoutPrepareHandler(rpc CheckoutWriteRPC) HandlerFunc {
 			OrderItems: items,
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("checkout.prepare rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("checkout_prepare rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: checkout.prepare returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: checkout_prepare returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("checkout.prepare", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("checkout_prepare", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		return HandlerResult{
@@ -126,16 +126,16 @@ func checkoutDetailHandler(rpc CheckoutQueryRPC) HandlerFunc {
 			UserId:     userID,
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("checkout.detail rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("checkout_detail rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: checkout.detail returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: checkout_detail returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("checkout.detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("checkout_detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		if resp.Data == nil {
-			return HandlerResult{}, fmt.Errorf("%w: checkout.detail returned empty checkout", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: checkout_detail returned empty checkout", ErrQueryRPCUnavailable)
 		}
 		items := make([]map[string]any, 0, len(resp.Data.Items))
 		for _, item := range resp.Data.Items {

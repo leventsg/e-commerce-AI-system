@@ -97,7 +97,7 @@ WebSocket 连接会在内存中保存 Chat RPC 返回的最新 `conversation_id`
 
 ```json
 {
-  "tool_name": "cart.list",
+  "tool_name": "cart_list",
   "status": "success",
   "confirmation_id": "",
   "data_json": "{\"items\":[{\"cart_item_id\":2,\"product_id\":2,\"quantity\":1}],\"total\":1}"

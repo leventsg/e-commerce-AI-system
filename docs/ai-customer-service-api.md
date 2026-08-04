@@ -159,7 +159,7 @@ AI 回复或操作结果摘要。
   "type": "tool_result",
   "conversation_id": "conv_xxx",
   "message_id": "msg_xxx",
-  "tool": "order.get",
+  "tool": "order_get",
   "status": "success",
   "data": {
     "order_id": "202406300001",
@@ -180,10 +180,10 @@ AI 回复或操作结果摘要。
   "type": "confirmation_required",
   "conversation_id": "conv_xxx",
   "message_id": "msg_xxx",
-  "tool": "order.cancel",
+  "tool": "order_cancel",
   "status": "pending",
   "confirmation_id": "confirm_xxx",
-  "action": "order.cancel",
+  "action": "order_cancel",
   "summary": "确认取消订单 202406300001？",
   "expires_at": 1719730000,
   "done": true
@@ -192,9 +192,9 @@ AI 回复或操作结果摘要。
 
 当前必须确认的操作：
 
-- `cart.delete`
-- `order.create`
-- `order.cancel`
+- `cart_delete`
+- `order_create`
+- `order_cancel`
 
 ### 2.5 `error`
 
@@ -257,7 +257,7 @@ AI 回复或操作结果摘要。
   "type": "confirmation_required",
   "conversation_id": "conv_xxx",
   "confirmation_id": "confirm_xxx",
-  "action": "order.cancel",
+  "action": "order_cancel",
   "summary": "确认取消订单 202406300001？",
   "expires_at": 1719730000,
   "done": true
@@ -280,7 +280,7 @@ AI 回复或操作结果摘要。
 {
   "type": "tool_result",
   "conversation_id": "conv_xxx",
-  "tool": "order.cancel",
+  "tool": "order_cancel",
   "status": "success",
   "data": {
     "order_id": "202406300001"

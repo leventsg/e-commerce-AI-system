@@ -61,7 +61,7 @@ func TestModelFactoryPlainChatModelDoesNotRequireStructuredConfig(t *testing.T) 
 }
 
 func TestModelFactoryBindsToolsWhenProvided(t *testing.T) {
-	toolInfo := &schema.ToolInfo{Name: "cart.list", Desc: "list cart"}
+	toolInfo := &schema.ToolInfo{Name: "cart_list", Desc: "list cart"}
 	chatModel := &capturingToolCallingChatModel{capturingChatModel: capturingChatModel{response: schema.AssistantMessage("ok", nil)}}
 	factory := NewModelFactory(WithChatModelBuilder(func(context.Context, string, config.EinoConfig) (model.BaseChatModel, error) {
 		return chatModel, nil
@@ -82,14 +82,14 @@ func TestModelFactoryRejectsToolsForNonToolCallingModel(t *testing.T) {
 		return chatModel, nil
 	}))
 
-	_, err := factory.NewChatModel(context.Background(), config.EinoConfig{Provider: "deepseek", Model: "fast"}, &schema.ToolInfo{Name: "cart.list"})
+	_, err := factory.NewChatModel(context.Background(), config.EinoConfig{Provider: "deepseek", Model: "fast"}, &schema.ToolInfo{Name: "cart_list"})
 	if err == nil || !strings.Contains(err.Error(), "tool calling") {
 		t.Fatalf("NewChatModel() error = %v, want tool calling error", err)
 	}
 }
 
 func TestModelFactoryBindsToolsForStructuredModelWhenProvided(t *testing.T) {
-	toolInfo := &schema.ToolInfo{Name: "cart.list", Desc: "list cart"}
+	toolInfo := &schema.ToolInfo{Name: "cart_list", Desc: "list cart"}
 	chatModel := &capturingToolCallingChatModel{capturingChatModel: capturingChatModel{response: schema.AssistantMessage(`{"ok":true}`, nil)}}
 	factory := NewModelFactory(WithStructuredChatModelBuilder(func(_ context.Context, _ string, _ config.EinoConfig, _ StructuredOutputConfig) (model.BaseChatModel, error) {
 		return chatModel, nil

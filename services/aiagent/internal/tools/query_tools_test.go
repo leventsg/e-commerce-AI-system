@@ -83,7 +83,7 @@ func TestQueryToolsRegistrySchemasMatchRPCContracts(t *testing.T) {
 		t.Fatalf("marshal coupon schema: %v", err)
 	}
 	if !strings.Contains(string(couponJSON), "items") || strings.Contains(string(couponJSON), `"amount"`) {
-		t.Fatalf("coupon.calculate schema does not match CalculateCoupon RPC: %s", couponJSON)
+		t.Fatalf("coupon_calculate schema does not match CalculateCoupon RPC: %s", couponJSON)
 	}
 }
 

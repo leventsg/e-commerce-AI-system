@@ -62,7 +62,7 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 ```json
 {
   "type": "tool_result",
-  "tool": "order.get",
+  "tool": "order_get",
   "status": "success",
   "data": {}
 }
@@ -74,7 +74,7 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 {
   "type": "confirmation_required",
   "confirmation_id": "confirm_001",
-  "action": "order.cancel",
+  "action": "order_cancel",
   "summary": "确认取消订单 202406300001？",
   "expires_at": 1719730000
 }
@@ -190,26 +190,26 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 ### 3.6 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
 首期工具：
-- product.search
-- product.detail
-- product.recommend
-- inventory.get
-- order.get
-- order.list
-- order.cancel
-- checkout.prepare
-- checkout.detail
-- order.create
-- cart.list
-- cart.add
-- cart.sub
-- cart.delete 
-- coupon.list
-- coupon.detail
-- coupon.claim
-- coupon.my_list
-- coupon.usage_list
-- coupon.calculate
+- product_search
+- product_detail
+- product_recommend
+- inventory_get
+- order_get
+- order_list
+- order_cancel
+- checkout_prepare
+- checkout_detail
+- order_create
+- cart_list
+- cart_add
+- cart_sub
+- cart_delete
+- coupon_list
+- coupon_detail
+- coupon_claim
+- coupon_my_list
+- coupon_usage_list
+- coupon_calculate
 
 每个工具需要定义：
 - 工具名称。
@@ -223,10 +223,10 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 
 首期下单工具契约：
 
-- `checkout.prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
-- `order.create` 接收必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选；`payment_method` 使用现有 RPC 枚举值 1（微信）或 2（支付宝）。
+- `checkout_prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
+- `order_create` 接收必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选；`payment_method` 使用现有 RPC 枚举值 1（微信）或 2（支付宝）。
 - 高风险 Tool 的普通 Eino 调用只创建确认记录。只有 `ConfirmAction` 成功领取 `pending -> approved` 后，才能通过同一个 Execution Guard 调用业务 RPC。
-- 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon.calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
+- 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
 
 ### 3.7 Execution Guard / Engine
@@ -280,7 +280,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 ### 4.2 ai_messages
 | 字段 | 说明 |
 |---|---|
-| seq | 数据库内部自增序号 |
+| id | 数据库内部自增序号 |
 | msg_id | 消息唯一 ID，对外作为 `message_id` 返回，服务端 UUIDv7 生成 |
 | conversation_id | 会话 ID |
 | user_id | 用户 ID |
@@ -377,16 +377,16 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 1. 用户描述购买需求。
 2. Eino Agent 结合系统提示词和工具 schema 生成商品推荐工具调用。
 3. Execution Guard 校验并注入用户 ID。
-4. 调用 product.recommend。
-5. 推荐不足时调用 product.search。
+4. 调用 product_recommend。
+5. 推荐不足时调用 product_search。
 6. Eino ChatModel 基于工具结果生成简短推荐理由。
 7. 返回商品列表和推荐理由。
-8. 用户要求加入购物车时调用 cart.add。
+8. 用户要求加入购物车时调用 cart_add。
 
 ### 5.2 查询订单流程
 1. 用户提供订单号或描述“最近订单”。
-2. 有订单号时调用 order.get。
-3. 无订单号时调用 order.list，并将结果交给 Eino ChatModel 根据用户描述筛选和总结。
+2. 有订单号时调用 order_get。
+3. 无订单号时调用 order_list，并将结果交给 Eino ChatModel 根据用户描述筛选和总结。
 4. 多个候选订单时让用户选择。
 5. 返回订单状态、商品、金额、地址、支付状态。
 
@@ -396,17 +396,17 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 3. 校验订单属于当前用户。
 4. 判断订单是否允许取消。
 5. 创建确认请求。
-6. 用户确认后调用 order.cancel。
+6. 用户确认后调用 order_cancel。
 7. 返回取消结果。
 8. 记录审计日志。
 
 ### 5.4 创建订单流程
 1. 用户表达购买意图。
 2. AI 确认商品、数量、优惠券、地址、支付方式；缺少参数时先追问，不猜测。
-3. 没有 `pre_order_id` 时调用 `checkout.prepare` 创建预结算。
+3. 没有 `pre_order_id` 时调用 `checkout_prepare` 创建预结算。
 4. 使用当前用户身份查询预结算详情，取得应付金额和商品数量。
-5. 创建 `order.create` 确认请求；使用优惠券时先调用 `coupon.calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
-6. 用户确认后，由确认状态机的唯一 winner 通过 Execution Guard 调用 `order.create`。
+5. 创建 `order_create` 确认请求；使用优惠券时先调用 `coupon_calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
+6. 用户确认后，由确认状态机的唯一 winner 通过 Execution Guard 调用 `order_create`。
 7. 成功标记确认记录为 `executed`，失败标记为 `failed`，并返回真实订单结果。
 
 ### 5.5 上下文构建流程

@@ -35,12 +35,12 @@ func inventoryGetHandler(rpc InventoryQueryRPC) HandlerFunc {
 		}
 		resp, err := rpc.GetInventory(ctx, &inventoryclient.GetInventoryReq{ProductId: productID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("inventory.get rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("inventory_get rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: inventory.get returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: inventory_get returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("inventory.get", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("inventory_get", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		return HandlerResult{

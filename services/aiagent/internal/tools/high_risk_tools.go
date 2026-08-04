@@ -213,16 +213,16 @@ func (h *HighRiskTools) orderCreateSummary(ctx context.Context, req ExecuteReque
 	// 获取预订单详情
 	resp, err := h.checkout.GetCheckoutDetail(ctx, &checkoutservice.CheckoutDetailReq{PreOrderId: preOrderID, UserId: userID})
 	if err != nil {
-		return "", fmt.Errorf("checkout.detail before order.create: %w", err)
+		return "", fmt.Errorf("checkout_detail before order_create: %w", err)
 	}
 	if resp == nil || resp.Data == nil {
-		return "", fmt.Errorf("checkout.detail before order.create returned empty checkout")
+		return "", fmt.Errorf("checkout_detail before order_create returned empty checkout")
 	}
-	if err := validateRPCResponse("checkout.detail before order.create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+	if err := validateRPCResponse("checkout_detail before order_create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 		return "", err
 	}
 	if resp.Data.UserId != int64(userID) {
-		return "", fmt.Errorf("checkout.detail before order.create does not belong to authenticated user")
+		return "", fmt.Errorf("checkout_detail before order_create does not belong to authenticated user")
 	}
 	quantity := int64(0)
 	for _, item := range resp.Data.Items {
@@ -250,12 +250,12 @@ func (h *HighRiskTools) orderCreateSummary(ctx context.Context, req ExecuteReque
 			UserId: userID, CouponId: couponID, Items: items,
 		})
 		if err != nil {
-			return "", fmt.Errorf("coupon.calculate before order.create: %w", err)
+			return "", fmt.Errorf("coupon_calculate before order_create: %w", err)
 		}
 		if calculated == nil {
-			return "", fmt.Errorf("coupon.calculate before order.create returned nil response")
+			return "", fmt.Errorf("coupon_calculate before order_create returned nil response")
 		}
-		if err := validateRPCResponse("coupon.calculate before order.create", calculated, int64(calculated.StatusCode), calculated.StatusMsg); err != nil {
+		if err := validateRPCResponse("coupon_calculate before order_create", calculated, int64(calculated.StatusCode), calculated.StatusMsg); err != nil {
 			return "", err
 		}
 		if !calculated.IsUsable {

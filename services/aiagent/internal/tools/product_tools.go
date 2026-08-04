@@ -70,12 +70,12 @@ func productSearchHandler(rpc ProductQueryRPC) HandlerFunc {
 		// 调用 RPC 查询商品
 		resp, err := rpc.QueryProduct(ctx, rpcReq)
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("product.search rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("product_search rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: product.search returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: product_search returned nil response", ErrQueryRPCUnavailable)
 		}
-		if err := validateRPCResponse("product.search", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("product_search", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		// 将查询结果转为map格式
@@ -111,17 +111,17 @@ func productDetailHandler(rpc ProductQueryRPC) HandlerFunc {
 		// 调用 RPC 查询商品详情
 		resp, err := rpc.GetProduct(ctx, &productcatalogservice.GetProductReq{Id: productID, UserId: userID})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("product.detail rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("product_detail rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: product.detail returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: product_detail returned nil response", ErrQueryRPCUnavailable)
 		}
 		// 验证 RPC 响应
-		if err := validateRPCResponse("product.detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("product_detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		if resp.Product == nil {
-			return HandlerResult{}, fmt.Errorf("%w: product.detail returned empty product", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: product_detail returned empty product", ErrQueryRPCUnavailable)
 		}
 		return HandlerResult{
 			Data:    map[string]any{"product": compactProduct(resp.Product, true)},
@@ -176,13 +176,13 @@ func productRecommendHandler(rpc ProductQueryRPC) HandlerFunc {
 			},
 		})
 		if err != nil {
-			return HandlerResult{}, fmt.Errorf("product.recommend rpc: %w", err)
+			return HandlerResult{}, fmt.Errorf("product_recommend rpc: %w", err)
 		}
 		if resp == nil {
-			return HandlerResult{}, fmt.Errorf("%w: product.recommend returned nil response", ErrQueryRPCUnavailable)
+			return HandlerResult{}, fmt.Errorf("%w: product_recommend returned nil response", ErrQueryRPCUnavailable)
 		}
 		// 验证 RPC 响应
-		if err := validateRPCResponse("product.recommend", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		if err := validateRPCResponse("product_recommend", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 			return HandlerResult{}, err
 		}
 		// 过滤商品列表，确保价格在指定范围内，并限制返回数量
