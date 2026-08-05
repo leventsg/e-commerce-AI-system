@@ -6,27 +6,27 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 
 新增模块：
 
-- `apis/ai`：对外 WebSocket 聊天入口。
+- `apis/ai`：对外 SSE 聊天入口。
 - `services/aiagent`：AI Agent 服务，基于 Eino 负责模型接入、意图编排、工具调用、会话管理、确认管理和审计。
 - 数据表：保存会话、消息、工具调用、确认记录和用户记忆。
 
 调用链路：
 
-用户 WebSocket  
+用户 SSE 请求  
 -> `apis/ai`  
--> `services/aiagent`  
+-> `services/aiagent` server-streaming RPC  
 -> Eino Agent / Chain / Graph  
 -> Eino ChatModel  
 -> Eino Tool / ToolsNode  
 -> 现有业务 RPC  
 -> 返回结构化结果  
--> WebSocket 推送给用户
+-> SSE 推送给用户
 
-## 2. WebSocket 接口设计
+## 2. SSE 接口设计
 
 接口：
 
-`GET /douyin/ai/chat?conversation_id=optional`
+`POST /douyin/ai/chat`
 
 鉴权：
 
@@ -38,6 +38,7 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 ```json
 {
   "type": "user_message",
+  "conversation_id": "conv_001",
   "client_message_id": "client_msg_0190f1f0e8a57000",
   "content": "帮我查一下订单 202406300001",
   "metadata": {
@@ -84,10 +85,13 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 ```json
 {
   "type": "confirm_action",
+  "conversation_id": "conv_001",
   "confirmation_id": "confirm_001",
   "approved": true
 }
 ```
+
+服务端响应为 `text/event-stream`。每个事件使用 `event: <type>`、`id: <message_id>` 和 `data: <ServerEvent JSON>` 输出，并在事件产生后立即 flush；空闲连接每 10 秒发送 `: ping`，单次连接最长 5 分钟。前端使用 `fetch + ReadableStream` 发送 POST JSON 并消费 SSE。
 
 ## 3. 核心模块
 ### 3.1 Eino 模型接入
@@ -111,7 +115,7 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 - 将会话上下文转换为 Eino message。
 - 构建系统提示词，约束模型只能调用已注册工具。
 - 使用 Eino ADK ChatModelAgent 编排“模型推理 -> ToolsNode 工具调用 -> 工具结果回填 -> 最终回复”流程。
-- 对流式输出进行事件转换，推送为 WebSocket `assistant_message`。
+- 对流式输出进行事件转换，推送为 SSE `assistant_message`。
 - 将 Eino callback 或本地包装器中的工具调用事件写入 `ai_tool_calls`。
 - 在 Eino 执行工具前调用本地风险策略，拦截高风险工具并创建确认请求。
 
@@ -425,7 +429,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 8. 工具和 assistant 结果持久化后更新 TaskState，并异步评估是否需要生成新摘要或长期记忆候选。
 9. 摘要、记忆或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
 
-工具结果持久化采用双字段兼容：`metadata.tool_result` 保存结构化机器 envelope，`metadata.data_json` 保留投影后的业务 JSON 供现有 WebSocket/旧消费者使用。Context Manager 优先读取 envelope，旧记录才回退读取 `data_json`。
+工具结果持久化采用双字段兼容：`metadata.tool_result` 保存结构化机器 envelope，`metadata.data_json` 保留投影后的业务 JSON 供现有 SSE/旧消费者使用。Context Manager 优先读取 envelope，旧记录才回退读取 `data_json`。
 
 ## 6. 测试方案
 ### 6.1 单元测试
@@ -442,8 +446,8 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - TaskState 状态条件更新和 checkpoint 恢复。
 
 ### 6.2 集成测试
-- WebSocket 建连成功。
-- 未登录 WebSocket 被拒绝。
+- SSE 请求成功返回事件流。
+- 未登录 SSE 请求被拒绝。
 - 用户查询商品。
 - 用户查询订单。
 - 用户获取商品推荐。
@@ -470,9 +474,9 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 实现 Confirmation Manager。
 - 实现基础单元测试。
 
-第二阶段：WebSocket 聊天入口  
+第二阶段：SSE 聊天入口  
 - 新增 apis/ai。
-- 实现 WebSocket 建连、鉴权、消息收发。
+- 实现 SSE 鉴权、消息接收和事件流输出。
 - 接入 AI Agent 服务。
 
 第三阶段：业务工具接入  

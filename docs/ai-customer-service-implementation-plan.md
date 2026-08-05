@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 基于现有电商微服务新增 AI 智能客服能力，支持 WebSocket 多轮对话、业务查询、商品推荐、低风险自动操作、高风险确认执行和审计追踪。
+**Goal:** 基于现有电商微服务新增 AI 智能客服能力，支持 SSE 多轮对话、业务查询、商品推荐、低风险自动操作、高风险确认执行和审计追踪。
 
-**Architecture:** 新增 `apis/ai` 作为对外 WebSocket 网关，新增 `services/aiagent` 作为 AI 编排 RPC 服务。`services/aiagent` 基于 Eino 提供 ChatModel、Tool、ToolsNode、Agent/Chain/Graph 编排能力，本地代码负责会话、工具风险元数据、Execution Guard、确认管理和审计。AI Agent 不侵入商品、库存、订单、优惠券、购物车、结算等核心服务，只通过现有 RPC 客户端调用业务能力，并强制从登录态注入用户 ID。
+**Architecture:** 新增 `apis/ai` 作为对外 SSE 网关，新增 `services/aiagent` 作为 AI 编排 RPC 服务。`services/aiagent` 基于 Eino 提供 ChatModel、Tool、ToolsNode、Agent/Chain/Graph 编排能力，本地代码负责会话、工具风险元数据、Execution Guard、确认管理和审计。AI Agent 不侵入商品、库存、订单、优惠券、购物车、结算等核心服务，只通过现有 RPC 客户端调用业务能力，并强制从登录态注入用户 ID。
 
-**Tech Stack:** Go、go-zero API/RPC、Eino、WebSocket、MySQL、Redis、OpenAI-compatible/DeepSeek ChatModel、现有 product/inventory/order/carts/coupons/checkout/audit RPC。
+**Tech Stack:** Go、go-zero API/RPC、Eino、SSE、MySQL、Redis、OpenAI-compatible/DeepSeek ChatModel、现有 product/inventory/order/carts/coupons/checkout/audit RPC。
 
 ---
 
@@ -18,7 +18,7 @@
 
 首期交付 PRD 中的核心闭环：
 
-- WebSocket 实时聊天入口：`GET /douyin/ai/chat?conversation_id=optional`
+- SSE 实时聊天入口：`POST /douyin/ai/chat`
 - 多轮会话、消息持久化、工具调用记录。
 - 通过 Eino ChatModel 接入模型，首期配置兼容 OpenAI-compatible API 与 DeepSeek。
 - 查询工具：商品、库存、订单、优惠券、购物车、结算单。
@@ -52,7 +52,7 @@
 职责：
 
 - 沿用 `WithClientMiddleware,WrapperAuthMiddleware` 获取登录态。
-- 建立 WebSocket 连接。
+- 接收 POST JSON 并建立 SSE 响应流。
 - 校验客户端消息类型。
 - 将 `user_id`、`conversation_id`、消息体转发给 `services/aiagent`。
 - 将 Agent 返回的 assistant/tool/confirmation/error 事件推送给客户端。
@@ -73,8 +73,8 @@
 
 ```proto
 service AiAgent {
-  rpc Chat(ChatRequest) returns (ChatResponse);
-  rpc ConfirmAction(ConfirmActionRequest) returns (ConfirmActionResponse);
+  rpc Chat(ChatRequest) returns (stream AgentEvent);
+  rpc ConfirmAction(ConfirmActionRequest) returns (stream AgentEvent);
 }
 ```
 
@@ -320,8 +320,8 @@ message ConfirmActionResponse {
 }
 
 service AiAgent {
-  rpc Chat(ChatRequest) returns (ChatResponse);
-  rpc ConfirmAction(ConfirmActionRequest) returns (ConfirmActionResponse);
+  rpc Chat(ChatRequest) returns (stream AgentEvent);
+  rpc ConfirmAction(ConfirmActionRequest) returns (stream AgentEvent);
 }
 ```
 
@@ -853,7 +853,7 @@ go test ./services/aiagent/internal/logic -run TestConfirmAction -count=1
 
 Expected: 未确认不执行、确认后执行、过期和重复确认被拒绝。
 
-## 8. WebSocket API 接入
+## 8. SSE API 接入
 
 ### Task 12: 新增 `apis/ai`
 
@@ -877,7 +877,7 @@ syntax = "v1"
 )
 service ai-api {
   @handler ChatHandler
-  get /chat
+  post /chat
 }
 ```
 
@@ -891,7 +891,7 @@ goctl api go -api apis/ai/ai.api -dir apis/ai
 
 Expected: 生成 handler、logic、svc、types 目录。
 
-- [x] **Step 3: 实现 WebSocket 升级和消息协议**
+- [x] **Step 3: 实现 SSE 消息协议**
 
 客户端输入类型：
 
@@ -905,7 +905,7 @@ Expected: 生成 handler、logic、svc、types 目录。
 - `confirmation_required`
 - `error`
 
-`ChatLogic` 负责会话准备、Intent Planner、Eino Runner 或受控 Tool 分发、事件持久化；API 网关只负责鉴权、协议转换与逐条推送。
+`ChatLogic` 负责会话准备、Eino Runner 或受控 Tool 分发、事件持久化；API 网关只负责鉴权、协议转换与 SSE flush。
 
 - [x] **Step 4: 强制从登录态读取用户 ID**
 
@@ -921,7 +921,7 @@ go test ./apis/ai/...
 
 Expected: API 包全部可编译。
 
-### Task 13: WebSocket 集成测试
+### Task 13: SSE 集成测试
 
 **Files:**
 
@@ -929,14 +929,14 @@ Expected: API 包全部可编译。
 
 - [ ] **Step 1: 测试未登录拒绝**
 
-无认证上下文连接 `/douyin/ai/chat`，期望返回 401 或连接关闭。
+无认证上下文请求 `/douyin/ai/chat`，期望返回 401。
 
 - [ ] **Step 2: 测试普通聊天**
 
 发送：
 
 ```json
-{"type":"user_message","client_message_id":"client_msg_0190f1f0e8a57000","content":"你好","metadata":{"source":"web"}}
+{"type":"user_message","conversation_id":"conv_001","client_message_id":"client_msg_0190f1f0e8a57000","content":"你好","metadata":{"source":"web"}}
 ```
 
 期望收到 `assistant_message`，`done=true`。
@@ -952,7 +952,7 @@ Expected: API 包全部可编译。
 Run:
 
 ```bash
-go test ./apis/ai/internal/logic -run TestChatWebSocket -count=1
+go test ./apis/ai/internal/logic -run TestChatSSE -count=1
 ```
 
 Expected: 鉴权、聊天、确认请求流程通过。
@@ -1022,7 +1022,7 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 - Create: `test/ai-customer-service-e2e.md`
 
-- [ ] **Step 1: WebSocket 连续对话**
+- [ ] **Step 1: SSE 连续对话**
 
 用户可创建会话、继续传入 `conversation_id`，上下文不丢失。
 
@@ -1298,7 +1298,7 @@ Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部
 4. Execution Guard 与查询工具：Task 7-8。
 5. 低风险写操作与审计：Task 9、Task 14。
 6. 确认流程与高风险工具：Task 10-11。
-7. WebSocket API：Task 12-13。
+7. SSE API：Task 12-13。
 8. 限流、超时、端到端验收：Task 15-16。
 9. 工具结果引用和按需读取：Task 17。
 10. 轻量 Context Manager 正式接入：Task 18。
@@ -1321,7 +1321,7 @@ go test ./...
 ## 13. 风险与处理策略
 
 - 模型结果不稳定：首期保留规则 Planner 兜底，明确意图不依赖模型。
-- WebSocket 流式与 RPC 非流式不匹配：首期 RPC 返回事件数组，API 网关逐条推送；后续再升级为服务端流式 RPC。
+- SSE 流式与 RPC 必须保持一致：`Chat` 和 `ConfirmAction` 使用同名 server-streaming RPC，API 网关收到事件后立即 flush。
 - 用户越权：所有工具执行前统一覆盖 `user_id`，工具层不信任模型和客户端参数。
 - Eino 抽象泄漏到业务层：只允许 `internal/eino` 和 `internal/tools` 直接依赖 Eino，业务 RPC 转换和确认审计保持本地接口稳定。
 - 确认重复执行：确认状态更新与执行需要在事务或 Redis 锁保护下完成。
@@ -1335,7 +1335,7 @@ go test ./...
 
 ## 14. 完成标准
 
-- `apis/ai` 可通过 WebSocket 完成连续对话。
+- `apis/ai` 可通过 SSE 完成连续对话。
 - `services/aiagent` 可基于 Eino 编排模型、工具调用、确认和审计。
 - 查询、推荐、低风险操作、高风险确认执行均满足 PRD。
 - 过期或重复确认不能执行。

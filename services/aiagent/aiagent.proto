@@ -46,6 +46,6 @@ message ConfirmActionResponse {
 }
 
 service AiAgent {
-  rpc Chat(ChatRequest) returns (ChatResponse);
-  rpc ConfirmAction(ConfirmActionRequest) returns (ConfirmActionResponse);
+  rpc Chat(ChatRequest) returns (stream AgentEvent);
+  rpc ConfirmAction(ConfirmActionRequest) returns (stream AgentEvent);
 }

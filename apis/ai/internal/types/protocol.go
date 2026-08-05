@@ -13,6 +13,7 @@ type ClientMetadata struct {
 
 type ClientMessage struct {
 	Type            string          `json:"type"`
+	ConversationID  string          `json:"conversation_id,omitempty"`
 	Content         string          `json:"content,omitempty"`
 	ClientMessageID string          `json:"client_message_id,omitempty"`
 	Metadata        ClientMetadata  `json:"metadata,omitempty"`

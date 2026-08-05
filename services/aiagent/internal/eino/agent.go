@@ -368,15 +368,40 @@ func (r *agent) collectEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 }
 
 func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
-	events, err := r.Run(ctx, req)
-	if err != nil {
-		return nil, err
+	if r == nil || r.root == nil {
+		return nil, ErrModelUnavailable
 	}
-	out := make(chan domain.AgentEvent, len(events))
-	for _, event := range events {
-		out <- event
+	out := make(chan domain.AgentEvent, 1)
+	originalOnEvent := req.OnEvent
+	req.OnEvent = func(eventCtx context.Context, event domain.AgentEvent) error {
+		if originalOnEvent != nil {
+			if err := originalOnEvent(eventCtx, event); err != nil {
+				return err
+			}
+		}
+		select {
+		case out <- event:
+			return nil
+		case <-eventCtx.Done():
+			return eventCtx.Err()
+		}
 	}
-	close(out)
+	go func() {
+		defer close(out)
+		if _, err := r.Run(ctx, req); err != nil {
+			select {
+			case out <- domain.AgentEvent{
+				Type:           domain.EventError,
+				ConversationID: req.ConversationID,
+				MessageID:      newAgentMessageID(),
+				Content:        fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", err),
+				Status:         "failed",
+				Done:           true,
+			}:
+			case <-ctx.Done():
+			}
+		}
+	}()
 	return out, nil
 }
 

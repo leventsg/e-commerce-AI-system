@@ -471,10 +471,10 @@ const file_services_aiagent_aiagent_proto_rawDesc = "" +
 	"statusCode\x12\x1d\n" +
 	"\n" +
 	"status_msg\x18\x02 \x01(\tR\tstatusMsg\x12+\n" +
-	"\x06events\x18\x03 \x03(\v2\x13.aiagent.AgentEventR\x06events2\x8e\x01\n" +
+	"\x06events\x18\x03 \x03(\v2\x13.aiagent.AgentEventR\x06events2\x85\x01\n" +
 	"\aAiAgent\x123\n" +
-	"\x04Chat\x12\x14.aiagent.ChatRequest\x1a\x15.aiagent.ChatResponse\x12N\n" +
-	"\rConfirmAction\x12\x1d.aiagent.ConfirmActionRequest\x1a\x1e.aiagent.ConfirmActionResponseB\vZ\t./aiagentb\x06proto3"
+	"\x04Chat\x12\x14.aiagent.ChatRequest\x1a\x13.aiagent.AgentEvent0\x01\x12E\n" +
+	"\rConfirmAction\x12\x1d.aiagent.ConfirmActionRequest\x1a\x13.aiagent.AgentEvent0\x01B\vZ\t./aiagentb\x06proto3"
 
 var (
 	file_services_aiagent_aiagent_proto_rawDescOnce sync.Once
@@ -501,8 +501,8 @@ var file_services_aiagent_aiagent_proto_depIdxs = []int32{
 	1, // 1: aiagent.ConfirmActionResponse.events:type_name -> aiagent.AgentEvent
 	0, // 2: aiagent.AiAgent.Chat:input_type -> aiagent.ChatRequest
 	3, // 3: aiagent.AiAgent.ConfirmAction:input_type -> aiagent.ConfirmActionRequest
-	2, // 4: aiagent.AiAgent.Chat:output_type -> aiagent.ChatResponse
-	4, // 5: aiagent.AiAgent.ConfirmAction:output_type -> aiagent.ConfirmActionResponse
+	1, // 4: aiagent.AiAgent.Chat:output_type -> aiagent.AgentEvent
+	1, // 5: aiagent.AiAgent.ConfirmAction:output_type -> aiagent.AgentEvent
 	4, // [4:6] is the sub-list for method output_type
 	2, // [2:4] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name

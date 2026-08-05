@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/leventsg/e-commerce-AI-system/apis/ai/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/apis/ai/internal/types"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
@@ -18,11 +19,10 @@ import (
 )
 
 const (
-	maxWebSocketMessageSize = 64 << 10         // 64KB 消息大小限制
-	webSocketWriteTimeout   = 10 * time.Second // 写入超时时间
+	maxSSERequestSize = 64 << 10
+	sseIdleHeartbeat  = 10 * time.Second
+	sseRequestTimeout = 5 * time.Minute
 )
-
-var upgrader = websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}
 
 type ChatLogic struct {
 	logx.Logger
@@ -30,129 +30,190 @@ type ChatLogic struct {
 	svcCtx *svc.ServiceContext
 }
 
+type agentEventReceiver interface {
+	Recv() (*aiagent.AgentEvent, error)
+}
+
+type streamItem struct {
+	event *aiagent.AgentEvent
+	err   error
+}
+
 func NewChatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ChatLogic {
 	return &ChatLogic{Logger: logx.WithContext(ctx), ctx: ctx, svcCtx: svcCtx}
 }
 
-func (l *ChatLogic) ServeHTTP(w http.ResponseWriter, r *http.Request, req *types.ChatRequest) {
-	// 从上下文获取用户 ID
+func (l *ChatLogic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(biz.UserIDKey).(uint32)
 	if !ok || userID == 0 || l.svcCtx == nil || l.svcCtx.AiAgentRpc == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// 升级 HTTP 连接为 WebSocket 连接
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		l.Errorf("upgrade websocket: %v", err)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	defer conn.Close()
-	conn.SetReadLimit(maxWebSocketMessageSize)
-	conversationID := strings.TrimSpace(req.ConversationId)
-	// 持续监听消息
-	for {
-		messageType, payload, readErr := conn.ReadMessage()
-		if readErr != nil {
-			if !websocket.IsCloseError(readErr, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				l.Infof("websocket closed: %v", readErr)
-			}
-			return
-		}
-		if messageType != websocket.TextMessage {
-			if err := l.writeEvent(conn, errorEvent(conversationID, "仅支持 JSON 文本消息")); err != nil {
-				l.Errorf("write websocket event failded: %v", err)
-				return
-			}
-			continue
-		}
-		// 处理消息
-		events, nextConversationID := l.handleMessage(r.Context(), userID, conversationID, payload)
-		// 将事件发送回客户端
-		for _, event := range events {
-			if err := l.writeEvent(conn, event); err != nil {
-				return
-			}
-		}
-		if nextConversationID != "" {
-			conversationID = nextConversationID
-		}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
 	}
-}
 
-// handleMessage 处理客户端发送的消息，并返回生成的事件列表和可能更新的会话 ID
-func (l *ChatLogic) handleMessage(ctx context.Context, userID uint32, conversationID string, payload []byte) ([]types.ServerEvent, string) {
-	// 从上下文获取客户端 IP 并添加到 gRPC 上下文
-	if clientIP, ok := ctx.Value(biz.ClientIPKey).(string); ok && strings.TrimSpace(clientIP) != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)
-	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
 	var input types.ClientMessage
-	if err := json.Unmarshal(payload, &input); err != nil {
-		return []types.ServerEvent{errorEvent(conversationID, "消息格式无效")}, ""
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSSERequestSize)).Decode(&input); err != nil {
+		l.writeEvent(w, flusher, errorEvent("", "消息格式无效"))
+		l.writeDone(w, flusher)
+		return
 	}
 	if len(input.UserID) > 0 {
-		return []types.ServerEvent{errorEvent(conversationID, "客户端不得提交 user_id")}, ""
+		l.writeEvent(w, flusher, errorEvent(strings.TrimSpace(input.ConversationID), "客户端不得提交 user_id"))
+		l.writeDone(w, flusher)
+		return
 	}
-	var events []*aiagent.AgentEvent
-	var statusCode int32
-	var statusMessage string
-	// 根据消息类型分发处理
+
+	ctx, cancel := context.WithTimeout(r.Context(), sseRequestTimeout)
+	defer cancel()
+	if clientIP, ok := r.Context().Value(biz.ClientIPKey).(string); ok && strings.TrimSpace(clientIP) != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)
+	}
+
+	conversationID := strings.TrimSpace(input.ConversationID)
 	switch input.Type {
-	// 用户消息类型
 	case types.ClientEventUserMessage:
-		if strings.TrimSpace(input.Content) == "" {
-			return []types.ServerEvent{errorEvent(conversationID, "content 为必填字段")}, ""
-		}
-		clientMessageID := strings.TrimSpace(input.ClientMessageID)
-		if clientMessageID == "" {
-			return []types.ServerEvent{errorEvent(conversationID, "client_message_id 为必填字段")}, ""
-		}
-		source := strings.TrimSpace(input.Metadata.Source)
-		if source == "" {
-			source = "web"
-		}
-		resp, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{UserId: userID, ConversationId: conversationID, MessageId: "", Content: input.Content, Source: source, ClientMessageId: clientMessageID})
-		if err != nil || resp == nil {
-			return []types.ServerEvent{errorEvent(conversationID, "AI 服务暂时不可用，请稍后重试")}, ""
-		}
-		events, statusCode, statusMessage = resp.Events, resp.StatusCode, resp.StatusMsg
-	// 确认操作消息类型
+		l.handleUserMessage(ctx, w, flusher, userID, conversationID, input)
 	case types.ClientEventConfirmAction:
-		if strings.TrimSpace(conversationID) == "" || strings.TrimSpace(input.ConfirmationID) == "" || input.Approved == nil {
-			return []types.ServerEvent{errorEvent(conversationID, "conversation_id、confirmation_id 和 approved 为必填字段")}, ""
-		}
-		resp, err := l.svcCtx.AiAgentRpc.ConfirmAction(ctx, &aiagent.ConfirmActionRequest{UserId: userID, ConversationId: conversationID, ConfirmationId: input.ConfirmationID, Approved: *input.Approved})
-		if err != nil || resp == nil {
-			return []types.ServerEvent{errorEvent(conversationID, "确认服务暂时不可用，请稍后重试")}, ""
-		}
-		events, statusCode, statusMessage = resp.Events, resp.StatusCode, resp.StatusMsg
+		l.handleConfirmAction(ctx, w, flusher, userID, conversationID, input)
 	default:
-		return []types.ServerEvent{errorEvent(conversationID, "不支持的消息类型")}, ""
+		l.writeEvent(w, flusher, errorEvent(conversationID, "不支持的消息类型"))
+		l.writeDone(w, flusher)
 	}
-	if len(events) == 0 {
-		message := "AI 服务未返回有效事件"
-		if statusCode != 0 && strings.TrimSpace(statusMessage) != "" {
-			message = statusMessage
-		}
-		return []types.ServerEvent{errorEvent(conversationID, message)}, ""
-	}
-	output := make([]types.ServerEvent, 0, len(events))
-	nextConversationID := ""
-	for _, event := range events {
-		mapped, err := mapAgentEvent(event)
-		if err != nil {
-			output = append(output, errorEvent(conversationID, err.Error()))
-			continue
-		}
-		output = append(output, mapped)
-		if mapped.ConversationID != "" {
-			nextConversationID = mapped.ConversationID
-		}
-	}
-	return output, nextConversationID
 }
 
-// mapAgentEvent 将 aiagent.AgentEvent 转换为 types.ServerEvent
+func (l *ChatLogic) handleUserMessage(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, userID uint32, conversationID string, input types.ClientMessage) {
+	if strings.TrimSpace(input.Content) == "" {
+		l.writeEvent(w, flusher, errorEvent(conversationID, "content 为必填字段"))
+		l.writeDone(w, flusher)
+		return
+	}
+	clientMessageID := strings.TrimSpace(input.ClientMessageID)
+	if clientMessageID == "" {
+		l.writeEvent(w, flusher, errorEvent(conversationID, "client_message_id 为必填字段"))
+		l.writeDone(w, flusher)
+		return
+	}
+	source := strings.TrimSpace(input.Metadata.Source)
+	if source == "" {
+		source = "web"
+	}
+	stream, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{
+		UserId:          userID,
+		ConversationId:  conversationID,
+		MessageId:       "",
+		Content:         input.Content,
+		Source:          source,
+		ClientMessageId: clientMessageID,
+	})
+	if err != nil || stream == nil {
+		l.writeEvent(w, flusher, errorEvent(conversationID, "AI 服务暂时不可用，请稍后重试"))
+		l.writeDone(w, flusher)
+		return
+	}
+	l.proxyStream(ctx, w, flusher, stream, conversationID, "AI 服务暂时不可用，请稍后重试")
+}
+
+func (l *ChatLogic) handleConfirmAction(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, userID uint32, conversationID string, input types.ClientMessage) {
+	if conversationID == "" || strings.TrimSpace(input.ConfirmationID) == "" || input.Approved == nil {
+		l.writeEvent(w, flusher, errorEvent(conversationID, "conversation_id、confirmation_id 和 approved 为必填字段"))
+		l.writeDone(w, flusher)
+		return
+	}
+	stream, err := l.svcCtx.AiAgentRpc.ConfirmAction(ctx, &aiagent.ConfirmActionRequest{
+		UserId:         userID,
+		ConversationId: conversationID,
+		ConfirmationId: strings.TrimSpace(input.ConfirmationID),
+		Approved:       *input.Approved,
+	})
+	if err != nil || stream == nil {
+		l.writeEvent(w, flusher, errorEvent(conversationID, "确认服务暂时不可用，请稍后重试"))
+		l.writeDone(w, flusher)
+		return
+	}
+	l.proxyStream(ctx, w, flusher, stream, conversationID, "确认服务暂时不可用，请稍后重试")
+}
+
+// sse流式代理函数, 将agent的事件流实时推给前端
+func (l *ChatLogic) proxyStream(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, receiver agentEventReceiver, fallbackConversationID, rpcErrorMessage string) {
+	items := make(chan streamItem, 1)
+	// 启动一个goroutine接收agent事件流
+	go func() {
+		defer close(items)
+		for {
+			event, err := receiver.Recv()
+			if err != nil {
+				select {
+				case items <- streamItem{err: err}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case items <- streamItem{event: event}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// 启动一个定时器，用于发送心跳包
+	ticker := time.NewTicker(sseIdleHeartbeat)
+	defer ticker.Stop()
+	for {
+		select {
+		// 处理请求超时
+		case <-ctx.Done():
+			l.writeEvent(w, flusher, errorEvent(fallbackConversationID, "AI 服务请求超时，请稍后重试"))
+			l.writeDone(w, flusher)
+			return
+		// 处理心跳
+		case <-ticker.C:
+			l.writeHeartbeat(w, flusher)
+		// 处理agent事件流
+		case item, ok := <-items:
+			if !ok {
+				l.writeDone(w, flusher)
+				return
+			}
+			if item.err != nil {
+				if errors.Is(item.err, io.EOF) {
+					l.writeDone(w, flusher)
+					return
+				}
+				if ctx.Err() != nil {
+					l.writeEvent(w, flusher, errorEvent(fallbackConversationID, "AI 服务请求超时，请稍后重试"))
+				} else {
+					l.writeEvent(w, flusher, errorEvent(fallbackConversationID, rpcErrorMessage))
+				}
+				l.writeDone(w, flusher)
+				return
+			}
+			mapped, err := mapAgentEvent(item.event)
+			if err != nil {
+				l.writeEvent(w, flusher, errorEvent(fallbackConversationID, err.Error()))
+				continue
+			}
+			if mapped.ConversationID != "" {
+				fallbackConversationID = mapped.ConversationID
+			}
+			l.writeEvent(w, flusher, mapped)
+		}
+	}
+}
+
 func mapAgentEvent(event *aiagent.AgentEvent) (types.ServerEvent, error) {
 	if event == nil {
 		return types.ServerEvent{}, errors.New("AI 服务返回空事件")
@@ -176,8 +237,32 @@ func errorEvent(conversationID, content string) types.ServerEvent {
 	return types.ServerEvent{Type: "error", ConversationID: conversationID, Content: content, Done: true}
 }
 
-// writeEvent 将事件发送回客户端
-func (l *ChatLogic) writeEvent(conn *websocket.Conn, event types.ServerEvent) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(webSocketWriteTimeout))
-	return conn.WriteJSON(event)
+func (l *ChatLogic) writeEvent(w http.ResponseWriter, flusher http.Flusher, event types.ServerEvent) {
+	eventName := strings.TrimSpace(event.Type)
+	if eventName == "" {
+		eventName = "message"
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		eventName = "error"
+		payload = []byte(`{"type":"error","content":"事件编码失败","done":true}`)
+	}
+	fmt.Fprintf(w, "event: %s\n", eventName)
+	if strings.TrimSpace(event.MessageID) != "" {
+		fmt.Fprintf(w, "id: %s\n", event.MessageID)
+	}
+	fmt.Fprintf(w, "data: %s\n\n", payload)
+	flusher.Flush()
+}
+
+func (l *ChatLogic) writeHeartbeat(w http.ResponseWriter, flusher http.Flusher) {
+	fmt.Fprint(w, ": ping\n\n")
+	// 用于立即将缓冲区的数据发送到客户端
+	flusher.Flush()
+}
+
+func (l *ChatLogic) writeDone(w http.ResponseWriter, flusher http.Flusher) {
+	fmt.Fprint(w, "event: done\n")
+	fmt.Fprint(w, "data: {\"done\":true}\n\n")
+	flusher.Flush()
 }

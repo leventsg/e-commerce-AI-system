@@ -5,8 +5,6 @@
 package server
 
 import (
-	"context"
-
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/logic"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
@@ -23,12 +21,12 @@ func NewAiAgentServer(svcCtx *svc.ServiceContext) *AiAgentServer {
 	}
 }
 
-func (s *AiAgentServer) Chat(ctx context.Context, in *aiagent.ChatRequest) (*aiagent.ChatResponse, error) {
-	l := logic.NewChatLogic(ctx, s.svcCtx)
-	return l.Chat(in)
+func (s *AiAgentServer) Chat(in *aiagent.ChatRequest, stream aiagent.AiAgent_ChatServer) error {
+	l := logic.NewChatLogic(stream.Context(), s.svcCtx)
+	return l.Chat(in, stream)
 }
 
-func (s *AiAgentServer) ConfirmAction(ctx context.Context, in *aiagent.ConfirmActionRequest) (*aiagent.ConfirmActionResponse, error) {
-	l := logic.NewConfirmActionLogic(ctx, s.svcCtx)
-	return l.ConfirmAction(in)
+func (s *AiAgentServer) ConfirmAction(in *aiagent.ConfirmActionRequest, stream aiagent.AiAgent_ConfirmActionServer) error {
+	l := logic.NewConfirmActionLogic(stream.Context(), s.svcCtx)
+	return l.ConfirmAction(in, stream)
 }

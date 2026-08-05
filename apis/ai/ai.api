@@ -1,15 +1,11 @@
 syntax = "v1"
 
-type ChatRequest {
-	ConversationId string `form:"conversation_id,optional"`
-}
-
 @server (
 	middleware: WithClientMiddleware,WrapperAuthMiddleware
 	prefix:     /douyin/ai
 )
 service ai-api {
 	@handler ChatHandler
-	get /chat (ChatRequest)
+	post /chat
 }
 
