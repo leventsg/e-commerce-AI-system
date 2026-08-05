@@ -38,3 +38,27 @@ CREATE TABLE IF NOT EXISTS `ai_user_profiles` (
   UNIQUE KEY `uk_user_profile` (`user_id`),
   KEY `idx_user_status` (`user_id`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE `ai_confirmations`
+  ADD COLUMN `run_id` varchar(64) NOT NULL DEFAULT '' COMMENT 'Agent run ID' AFTER `status`,
+  ADD COLUMN `checkpoint_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino checkpoint ID' AFTER `run_id`,
+  ADD COLUMN `interrupt_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino interrupt ID' AFTER `checkpoint_id`,
+  ADD KEY `idx_checkpoint_interrupt` (`checkpoint_id`, `interrupt_id`);
+
+CREATE TABLE IF NOT EXISTS `ai_agent_runs` (
+  `run_id` varchar(64) NOT NULL COMMENT 'Agent run ID',
+  `conversation_id` varchar(64) NOT NULL DEFAULT '' COMMENT '会话ID',
+  `user_id` bigint unsigned NOT NULL DEFAULT 0 COMMENT '用户ID',
+  `status` varchar(16) NOT NULL DEFAULT 'interrupted' COMMENT 'running/interrupted/completed/failed/expired',
+  `checkpoint_id` varchar(128) NOT NULL COMMENT 'Eino checkpoint ID',
+  `checkpoint_blob` longblob NOT NULL COMMENT 'Eino checkpoint payload',
+  `task_state` json DEFAULT NULL COMMENT '任务状态',
+  `idempotency_key` varchar(128) NOT NULL DEFAULT '' COMMENT '幂等键',
+  `expires_at` datetime NOT NULL COMMENT '过期时间',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`run_id`),
+  UNIQUE KEY `uk_checkpoint_id` (`checkpoint_id`),
+  KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`),
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

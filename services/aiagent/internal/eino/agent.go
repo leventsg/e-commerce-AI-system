@@ -31,13 +31,47 @@ type RunRequest struct {
 	OnEvent        func(context.Context, domain.AgentEvent) error
 }
 
+type ResumeRequest struct {
+	UserID         uint64
+	ConversationID string
+	ConfirmationID string
+	RunID          string
+	CheckpointID   string
+	InterruptID    string
+	Approved       bool
+	ClientIP       string
+	OnEvent        func(context.Context, domain.AgentEvent) error
+}
+
 type Runner interface {
 	Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error)
+	Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error)
 	Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error)
 }
 
 type agent struct {
-	root adk.Agent
+	root            adk.Agent
+	checkpointStore adk.CheckPointStore
+	highRiskTools   *aitools.HighRiskTools
+}
+
+type supervisorOptions struct {
+	highRiskTools   *aitools.HighRiskTools
+	checkpointStore adk.CheckPointStore
+}
+
+type SupervisorOption func(*supervisorOptions)
+
+func WithHighRiskTools(highRiskTools *aitools.HighRiskTools) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.highRiskTools = highRiskTools
+	}
+}
+
+func WithCheckpointStore(store adk.CheckPointStore) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.checkpointStore = store
+	}
 }
 
 type agentSpec struct {
@@ -85,14 +119,20 @@ var supervisorSubAgentSpecs = []agentSpec{
 	},
 }
 
-func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry) (Runner, error) {
+func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, options ...SupervisorOption) (Runner, error) {
 	if factory == nil || registry == nil {
 		return nil, ErrModelUnavailable
+	}
+	opts := supervisorOptions{}
+	for _, option := range options {
+		if option != nil {
+			option(&opts)
+		}
 	}
 	_ = adk.SetLanguage(adk.LanguageChinese)
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
 	for _, spec := range supervisorSubAgentSpecs {
-		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, spec)
+		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.highRiskTools, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -122,11 +162,11 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
-	return &agent{root: root}, nil
+	return &agent{root: root, checkpointStore: opts.checkpointStore, highRiskTools: opts.highRiskTools}, nil
 }
 
 // newDomainAgent 创建子agent
-func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, spec agentSpec) (adk.Agent, error) {
+func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, highRiskTools *aitools.HighRiskTools, spec agentSpec) (adk.Agent, error) {
 	infos, err := registry.ToolInfosByNames(ctx, spec.tools...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
@@ -139,6 +179,10 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
+	handlers := []adk.ChatModelAgentMiddleware{}
+	if highRiskTools != nil {
+		handlers = append(handlers, newHighRiskApprovalMiddleware(highRiskTools))
+	}
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        spec.name,
 		Description: spec.description,
@@ -149,6 +193,7 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 				Tools: invokableToolsToBaseTools(tools),
 			},
 		},
+		Handlers:      handlers,
 		MaxIterations: defaultAgentMaxIterations,
 	})
 	if err != nil {
@@ -181,15 +226,73 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 	if err != nil {
 		return nil, err
 	}
+	checkpointID := stableCheckpointID(req.MessageID, req.ConversationID)
+	runID := checkpointID
 	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		MessageID:      req.MessageID,
 		ClientIP:       req.ClientIP,
+		RunID:          runID,
+		CheckpointID:   checkpointID,
 	})
-	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root}).Run(ctx, input)
+	ctx = withApprovalRunMeta(ctx, approvalRunMeta{RunID: runID, CheckpointID: checkpointID})
+	store := r.checkpointStoreOrInit()
+	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, CheckPointStore: store}).Run(ctx, input, adk.WithCheckPointID(checkpointID))
+	return r.collectEvents(ctx, iter, req)
+}
+
+func (r *agent) Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error) {
+	if r == nil || r.root == nil {
+		return nil, ErrModelUnavailable
+	}
+	checkpointID := strings.TrimSpace(req.CheckpointID)
+	interruptID := strings.TrimSpace(req.InterruptID)
+	if checkpointID == "" || interruptID == "" {
+		return nil, fmt.Errorf("%w: checkpoint or interrupt target is empty", ErrModelUnavailable)
+	}
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" {
+		runID = checkpointID
+	}
+	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		ClientIP:       req.ClientIP,
+		RunID:          runID,
+		CheckpointID:   checkpointID,
+	})
+	ctx = withApprovalRunMeta(ctx, approvalRunMeta{RunID: runID, CheckpointID: checkpointID})
+	store := r.checkpointStoreOrInit()
+	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
+		Targets: map[string]any{
+			interruptID: &ApprovalResult{Approved: req.Approved},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	}
+	return r.collectEvents(ctx, iter, RunRequest{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		MessageID:      req.ConfirmationID,
+		ClientIP:       req.ClientIP,
+		OnEvent:        req.OnEvent,
+	})
+}
+
+func (r *agent) checkpointStoreOrInit() adk.CheckPointStore {
+	if r.checkpointStore == nil {
+		r.checkpointStore = newMemoryCheckpointStore()
+	}
+	return r.checkpointStore
+}
+
+func (r *agent) collectEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest) ([]domain.AgentEvent, error) {
 	events := make([]domain.AgentEvent, 0, 2)
 	hasAssistant := false
+	hasInterrupt := false
+	hasAny := false
 	for {
 		event, ok := iter.Next()
 		if !ok {
@@ -199,7 +302,43 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 			continue
 		}
 		if event.Err != nil {
+			if len(events) > 0 {
+				errorEvent := domain.AgentEvent{
+					Type:             domain.EventError,
+					ConversationID:   req.ConversationID,
+					MessageID:        newAgentMessageID(),
+					Content:          fmt.Sprintf("业务结果已产生，但模型总结失败，请勿重复操作：%v", event.Err),
+					Status:           "failed",
+					DataJSON:         `{"business_executed":true}`,
+					Done:             true,
+					BusinessExecuted: true,
+				}
+				if req.OnEvent != nil {
+					if err := req.OnEvent(ctx, errorEvent); err != nil {
+						return nil, err
+					}
+				}
+				events = append(events, errorEvent)
+				return events, nil
+			}
 			return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, event.Err)
+		}
+		if event.Action != nil && event.Action.Interrupted != nil {
+			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.highRiskTools)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				hasInterrupt = true
+				hasAny = true
+				if req.OnEvent != nil {
+					if err := req.OnEvent(ctx, domainEvent); err != nil {
+						return nil, err
+					}
+				}
+				events = append(events, domainEvent)
+			}
+			continue
 		}
 		domainEvent, ok, err := adkEventToDomainEvent(event, req)
 		if err != nil {
@@ -208,8 +347,12 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 		if !ok {
 			continue
 		}
+		hasAny = true
 		if domainEvent.Type == domain.EventAssistantMessage {
 			hasAssistant = true
+		}
+		if r.highRiskTools != nil && domainEvent.Type == domain.EventToolResult && r.highRiskTools.RequiresConfirmation(domainEvent.Tool) && domainEvent.Status == "success" {
+			domainEvent.BusinessExecuted = true
 		}
 		if req.OnEvent != nil {
 			if err := req.OnEvent(ctx, domainEvent); err != nil {
@@ -218,7 +361,7 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 		}
 		events = append(events, domainEvent)
 	}
-	if !hasAssistant {
+	if !hasAssistant && !hasInterrupt && !hasAny {
 		return nil, ErrEmptyModelResponse
 	}
 	return events, nil
@@ -260,6 +403,14 @@ func baseToolInfos(ctx context.Context, tools []einotool.BaseTool) ([]*schema.To
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func stableCheckpointID(messageID, conversationID string) string {
+	checkpointID := strings.TrimSpace(messageID)
+	if checkpointID == "" {
+		checkpointID = strings.TrimSpace(conversationID)
+	}
+	return checkpointID
 }
 
 func adkEventToDomainEvent(event *adk.AgentEvent, req RunRequest) (domain.AgentEvent, bool, error) {

@@ -100,6 +100,26 @@ func TestChatWebSocketIgnoresLegacyMessageID(t *testing.T) {
 	}
 }
 
+func TestMapAgentEventKeepsConfirmationID(t *testing.T) {
+	event, err := mapAgentEvent(&aiagent.AgentEvent{
+		Type:           "confirmation_required",
+		ConversationId: "conv-1",
+		MessageId:      "msg-1",
+		ConfirmationId: "confirm-1",
+		Action:         "order_cancel",
+		Summary:        "确认取消订单？",
+		ExpiresAt:      1893456000,
+		DataJson:       `{"confirmation_id":"confirm-1"}`,
+		Done:           true,
+	})
+	if err != nil {
+		t.Fatalf("mapAgentEvent: %v", err)
+	}
+	if event.ConfirmationID != "confirm-1" || event.Action != "order_cancel" {
+		t.Fatalf("event=%+v, want confirmation_id mapped", event)
+	}
+}
+
 func websocketTestServer(rpc *fakeAiAgent) *httptest.Server {
 	ctx := &svc.ServiceContext{AiAgentRpc: rpc}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

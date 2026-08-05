@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
+	aiagentruns "github.com/leventsg/e-commerce-AI-system/dal/model/ai/agent_runs"
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
 	aiconversationsummaries "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversation_summaries"
 	aiconversations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversations"
@@ -43,6 +44,8 @@ type ConfirmationManager interface {
 	MarkExecuted(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
 	// 标记确认请求为已失败状态
 	MarkFailed(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
+	// 绑定 Eino checkpoint interrupt 恢复目标
+	BindResumeTarget(ctx context.Context, req aiconfirmation.ResumeTargetRequest) (*domain.Confirmation, error)
 }
 
 type HighRiskToolExecutor interface {
@@ -57,6 +60,7 @@ type ServiceContext struct {
 	MessagesModel          aimessages.AiMessagesModel
 	ToolCallsModel         aitoolcalls.AiToolCallsModel
 	ConfirmationsModel     aiconfirmations.AiConfirmationsModel
+	AgentRunsModel         aiagentruns.AiAgentRunsModel
 	UserMemoriesModel      aiusermemories.AiUserMemoriesModel
 	UserProfilesModel      aiuserprofiles.AiUserProfilesModel
 	SummariesModel         aiconversationsummaries.AiConversationSummariesModel
@@ -93,6 +97,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	redisClient := redis.MustNewRedis(c.RedisConf)
 	toolCallsModel := aitoolcalls.NewAiToolCallsModel(mysql, c.Cache)
 	confirmationsModel := aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache)
+	agentRunsModel := aiagentruns.NewAiAgentRunsModel(mysql, c.Cache)
 	toolRegistry := aitools.NewRegistry(c.ToolTimeout)
 	toolRecorder := aiaudit.NewRecorder(toolCallsModel, auditRPC)
 	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
@@ -119,6 +124,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	highRiskTools := aitools.NewHighRiskTools(toolExecutor, confirmationManager, aitools.HighRiskToolClients{
 		Cart:     cartRPC,
 		Order:    orderRPC,
+		Product:  productRPC,
 		Checkout: checkoutRPC,
 		Coupon:   couponRPC,
 	})
@@ -156,7 +162,11 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		eino.NewProfileExtractorModel(modelFactory, selectProfileModelConfig(c.ProfileModel, c.SummaryModel, c.Eino)),
 	)
 	var agentRunner eino.Runner
-	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry); err == nil {
+	checkpointTTL := time.Duration(c.Confirmation.ExpireSeconds) * time.Second
+	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry,
+		eino.WithHighRiskTools(highRiskTools),
+		eino.WithCheckpointStore(eino.NewPersistentCheckpointStore(redisClient, agentRunsModel, checkpointTTL)),
+	); err == nil {
 		agentRunner = runner
 	} else {
 		logx.Errorw("ai chat model initialization failed", logx.Field("component", "chat_model"), logx.Field("stage", "initialize"), logx.Field("reason", "model_init_failed"), logx.Field("provider", c.Eino.Provider), logx.Field("model", c.Eino.Model), logx.Field("base_url_host", modelBaseURLHost(c.Eino.BaseURL)), logx.Field("err", err))
@@ -170,6 +180,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		MessagesModel:          messagesModel,
 		ToolCallsModel:         toolCallsModel,
 		ConfirmationsModel:     confirmationsModel,
+		AgentRunsModel:         agentRunsModel,
 		UserMemoriesModel:      userMemoriesModel,
 		UserProfilesModel:      userProfilesModel,
 		SummariesModel:         summariesModel,

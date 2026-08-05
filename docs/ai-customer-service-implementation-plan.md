@@ -218,13 +218,17 @@ CREATE TABLE `ai_confirmations` (
   `arguments` json NOT NULL COMMENT '待执行参数',
   `summary` varchar(512) NOT NULL COMMENT '确认摘要',
   `status` varchar(16) NOT NULL COMMENT 'pending/approved/rejected/expired/executed/failed',
+  `run_id` varchar(64) NOT NULL DEFAULT '' COMMENT 'Agent run ID',
+  `checkpoint_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino checkpoint ID',
+  `interrupt_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino interrupt ID',
   `expires_at` datetime NOT NULL COMMENT '过期时间',
   `executed_at` datetime DEFAULT NULL COMMENT '执行时间',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`),
-  KEY `idx_conversation_created` (`conversation_id`, `created_at`)
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_checkpoint_interrupt` (`checkpoint_id`, `interrupt_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
@@ -794,20 +798,24 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 
 **Files:**
 
+- Create/Modify: `services/aiagent/internal/eino/approval.go`
+- Create/Modify: `services/aiagent/internal/eino/checkpoint_store.go`
 - Modify: `services/aiagent/internal/tools/cart_tools.go`
 - Modify: `services/aiagent/internal/tools/order_tools.go`
 - Modify: `services/aiagent/internal/logic/confirmactionlogic.go`
 - Test: `services/aiagent/internal/logic/confirmactionlogic_test.go`
 
-- [x] **Step 1: 首次请求只创建确认**
+- [x] **Step 1: 首次请求创建确认并中断**
 
-这些工具首次规划后只返回 `confirmation_required`，不调用业务 RPC：
+这些工具首次规划后由 ChatModelAgent middleware 创建 `ai_confirmations`，再调用官方 `tool.StatefulInterrupt` 返回 `confirmation_required`，不调用业务 RPC。响应必须包含 `confirmation_id`，并在服务端绑定 `checkpoint_id/interrupt_id`：
 
 - `cart_delete`
 - `order_create`
 - `order_cancel`
 
-- [x] **Step 2: 用户确认后通过 Execution Guard 执行业务 RPC**
+- [x] **Step 2: 用户确认后通过 Eino Resume 与 Execution Guard 执行业务 RPC**
+
+客户端只发送结构化 `confirm_action`，携带 `confirmation_id` 和 `approved`。`ConfirmAction` 通过 Confirmation Manager CAS 领取确认记录后，使用确认记录里的 `checkpoint_id/interrupt_id` 调用 `runner.ResumeWithParams`，approved resume 才执行原工具 endpoint，rejected resume 返回取消结果且不调用业务 RPC。
 
 RPC 对应：
 
@@ -1218,27 +1226,27 @@ Expected: 摘要窗口、消息去重、记忆生命周期、聊天来源画像 
 - Modify: `construct/depend/sql/init.sql`
 - Modify: `construct/depend/sql/migrations/20260722_ai_context_engineering.sql`
 - Create/Modify: `services/aiagent/internal/contextmanager/task_state.go`
-- Create/Modify: `services/aiagent/internal/contextmanager/checkpoint_store.go`
+- Create/Modify: `services/aiagent/internal/eino/checkpoint_store.go`
 - Modify: `services/aiagent/internal/tools/high_risk_tools.go`
 - Modify: `services/aiagent/internal/logic/confirmactionlogic.go`
 - Test: `services/aiagent/internal/contextmanager/task_state_test.go`
 - Test: `services/aiagent/internal/logic/confirmactionlogic_test.go`
 
-- [ ] **Step 1: 先写状态和恢复测试**
+- [x] **Step 1: 先写状态和恢复测试**
 
-覆盖 running、waiting_confirmation、completed、failed、expired 状态；TaskState CAS 冲突；Redis 丢失后从 MySQL 恢复；跨用户和跨会话恢复拒绝；重复 checkpoint 恢复不重复调用写 RPC。
+覆盖 confirmation resume target 绑定、Redis 丢失后从 MySQL checkpoint blob 恢复、批准 resume 执行业务 RPC、拒绝 resume 不进入完成标记。跨用户、跨会话、过期和重复确认继续由 Confirmation Manager 的 CAS 状态机拒绝。
 
-- [ ] **Step 2: 新增或保留 AgentRun model**
+- [x] **Step 2: 新增 AgentRun model**
 
-按设计文档建立 `ai_agent_runs`，使用唯一 `idempotency_key` 防止重复运行。生成 model 后在自定义 model 文件增加带 user ID、conversation ID 和旧状态条件的状态更新方法。
+按设计文档建立 `ai_agent_runs`，保存 `run_id`、`conversation_id`、`user_id`、`status`、`checkpoint_id`、`checkpoint_blob`、`task_state`、`idempotency_key`、`expires_at`。
 
-- [ ] **Step 3: 接入高风险确认状态**
+- [x] **Step 3: 接入高风险确认状态**
 
-创建 confirmation 时把 tool name、脱敏参数和 confirmation ID 写入 TaskState，并把 Run 标记为 waiting_confirmation。ConfirmAction 恢复时重新校验用户、会话、确认状态、参数、过期时间和幂等键，然后仍通过原有 Confirmation Manager 与 Execution Guard 执行。
+创建 confirmation 时保存 tool name、脱敏参数、`run_id/checkpoint_id`；Eino 返回 root-cause interrupt 后回写 `interrupt_id`。ConfirmAction 恢复时重新校验用户、会话、确认状态、过期时间，并用 `confirmation_id -> checkpoint_id/interrupt_id` 恢复。
 
-- [ ] **Step 4: 实现 Redis 热 checkpoint**
+- [x] **Step 4: 实现 Redis 热 checkpoint**
 
-Redis 只缓存可从 MySQL 重建的状态；Redis 故障或丢失时恢复语义不变。
+Redis 热缓存 checkpoint blob，MySQL `ai_agent_runs.checkpoint_blob` 作为持久回退；Redis 故障或丢失时恢复语义不变。
 
 - [ ] **Step 5: 运行测试**
 

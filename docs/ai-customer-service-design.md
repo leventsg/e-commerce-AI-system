@@ -225,7 +225,7 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 
 - `checkout_prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
 - `order_create` 接收必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选；`payment_method` 使用现有 RPC 枚举值 1（微信）或 2（支付宝）。
-- 高风险 Tool 的普通 Eino 调用只创建确认记录。只有 `ConfirmAction` 成功领取 `pending -> approved` 后，才能通过同一个 Execution Guard 调用业务 RPC。
+- 高风险 Tool 的普通 Eino 调用在 ChatModelAgent middleware 中创建确认记录后调用官方 `tool.StatefulInterrupt` 中断，不调用业务 RPC。只有结构化 `ConfirmAction` 携带 `confirmation_id`，成功领取 `pending -> approved` 后，服务端才使用 `runner.ResumeWithParams` 恢复同一次工具调用，并通过同一个 Execution Guard 调用业务 RPC。
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
 
@@ -247,6 +247,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 创建确认记录。
 - 生成确认 ID。
 - 保存待执行工具和参数。
+- 绑定 Eino `checkpoint_id` 与 root-cause `interrupt_id`；客户端只感知 `confirmation_id`。
 - 设置确认过期时间。
 - 用户确认后重新校验权限和状态。
 - 防止过期确认、重复确认、跨用户确认。
@@ -317,6 +318,9 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 | arguments | 待执行参数 |
 | summary | 确认摘要 |
 | status | 确认状态 |
+| run_id | Agent Run ID |
+| checkpoint_id | Eino checkpoint ID |
+| interrupt_id | Eino root-cause interrupt ID |
 | expires_at | 过期时间 |
 | executed_at | 执行时间 |
 | created_at | 创建时间 |
@@ -360,13 +364,13 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 
 | 字段 | 说明 |
 |---|---|
-| id | Agent Run ID |
+| run_id | Agent Run ID |
 | conversation_id | 会话 ID |
 | user_id | 用户 ID |
-| status | running / waiting_confirmation / completed / failed / expired |
-| current_step | 当前步骤 |
+| status | running / interrupted / completed / failed / expired |
 | task_state | 结构化任务状态 JSON |
-| checkpoint_id | Eino/Redis checkpoint ID |
+| checkpoint_id | Eino checkpoint ID |
+| checkpoint_blob | Eino checkpoint payload，MySQL 持久化回退 |
 | idempotency_key | 运行幂等键 |
 | expires_at | 过期时间 |
 | created_at | 创建时间 |
@@ -395,8 +399,8 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 2. 查询订单详情。
 3. 校验订单属于当前用户。
 4. 判断订单是否允许取消。
-5. 创建确认请求。
-6. 用户确认后调用 order_cancel。
+5. 创建确认请求并通过 `tool.StatefulInterrupt` 返回 `confirmation_required`，事件必须包含 `confirmation_id`。
+6. 用户通过结构化 `confirm_action` 回传 `confirmation_id` 后，服务端查到 `checkpoint_id/interrupt_id` 并调用 `runner.ResumeWithParams` 恢复 `order_cancel`。
 7. 返回取消结果。
 8. 记录审计日志。
 
@@ -405,8 +409,8 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 2. AI 确认商品、数量、优惠券、地址、支付方式；缺少参数时先追问，不猜测。
 3. 没有 `pre_order_id` 时调用 `checkout_prepare` 创建预结算。
 4. 使用当前用户身份查询预结算详情，取得应付金额和商品数量。
-5. 创建 `order_create` 确认请求；使用优惠券时先调用 `coupon_calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
-6. 用户确认后，由确认状态机的唯一 winner 通过 Execution Guard 调用 `order_create`。
+5. 创建 `order_create` 确认请求并中断；使用优惠券时先调用 `coupon_calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
+6. 用户确认后，由确认状态机的唯一 winner 使用 checkpoint 恢复原工具调用，并通过 Execution Guard 调用 `order_create`。
 7. 成功标记确认记录为 `executed`，失败标记为 `failed`，并返回真实订单结果。
 
 ### 5.5 上下文构建流程

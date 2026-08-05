@@ -13,8 +13,10 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/couponsclient"
+	"github.com/leventsg/e-commerce-AI-system/services/product/productcatalogservice"
 )
 
 var (
@@ -27,9 +29,14 @@ type ConfirmationCreator interface {
 	Create(ctx context.Context, req confirmation.CreateRequest) (*domain.Confirmation, error)
 }
 
+type ConfirmationResumeTargetBinder interface {
+	BindResumeTarget(ctx context.Context, req confirmation.ResumeTargetRequest) (*domain.Confirmation, error)
+}
+
 type HighRiskToolClients struct {
 	Cart     CartHighRiskRPC
 	Order    OrderHighRiskRPC
+	Product  ProductQueryRPC
 	Checkout CheckoutQueryRPC
 	Coupon   CouponCalculateRPC
 }
@@ -38,6 +45,8 @@ type HighRiskToolClients struct {
 type HighRiskTools struct {
 	executor     *Executor
 	creator      ConfirmationCreator
+	cart         CartHighRiskRPC
+	product      ProductQueryRPC
 	checkout     CheckoutQueryRPC
 	coupon       CouponCalculateRPC
 	handlers     map[string]HandlerFunc                                           // 工具执行处理函数
@@ -51,6 +60,8 @@ func NewHighRiskTools(executor *Executor, creator ConfirmationCreator, clients H
 	h := &HighRiskTools{
 		executor: executor,
 		creator:  creator,
+		cart:     clients.Cart,
+		product:  clients.Product,
 		checkout: clients.Checkout,
 		coupon:   clients.Coupon,
 		handlers: handlers,
@@ -115,6 +126,8 @@ func (h *HighRiskTools) RequestConfirmation(ctx context.Context, req ExecuteRequ
 		ToolName:       metadata.Name,
 		Arguments:      args,
 		Summary:        summary,
+		RunID:          req.RunID,
+		CheckpointID:   req.CheckpointID,
 	})
 	if err != nil || created == nil {
 		if err == nil {
@@ -154,16 +167,82 @@ func (h *HighRiskTools) ExecuteConfirmed(ctx context.Context, req ExecuteRequest
 	return h.executor.Execute(ctx, req, h.handlers[req.ToolName])
 }
 
+func (h *HighRiskTools) BindResumeTarget(ctx context.Context, req confirmation.ResumeTargetRequest) error {
+	if h == nil || h.creator == nil {
+		return ErrConfirmationCreatorRequired
+	}
+	binder, ok := h.creator.(ConfirmationResumeTargetBinder)
+	if !ok {
+		return ErrConfirmationCreatorRequired
+	}
+	_, err := binder.BindResumeTarget(ctx, req)
+	return err
+}
+
+func (h *HighRiskTools) RequiresConfirmation(toolName string) bool {
+	if h == nil || h.summaryFuncs == nil {
+		return false
+	}
+	_, ok := h.summaryFuncs[toolName]
+	return ok
+}
+
 // cartDeleteSummary 生成删除购物车条目的确认摘要
-func (h *HighRiskTools) cartDeleteSummary(_ context.Context, req ExecuteRequest) (string, error) {
+func (h *HighRiskTools) cartDeleteSummary(ctx context.Context, req ExecuteRequest) (string, error) {
 	value, err := requiredInt64Argument(req.Arguments, "cart_item_id")
 	if err != nil {
 		return "", err
 	}
-	if _, err := positiveInt32(value, "cart_item_id"); err != nil {
+	cartItemID, err := positiveInt32(value, "cart_item_id")
+	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("确认删除购物车条目 %d？", value), nil
+	userID, err := authenticatedUserID32(req.UserID)
+	if err != nil {
+		return "", err
+	}
+	if h.cart == nil {
+		return fmt.Sprintf("确认从购物车删除条目 %d？", cartItemID), nil
+	}
+	listResp, err := h.cart.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
+	if err != nil {
+		return "", fmt.Errorf("cart_delete summary list rpc: %w", err)
+	}
+	if listResp == nil {
+		return "", fmt.Errorf("cart_delete summary list returned nil response")
+	}
+	if err := validateRPCResponse("cart_delete summary list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
+		return "", err
+	}
+	item := ownedCartItem(listResp.Data, cartItemID, userID)
+	if item == nil {
+		return "", invalidArgument("cart_item_id", "does not belong to authenticated user")
+	}
+	productLabel := fmt.Sprintf("商品 %d", item.ProductId)
+	if productName := h.cartDeleteProductName(ctx, uint32(item.ProductId), userID); productName != "" {
+		productLabel = productName
+	}
+	req.Arguments["product_id"] = item.ProductId
+	req.Arguments["product_name"] = productLabel
+	req.Arguments["quantity"] = item.Quantity
+	return fmt.Sprintf("确认从购物车删除 %s（数量 %d）？", productLabel, item.Quantity), nil
+}
+
+func (h *HighRiskTools) cartDeleteProductName(ctx context.Context, productID uint32, userID int32) string {
+	if h.product == nil || productID == 0 {
+		return ""
+	}
+	resp, err := h.product.GetProduct(ctx, &productcatalogservice.GetProductReq{Id: productID, UserId: userID})
+	if err != nil || resp == nil {
+		return ""
+	}
+	if err := validateRPCResponse("cart_delete summary product_detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+		return ""
+	}
+	if resp.Product == nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Product.Name)
 }
 
 // orderCancelSummary 生成取消订单的摘要
@@ -300,8 +379,8 @@ func (t *highRiskInvokableTool) InvokableRun(ctx context.Context, arguments stri
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", fmt.Errorf("%w: invalid JSON arguments: %v", ErrInvalidToolArguments, err)
 	}
-	event := t.tools.RequestConfirmation(ctx, executeRequestFromContext(execution, t.name, args))
-	if event.Type != domain.EventConfirmationRequired {
+	event := t.tools.ExecuteConfirmed(ctx, executeRequestFromContext(execution, t.name, args))
+	if event.Status != toolStatusSuccess {
 		return event.DataJSON, fmt.Errorf("%w: %s", ErrHighRiskToolExecution, event.Content)
 	}
 	return event.DataJSON, nil
