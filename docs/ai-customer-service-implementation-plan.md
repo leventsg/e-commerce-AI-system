@@ -421,12 +421,14 @@ type ModelFactory interface {
 
 - [x] **Step 5: 实现 Agent Runner**
 
-Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。ADK assistant/tool 中间事件会转换为领域事件并写入 `ai_messages`。对外只暴露稳定接口：
+Agent Runner 输入当前用户消息、会话历史和工具集合，主链路输出 `AgentEvent` channel。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。主链路使用 `adk.WithCallbacks` 捕获模型和工具生命周期：模型 callback 只绑定 `supervisor_agent`，自然语言流式输出转为 `assistant_delta` 并在 bridge 中累计；ADK iterator 结束后统一生成一条完整 `assistant_message` 用于持久化，已有 delta 时不重复下发。工具 callback 全局捕获，工具开始转为按 `tool + arguments` 去重的 `tool_progress`，工具完成转为按 `tool + status + data/content` 去重的 `tool_result`。ADK iterator 继续负责 interrupt、最终错误和生命周期收尾。`Run` / `Resume` 只作为收集型兼容适配器，不再作为流式主路径。
 
 ```go
 type Runner interface {
 	Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error)
+	Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error)
 	Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error)
+	ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error)
 }
 ```
 
@@ -815,7 +817,7 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 
 - [x] **Step 2: 用户确认后通过 Eino Resume 与 Execution Guard 执行业务 RPC**
 
-客户端只发送结构化 `confirm_action`，携带 `confirmation_id` 和 `approved`。`ConfirmAction` 通过 Confirmation Manager CAS 领取确认记录后，使用确认记录里的 `checkpoint_id/interrupt_id` 调用 `runner.ResumeWithParams`，approved resume 才执行原工具 endpoint，rejected resume 返回取消结果且不调用业务 RPC。
+客户端只发送结构化 `confirm_action`，携带 `confirmation_id` 和 `approved`。`ConfirmAction` 通过 Confirmation Manager CAS 领取确认记录后，`approved=true` 才使用确认记录里的 `checkpoint_id/interrupt_id` 调用 `runner.ResumeWithParams`，恢复原工具 endpoint 并执行业务 RPC；`approved=false` 是确定性取消终态，后端直接返回 rejected `tool_result` 和最终 `assistant_message`，不恢复 checkpoint、不调用 LLM、不调用业务 RPC。
 
 RPC 对应：
 
@@ -1234,7 +1236,7 @@ Expected: 摘要窗口、消息去重、记忆生命周期、聊天来源画像 
 
 - [x] **Step 1: 先写状态和恢复测试**
 
-覆盖 confirmation resume target 绑定、Redis 丢失后从 MySQL checkpoint blob 恢复、批准 resume 执行业务 RPC、拒绝 resume 不进入完成标记。跨用户、跨会话、过期和重复确认继续由 Confirmation Manager 的 CAS 状态机拒绝。
+覆盖 confirmation resume target 绑定、Redis 丢失后从 MySQL checkpoint blob 恢复、批准 resume 执行业务 RPC、拒绝确认由后端直接收口且不进入完成标记。跨用户、跨会话、过期和重复确认继续由 Confirmation Manager 的 CAS 状态机拒绝。
 
 - [x] **Step 2: 新增 AgentRun model**
 

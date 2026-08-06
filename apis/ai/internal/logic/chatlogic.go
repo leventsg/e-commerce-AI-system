@@ -219,7 +219,7 @@ func mapAgentEvent(event *aiagent.AgentEvent) (types.ServerEvent, error) {
 		return types.ServerEvent{}, errors.New("AI 服务返回空事件")
 	}
 	switch event.Type {
-	case "assistant_message", "tool_result", "confirmation_required", "error":
+	case "assistant_message", "assistant_delta", "tool_progress", "tool_result", "confirmation_required", "error":
 	default:
 		return types.ServerEvent{}, errors.New("AI 服务返回未知事件")
 	}

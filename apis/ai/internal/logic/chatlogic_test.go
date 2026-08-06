@@ -122,6 +122,38 @@ func TestMapAgentEventKeepsConfirmationID(t *testing.T) {
 	}
 }
 
+func TestMapAgentEventAllowsStreamingDeltaAndToolProgress(t *testing.T) {
+	delta, err := mapAgentEvent(&aiagent.AgentEvent{
+		Type:           "assistant_delta",
+		ConversationId: "conv-1",
+		MessageId:      "msg-delta",
+		Content:        "你",
+		Done:           false,
+	})
+	if err != nil {
+		t.Fatalf("map assistant_delta: %v", err)
+	}
+	if delta.Type != "assistant_delta" || delta.Content != "你" || delta.Done {
+		t.Fatalf("delta=%+v", delta)
+	}
+
+	progress, err := mapAgentEvent(&aiagent.AgentEvent{
+		Type:           "tool_progress",
+		ConversationId: "conv-1",
+		MessageId:      "msg-progress",
+		Tool:           "product_search",
+		Status:         "running",
+		Content:        "正在查询商品...",
+		Done:           false,
+	})
+	if err != nil {
+		t.Fatalf("map tool_progress: %v", err)
+	}
+	if progress.Type != "tool_progress" || progress.Tool != "product_search" || progress.Content == "" {
+		t.Fatalf("progress=%+v", progress)
+	}
+}
+
 func sseTestServer(rpc *fakeAiAgent) *httptest.Server {
 	ctx := &svc.ServiceContext{AiAgentRpc: rpc}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

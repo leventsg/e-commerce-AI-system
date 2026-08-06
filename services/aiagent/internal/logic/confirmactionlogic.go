@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -36,7 +37,7 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 	if err := l.validateRequest(in); err != nil {
 		return sendConfirmError(stream, "", err)
 	}
-	// 决定是否执行高风险操作
+	// 更新数据库
 	decided, err := l.svcCtx.ConfirmationManager.Decide(l.ctx, confirmation.DecisionRequest{
 		UserID:         uint64(in.UserId),
 		ConversationID: strings.TrimSpace(in.ConversationId),
@@ -49,21 +50,25 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 	if decided == nil {
 		return sendConfirmError(stream, in.ConversationId, fmt.Errorf("确认记录为空"))
 	}
-	if strings.TrimSpace(decided.CheckpointID) == "" || strings.TrimSpace(decided.InterruptID) == "" {
-		if in.Approved {
-			_, _ = l.svcCtx.ConfirmationManager.MarkFailed(l.ctx, confirmation.CompletionRequest{
-				UserID:         uint64(in.UserId),
-				ConversationID: decided.ConversationID,
-				ConfirmationID: decided.ID,
-			})
-		}
+	if !in.Approved {
+		return l.rejectConfirmation(decided, uint64(in.UserId), stream)
+	}
+	if l.svcCtx.AgentRunner == nil {
+		return sendConfirmError(stream, decided.ConversationID, fmt.Errorf("确认服务暂不可用"))
+	}
+	if decided.CheckpointID == "" || decided.InterruptID == "" {
+		_, _ = l.svcCtx.ConfirmationManager.MarkFailed(l.ctx, confirmation.CompletionRequest{
+			UserID:         uint64(in.UserId),
+			ConversationID: decided.ConversationID,
+			ConfirmationID: decided.ID,
+		})
 		return sendConfirmError(stream, decided.ConversationID, fmt.Errorf("确认恢复点不存在，请重新发起操作"))
 	}
 
 	businessExecuted := false
 	markExecuted := false
 	domainEvents := make([]domain.AgentEvent, 0, 2)
-	_, err = l.svcCtx.AgentRunner.Resume(l.ctx, eino.ResumeRequest{
+	eventStream, err := l.svcCtx.AgentRunner.ResumeStream(l.ctx, eino.ResumeRequest{
 		UserID:         uint64(in.UserId),
 		ConversationID: decided.ConversationID,
 		ConfirmationID: decided.ID,
@@ -71,40 +76,6 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		CheckpointID:   decided.CheckpointID,
 		InterruptID:    decided.InterruptID,
 		Approved:       in.Approved,
-		OnEvent: func(ctx context.Context, event domain.AgentEvent) error {
-			if strings.TrimSpace(event.MessageID) == "" {
-				event.MessageID = newChatMessageID()
-			}
-			if strings.TrimSpace(event.ConversationID) == "" {
-				event.ConversationID = decided.ConversationID
-			}
-			if event.BusinessExecuted || (event.Type == domain.EventToolResult && event.Status == "success" && event.Tool == decided.ToolName) {
-				businessExecuted = true
-			}
-			if in.Approved && businessExecuted && !markExecuted {
-				if _, markErr := l.svcCtx.ConfirmationManager.MarkExecuted(ctx, confirmation.CompletionRequest{
-					UserID:         uint64(in.UserId),
-					ConversationID: decided.ConversationID,
-					ConfirmationID: decided.ID,
-				}); markErr != nil {
-					l.Errorw("mark confirmed tool executed failed", logx.Field("confirmation_id", decided.ID), logx.Field("err", markErr))
-					_ = stream.Send(completionErrorEvent(decided.ConversationID, "业务操作已完成，但确认状态保存失败", markErr))
-				}
-				markExecuted = true
-			}
-			messages, msgErr := agentEventsToMessages(uint64(in.UserId), "", []domain.AgentEvent{event})
-			if msgErr != nil {
-				return msgErr
-			}
-			if l.svcCtx.MessagesModel != nil {
-				if msgErr = l.svcCtx.MessagesModel.InsertBatch(ctx, messages); msgErr != nil {
-					_ = stream.Send(persistenceErrorEvent(event.ConversationID, businessExecuted))
-					return msgErr
-				}
-			}
-			domainEvents = append(domainEvents, event)
-			return stream.Send(agentEventToProto(event))
-		},
 	})
 	if err != nil {
 		if in.Approved {
@@ -115,6 +86,57 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 			})
 		}
 		return sendConfirmError(stream, decided.ConversationID, err)
+	}
+	forwardState := newEventForwardState()
+	for event := range eventStream {
+		if strings.TrimSpace(event.MessageID) == "" {
+			event.MessageID = newChatMessageID()
+		}
+		if strings.TrimSpace(event.ConversationID) == "" {
+			event.ConversationID = decided.ConversationID
+		}
+		if event.BusinessExecuted || (event.Type == domain.EventToolResult && event.Status == "success" && event.Tool == decided.ToolName) {
+			businessExecuted = true
+		}
+		if in.Approved && businessExecuted && !markExecuted {
+			if _, markErr := l.svcCtx.ConfirmationManager.MarkExecuted(l.ctx, confirmation.CompletionRequest{
+				UserID:         uint64(in.UserId),
+				ConversationID: decided.ConversationID,
+				ConfirmationID: decided.ID,
+			}); markErr != nil {
+				l.Errorw("mark confirmed tool executed failed", logx.Field("confirmation_id", decided.ID), logx.Field("err", markErr))
+				_ = stream.Send(completionErrorEvent(decided.ConversationID, "业务操作已完成，但确认状态保存失败", markErr))
+			}
+			markExecuted = true
+		}
+		forward := forwardState.shouldForward(event)
+		if isTransientAgentEvent(event.Type) {
+			if !forward {
+				continue
+			}
+			if err := stream.Send(agentEventToProto(event)); err != nil {
+				return err
+			}
+			domainEvents = append(domainEvents, event)
+			continue
+		}
+		messages, msgErr := agentEventsToMessages(uint64(in.UserId), "", []domain.AgentEvent{event})
+		if msgErr != nil {
+			return msgErr
+		}
+		if l.svcCtx.MessagesModel != nil {
+			if msgErr = l.svcCtx.MessagesModel.InsertBatch(l.ctx, messages); msgErr != nil {
+				_ = stream.Send(persistenceErrorEvent(event.ConversationID, businessExecuted))
+				return msgErr
+			}
+		}
+		domainEvents = append(domainEvents, event)
+		if !forward {
+			continue
+		}
+		if err := stream.Send(agentEventToProto(event)); err != nil {
+			return err
+		}
 	}
 	if in.Approved && !businessExecuted {
 		if _, markErr := l.svcCtx.ConfirmationManager.MarkFailed(l.ctx, confirmation.CompletionRequest{
@@ -132,6 +154,72 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 	return nil
 }
 
+// rejectConfirmation 拒绝确认请求
+func (l *ConfirmActionLogic) rejectConfirmation(decided *domain.Confirmation, userID uint64, stream agentEventSender) error {
+	events := rejectedConfirmationEvents(decided)
+	messages, err := agentEventsToMessages(userID, "", events)
+	if err != nil {
+		return err
+	}
+	if l.svcCtx.MessagesModel != nil {
+		if err := l.svcCtx.MessagesModel.InsertBatch(l.ctx, messages); err != nil {
+			_ = stream.Send(persistenceErrorEvent(decided.ConversationID, false))
+			return err
+		}
+	}
+	for _, event := range events {
+		if err := stream.Send(agentEventToProto(event)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 组装tool_result事件和assistant消息事件，返回给前端，且用于数据库保存
+func rejectedConfirmationEvents(decided *domain.Confirmation) []domain.AgentEvent {
+	conversationID := decided.ConversationID
+	toolName := decided.ToolName
+	summary := "操作已取消。"
+	raw, _ := json.Marshal(map[string]any{
+		"tool_name": toolName,
+		"status":    confirmation.StatusRejected,
+		"summary":   summary,
+	})
+	assistantContent := rejectedAssistantContent(toolName)
+	return []domain.AgentEvent{
+		{
+			Type:           domain.EventToolResult,
+			ConversationID: conversationID,
+			MessageID:      newChatMessageID(),
+			Tool:           toolName,
+			Status:         confirmation.StatusRejected,
+			Content:        summary,
+			DataJSON:       string(raw),
+			Done:           true,
+		},
+		{
+			Type:           domain.EventAssistantMessage,
+			ConversationID: conversationID,
+			MessageID:      newChatMessageID(),
+			Content:        assistantContent,
+			Done:           true,
+		},
+	}
+}
+
+func rejectedAssistantContent(toolName string) string {
+	switch toolName {
+	case domain.ToolCartDelete:
+		return "已取消删除操作，购物车商品不会被移除。"
+	case domain.ToolOrderCreate:
+		return "已取消下单操作，不会创建订单。"
+	case domain.ToolOrderCancel:
+		return "已取消取消订单操作，订单状态不会被修改。"
+	default:
+		return "已取消该操作，相关内容不会被修改。"
+	}
+}
+
 func completionErrorEvent(conversationID, message string, err error) *aiagent.AgentEvent {
 	return &aiagent.AgentEvent{
 		Type:           domain.EventError,
@@ -146,7 +234,7 @@ func (l *ConfirmActionLogic) validateRequest(in *aiagent.ConfirmActionRequest) e
 	if in == nil || in.UserId == 0 || strings.TrimSpace(in.ConversationId) == "" || strings.TrimSpace(in.ConfirmationId) == "" {
 		return fmt.Errorf("确认请求参数不完整")
 	}
-	if l.svcCtx == nil || l.svcCtx.ConfirmationManager == nil || l.svcCtx.AgentRunner == nil {
+	if l.svcCtx == nil || l.svcCtx.ConfirmationManager == nil {
 		return fmt.Errorf("确认服务暂不可用")
 	}
 	return nil

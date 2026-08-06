@@ -127,6 +127,7 @@ func approvalRunMetaFromContext(ctx context.Context) approvalRunMeta {
 	return meta
 }
 
+// 解析中断信息中的 ApprovalInfo
 func interruptEventToDomainEvent(ctx context.Context, info *adk.InterruptInfo, req RunRequest, highRiskTools *aitools.HighRiskTools) (domain.AgentEvent, bool, error) {
 	if info == nil {
 		return domain.AgentEvent{}, false, nil

@@ -47,6 +47,7 @@ type Runner interface {
 	Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error)
 	Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error)
 	Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error)
+	ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error)
 }
 
 type agent struct {
@@ -219,6 +220,22 @@ func buildInputMessages(req RunRequest) ([]*schema.Message, error) {
 }
 
 func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error) {
+	stream, err := r.Stream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return collectStream(stream), nil
+}
+
+func (r *agent) Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error) {
+	stream, err := r.ResumeStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return collectStream(stream), nil
+}
+
+func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
 	if r == nil || r.root == nil {
 		return nil, ErrModelUnavailable
 	}
@@ -238,11 +255,29 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 	})
 	ctx = withApprovalRunMeta(ctx, approvalRunMeta{RunID: runID, CheckpointID: checkpointID})
 	store := r.checkpointStoreOrInit()
-	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, CheckPointStore: store}).Run(ctx, input, adk.WithCheckPointID(checkpointID))
-	return r.collectEvents(ctx, iter, req)
+	out := make(chan domain.AgentEvent, 4)
+	emit := func(eventCtx context.Context, event domain.AgentEvent) error {
+		select {
+		case out <- event:
+			return nil
+		case <-eventCtx.Done():
+			return eventCtx.Err()
+		}
+	}
+	// callback handler manager
+	bridge := newAgentEventCallbackBridge(req, r.highRiskTools, emit)
+	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).Run(ctx, input,
+		adk.WithCheckPointID(checkpointID),
+		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
+		adk.WithCallbacks(bridge.toolHandler()))
+	go func() {
+		defer close(out)
+		r.consumeEvents(ctx, iter, req, bridge, emit)
+	}()
+	return out, nil
 }
 
-func (r *agent) Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error) {
+func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error) {
 	if r == nil || r.root == nil {
 		return nil, ErrModelUnavailable
 	}
@@ -264,21 +299,40 @@ func (r *agent) Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEv
 	})
 	ctx = withApprovalRunMeta(ctx, approvalRunMeta{RunID: runID, CheckpointID: checkpointID})
 	store := r.checkpointStoreOrInit()
-	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
-		Targets: map[string]any{
-			interruptID: &ApprovalResult{Approved: req.Approved},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	out := make(chan domain.AgentEvent, 4)
+	// 事件发送器
+	emit := func(eventCtx context.Context, event domain.AgentEvent) error {
+		select {
+		case out <- event:
+			return nil
+		case <-eventCtx.Done():
+			return eventCtx.Err()
+		}
 	}
-	return r.collectEvents(ctx, iter, RunRequest{
+	runReq := RunRequest{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		MessageID:      req.ConfirmationID,
 		ClientIP:       req.ClientIP,
 		OnEvent:        req.OnEvent,
-	})
+	}
+	// 桥接器，跟踪业务执行状态
+	bridge := newAgentEventCallbackBridge(runReq, r.highRiskTools, emit)
+	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
+		Targets: map[string]any{
+			interruptID: &ApprovalResult{Approved: req.Approved},
+		},
+	},
+		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
+		adk.WithCallbacks(bridge.toolHandler()))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	}
+	go func() {
+		defer close(out)
+		r.consumeEvents(ctx, iter, runReq, bridge, emit)
+	}()
+	return out, nil
 }
 
 func (r *agent) checkpointStoreOrInit() adk.CheckPointStore {
@@ -288,10 +342,12 @@ func (r *agent) checkpointStoreOrInit() adk.CheckPointStore {
 	return r.checkpointStore
 }
 
-func (r *agent) collectEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest) ([]domain.AgentEvent, error) {
-	events := make([]domain.AgentEvent, 0, 2)
+func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest, bridge *agentEventCallbackBridge, emit func(context.Context, domain.AgentEvent) error) {
+	// 是否收到assistant消息事件
 	hasAssistant := false
+	// 是否收到中断事件
 	hasInterrupt := false
+	// 是否收到任何事件
 	hasAny := false
 	for {
 		event, ok := iter.Next()
@@ -302,47 +358,64 @@ func (r *agent) collectEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			continue
 		}
 		if event.Err != nil {
-			if len(events) > 0 {
-				errorEvent := domain.AgentEvent{
-					Type:             domain.EventError,
-					ConversationID:   req.ConversationID,
-					MessageID:        newAgentMessageID(),
-					Content:          fmt.Sprintf("业务结果已产生，但模型总结失败，请勿重复操作：%v", event.Err),
-					Status:           "failed",
-					DataJSON:         `{"business_executed":true}`,
-					Done:             true,
-					BusinessExecuted: true,
-				}
-				if req.OnEvent != nil {
-					if err := req.OnEvent(ctx, errorEvent); err != nil {
-						return nil, err
-					}
-				}
-				events = append(events, errorEvent)
-				return events, nil
+			businessExecuted := bridge != nil && bridge.hasBusinessExecuted()
+			content := fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", event.Err)
+			dataJSON := ""
+			if businessExecuted {
+				content = fmt.Sprintf("业务结果已产生，但模型总结失败，请勿重复操作：%v", event.Err)
+				dataJSON = `{"business_executed":true}`
 			}
-			return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, event.Err)
+			_ = emit(ctx, domain.AgentEvent{
+				Type:             domain.EventError,
+				ConversationID:   req.ConversationID,
+				MessageID:        newAgentMessageID(),
+				Content:          content,
+				Status:           "failed",
+				DataJSON:         dataJSON,
+				Done:             true,
+				BusinessExecuted: businessExecuted,
+			})
+			return
 		}
+		// 中断事件处理
 		if event.Action != nil && event.Action.Interrupted != nil {
+			// 将中断事件转换为自定义AgentEvent事件
 			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.highRiskTools)
 			if err != nil {
-				return nil, err
+				_ = emit(ctx, domain.AgentEvent{
+					Type:           domain.EventError,
+					ConversationID: req.ConversationID,
+					MessageID:      newAgentMessageID(),
+					Content:        fmt.Sprintf("确认请求创建失败：%v", err),
+					Status:         "failed",
+					Done:           true,
+				})
+				return
 			}
 			if ok {
 				hasInterrupt = true
 				hasAny = true
+				// 如果req传了回调函数，则执行这个回调函数
 				if req.OnEvent != nil {
 					if err := req.OnEvent(ctx, domainEvent); err != nil {
-						return nil, err
+						return
 					}
 				}
-				events = append(events, domainEvent)
+				_ = emit(ctx, domainEvent)
 			}
-			continue
+			return
 		}
 		domainEvent, ok, err := adkEventToDomainEvent(event, req)
 		if err != nil {
-			return nil, err
+			_ = emit(ctx, domain.AgentEvent{
+				Type:           domain.EventError,
+				ConversationID: req.ConversationID,
+				MessageID:      newAgentMessageID(),
+				Content:        fmt.Sprintf("AI 事件解析失败：%v", err),
+				Status:         "failed",
+				Done:           true,
+			})
+			return
 		}
 		if !ok {
 			continue
@@ -351,58 +424,66 @@ func (r *agent) collectEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		if domainEvent.Type == domain.EventAssistantMessage {
 			hasAssistant = true
 		}
-		if r.highRiskTools != nil && domainEvent.Type == domain.EventToolResult && r.highRiskTools.RequiresConfirmation(domainEvent.Tool) && domainEvent.Status == "success" {
-			domainEvent.BusinessExecuted = true
+		// callback 已经捕获的可见 assistant 内容在 iterator 结束时统一生成 final。
+		if domainEvent.Type == domain.EventAssistantMessage && bridge != nil && (bridge.hasAssistantEvent() || bridge.hasBufferedAssistantContent()) {
+			continue
+		}
+		// 工具调用事件处理
+		if domainEvent.Type == domain.EventToolResult {
+			// 如果已经发送过该工具调用事件，则忽略后续的工具调用事件
+			if bridge != nil && bridge.hasToolResult(domainEvent) {
+				continue
+			}
+			// 高风险工具执行事件
+			if domainEvent.Status == "success" && (isBusinessWriteTool(domainEvent.Tool) || (r.highRiskTools != nil && r.highRiskTools.RequiresConfirmation(domainEvent.Tool))) {
+				domainEvent.BusinessExecuted = true
+				if bridge != nil {
+					bridge.markBusinessExecuted()
+				}
+			}
+			if bridge != nil && !bridge.markToolResult(domainEvent) {
+				continue
+			}
 		}
 		if req.OnEvent != nil {
 			if err := req.OnEvent(ctx, domainEvent); err != nil {
-				return nil, err
+				return
 			}
 		}
-		events = append(events, domainEvent)
+		_ = emit(ctx, domainEvent)
 	}
+	if !hasInterrupt && bridge != nil {
+		if finalEvent, ok := bridge.finalAssistantEvent(); ok {
+			if err := bridge.send(ctx, finalEvent); err != nil {
+				return
+			}
+			hasAssistant = true
+			hasAny = true
+		}
+	}
+	if bridge != nil {
+		hasAssistant = hasAssistant || bridge.hasAssistantEvent()
+		hasAny = hasAny || bridge.hasAnyEvent()
+	}
+	// 如果没有任务事件发生，则发送空响应错误事件
 	if !hasAssistant && !hasInterrupt && !hasAny {
-		return nil, ErrEmptyModelResponse
+		_ = emit(ctx, domain.AgentEvent{
+			Type:           domain.EventError,
+			ConversationID: req.ConversationID,
+			MessageID:      newAgentMessageID(),
+			Content:        ErrEmptyModelResponse.Error(),
+			Status:         "failed",
+			Done:           true,
+		})
 	}
-	return events, nil
 }
 
-func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
-	if r == nil || r.root == nil {
-		return nil, ErrModelUnavailable
+func collectStream(stream <-chan domain.AgentEvent) []domain.AgentEvent {
+	events := make([]domain.AgentEvent, 0, 2)
+	for event := range stream {
+		events = append(events, event)
 	}
-	out := make(chan domain.AgentEvent, 1)
-	originalOnEvent := req.OnEvent
-	req.OnEvent = func(eventCtx context.Context, event domain.AgentEvent) error {
-		if originalOnEvent != nil {
-			if err := originalOnEvent(eventCtx, event); err != nil {
-				return err
-			}
-		}
-		select {
-		case out <- event:
-			return nil
-		case <-eventCtx.Done():
-			return eventCtx.Err()
-		}
-	}
-	go func() {
-		defer close(out)
-		if _, err := r.Run(ctx, req); err != nil {
-			select {
-			case out <- domain.AgentEvent{
-				Type:           domain.EventError,
-				ConversationID: req.ConversationID,
-				MessageID:      newAgentMessageID(),
-				Content:        fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", err),
-				Status:         "failed",
-				Done:           true,
-			}:
-			case <-ctx.Done():
-			}
-		}
-	}()
-	return out, nil
+	return events
 }
 
 func invokableToolsToBaseTools(tools []einotool.InvokableTool) []einotool.BaseTool {

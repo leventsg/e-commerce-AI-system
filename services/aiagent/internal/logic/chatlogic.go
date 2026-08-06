@@ -184,25 +184,12 @@ func persistenceErrorEvent(conversationID string, businessExecuted bool) *aiagen
 
 func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversation.PreparedConversation, agentMessages []domain.ContextMessage, stream agentEventSender) ([]*aimessages.AiMessages, error) {
 	persistedMessages := make([]*aimessages.AiMessages, 0, 2)
-	events, err := l.svcCtx.AgentRunner.Run(l.ctx, eino.RunRequest{
+	eventStream, err := l.svcCtx.AgentRunner.Stream(l.ctx, eino.RunRequest{
 		UserID:         uint64(in.UserId),
 		ConversationID: prepared.ConversationID,
 		MessageID:      newChatMessageID(),
 		ClientIP:       clientIPFromContext(l.ctx),
 		Messages:       agentMessages,
-		OnEvent: func(ctx context.Context, event domain.AgentEvent) error {
-			normalizeAgentEvent(&event, prepared)
-			message, err := agentEventToMessage(uint64(in.UserId), prepared.ClientMessageID, event)
-			if err != nil {
-				return err
-			}
-			if err := l.svcCtx.MessagesModel.InsertBatch(ctx, []*aimessages.AiMessages{message}); err != nil {
-				_ = stream.Send(persistenceErrorEvent(prepared.ConversationID, event.BusinessExecuted))
-				return err
-			}
-			persistedMessages = append(persistedMessages, message)
-			return stream.Send(agentEventToProto(event))
-		},
 	})
 	if err != nil {
 		l.Errorw("ai supervisor execution failed", logx.Field("component", "supervisor_agent"), logx.Field("stage", "execute"), logx.Field("reason", eino.ErrorReason(err)), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
@@ -211,7 +198,38 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 		}
 		return persistedMessages, nil
 	}
-	if len(events) == 0 {
+	events := 0
+	forwardState := newEventForwardState()
+	for event := range eventStream {
+		events++
+		normalizeAgentEvent(&event, prepared)
+		forward := forwardState.shouldForward(event)
+		if isTransientAgentEvent(event.Type) {
+			if !forward {
+				continue
+			}
+			if err := stream.Send(agentEventToProto(event)); err != nil {
+				return persistedMessages, err
+			}
+			continue
+		}
+		message, err := agentEventToMessage(uint64(in.UserId), prepared.ClientMessageID, event)
+		if err != nil {
+			return persistedMessages, err
+		}
+		if err := l.svcCtx.MessagesModel.InsertBatch(l.ctx, []*aimessages.AiMessages{message}); err != nil {
+			_ = stream.Send(persistenceErrorEvent(prepared.ConversationID, event.BusinessExecuted))
+			return persistedMessages, err
+		}
+		persistedMessages = append(persistedMessages, message)
+		if !forward {
+			continue
+		}
+		if err := stream.Send(agentEventToProto(event)); err != nil {
+			return persistedMessages, err
+		}
+	}
+	if events == 0 {
 		l.Errorw("ai supervisor returned no events", logx.Field("component", "supervisor_agent"), logx.Field("stage", "execute"), logx.Field("reason", "model_empty_response"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId))
 		if sendErr := stream.Send(&aiagent.AgentEvent{Type: domain.EventError, ConversationId: prepared.ConversationID, MessageId: newChatMessageID(), Content: "AI 服务暂时不可用，请稍后重试", Done: true}); sendErr != nil {
 			return persistedMessages, sendErr
@@ -236,6 +254,9 @@ func normalizeAgentEvent(event *domain.AgentEvent, prepared *conversation.Prepar
 func agentEventsToMessages(userID uint64, clientMessageID string, events []domain.AgentEvent) ([]*aimessages.AiMessages, error) {
 	messages := make([]*aimessages.AiMessages, 0, len(events))
 	for _, event := range events {
+		if !shouldPersistAgentEvent(event.Type) {
+			continue
+		}
 		message, err := agentEventToMessage(userID, clientMessageID, event)
 		if err != nil {
 			return nil, err
@@ -271,6 +292,38 @@ func agentEventToMessage(userID uint64, clientMessageID string, event domain.Age
 		ClientMessageId: sql.NullString{String: clientMessageID, Valid: strings.TrimSpace(clientMessageID) != ""},
 		CreatedAt:       time.Now(),
 	}, nil
+}
+
+// 是否是增量事件或者工具调用进度事件，这类事件不需要持久化
+func isTransientAgentEvent(eventType string) bool {
+	return eventType == domain.EventAssistantDelta || eventType == domain.EventToolProgress
+}
+
+func shouldPersistAgentEvent(eventType string) bool {
+	return !isTransientAgentEvent(eventType)
+}
+
+type eventForwardState struct {
+	assistantDeltaSent bool
+}
+
+func newEventForwardState() *eventForwardState {
+	return &eventForwardState{}
+}
+
+func (s *eventForwardState) shouldForward(event domain.AgentEvent) bool {
+	if s == nil {
+		return true
+	}
+	switch event.Type {
+	case domain.EventAssistantDelta:
+		s.assistantDeltaSent = true
+		return true
+	case domain.EventAssistantMessage:
+		return !s.assistantDeltaSent
+	default:
+		return true
+	}
 }
 
 func (l *ChatLogic) validateRequest(in *aiagent.ChatRequest) error {

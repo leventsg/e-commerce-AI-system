@@ -211,7 +211,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*domain.Confir
 	return confirmationFromRow(row)
 }
 
-// Decide 用户决策确认请求
+// Decide 用户决策确认请求，更新数据库
 func (m *Manager) Decide(ctx context.Context, req DecisionRequest) (*domain.Confirmation, error) {
 	if req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || strings.TrimSpace(req.ConfirmationID) == "" {
 		return nil, ErrInvalidConfirmation
@@ -293,9 +293,9 @@ func (m *Manager) BindResumeTarget(ctx context.Context, req ResumeTargetRequest)
 	})
 }
 
-// complete 完成确认请求的处理，更新状态为执行成功或失败
+// complete 完成确认请求的处理，更新状态为执行成功或失败（更新数据库）
 func (m *Manager) complete(ctx context.Context, req CompletionRequest, nextStatus string) (*domain.Confirmation, error) {
-	if req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || strings.TrimSpace(req.ConfirmationID) == "" {
+	if req.UserID == 0 || req.ConversationID == "" || req.ConfirmationID == "" {
 		return nil, ErrInvalidConfirmation
 	}
 	return m.withLock(ctx, req.ConfirmationID, func() (*domain.Confirmation, error) {
