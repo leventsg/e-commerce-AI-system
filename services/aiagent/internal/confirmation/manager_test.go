@@ -66,6 +66,30 @@ func TestManagerCreateStoresSanitizedPendingConfirmation(t *testing.T) {
 	}
 }
 
+func TestManagerBindResumeTargetStoresCheckpointInterruptMapping(t *testing.T) {
+	model := modelWithPending("confirm-1", fixedNow.Add(time.Minute))
+	manager := newTestManager(model, highRiskRegistry(), &fakeLocker{})
+
+	updated, err := manager.BindResumeTarget(context.Background(), ResumeTargetRequest{
+		UserID:         42,
+		ConversationID: "conv-1",
+		ConfirmationID: "confirm-1",
+		RunID:          "run-1",
+		CheckpointID:   "checkpoint-1",
+		InterruptID:    "interrupt-1",
+	})
+	if err != nil {
+		t.Fatalf("BindResumeTarget: %v", err)
+	}
+	if updated.RunID != "run-1" || updated.CheckpointID != "checkpoint-1" || updated.InterruptID != "interrupt-1" {
+		t.Fatalf("updated confirmation = %#v", updated)
+	}
+	row := model.row("confirm-1")
+	if row.RunId != "run-1" || row.CheckpointId != "checkpoint-1" || row.InterruptId != "interrupt-1" {
+		t.Fatalf("stored row = %#v", row)
+	}
+}
+
 func TestManagerCreateUsesConfirmIDPrefix(t *testing.T) {
 	model := newFakeModel()
 	manager := NewManager(model, highRiskRegistry(), nil, WithClock(func() time.Time { return fixedNow }))
@@ -410,6 +434,7 @@ type fakeModel struct {
 	resolveCalls       int
 	expireCalls        int
 	completeCalls      int
+	bindCalls          int
 	expireWinnerStatus string
 	insertResult       sql.Result
 	insertErr          error
@@ -490,6 +515,20 @@ func (m *fakeModel) CompleteApproved(_ context.Context, id string, userID uint64
 	}
 	row.Status = nextStatus
 	row.ExecutedAt = sql.NullTime{Time: executedAt, Valid: true}
+	return true, nil
+}
+
+func (m *fakeModel) BindResumeTarget(_ context.Context, id string, userID uint64, runID string, checkpointID string, interruptID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bindCalls++
+	row := m.rows[id]
+	if row == nil || row.UserId != userID || row.Status != StatusPending {
+		return false, nil
+	}
+	row.RunId = runID
+	row.CheckpointId = checkpointID
+	row.InterruptId = interruptID
 	return true, nil
 }
 

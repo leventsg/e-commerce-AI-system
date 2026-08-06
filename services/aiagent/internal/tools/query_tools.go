@@ -34,6 +34,8 @@ type ToolExecutionContext struct {
 	ConversationID string
 	MessageID      string
 	ClientIP       string
+	RunID          string
+	CheckpointID   string
 }
 
 type toolExecutionContextKey struct{}

@@ -48,6 +48,9 @@ type (
 		Arguments      string       `db:"arguments"`       // 待执行参数
 		Summary        string       `db:"summary"`         // 确认摘要
 		Status         string       `db:"status"`          // pending/approved/rejected/expired/executed/failed
+		RunId          string       `db:"run_id"`          // Agent run ID
+		CheckpointId   string       `db:"checkpoint_id"`   // Eino checkpoint ID
+		InterruptId    string       `db:"interrupt_id"`    // Eino interrupt ID
 		ExpiresAt      time.Time    `db:"expires_at"`      // 过期时间
 		ExecutedAt     sql.NullTime `db:"executed_at"`     // 执行时间
 		CreatedAt      time.Time    `db:"created_at"`
@@ -91,8 +94,8 @@ func (m *defaultAiConfirmationsModel) FindOne(ctx context.Context, id string) (*
 func (m *defaultAiConfirmationsModel) Insert(ctx context.Context, data *AiConfirmations) (sql.Result, error) {
 	aiConfirmationsIdKey := fmt.Sprintf("%s%v", cacheAiConfirmationsIdPrefix, data.Id)
 	ret, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
-		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", m.table, aiConfirmationsRowsExpectAutoSet)
-		return conn.ExecCtx(ctx, query, data.Id, data.ConversationId, data.UserId, data.ToolName, data.Arguments, data.Summary, data.Status, data.ExpiresAt, data.ExecutedAt)
+		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", m.table, aiConfirmationsRowsExpectAutoSet)
+		return conn.ExecCtx(ctx, query, data.Id, data.ConversationId, data.UserId, data.ToolName, data.Arguments, data.Summary, data.Status, data.RunId, data.CheckpointId, data.InterruptId, data.ExpiresAt, data.ExecutedAt)
 	}, aiConfirmationsIdKey)
 	return ret, err
 }
@@ -101,7 +104,7 @@ func (m *defaultAiConfirmationsModel) Update(ctx context.Context, data *AiConfir
 	aiConfirmationsIdKey := fmt.Sprintf("%s%v", cacheAiConfirmationsIdPrefix, data.Id)
 	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
 		query := fmt.Sprintf("update %s set %s where `id` = ?", m.table, aiConfirmationsRowsWithPlaceHolder)
-		return conn.ExecCtx(ctx, query, data.ConversationId, data.UserId, data.ToolName, data.Arguments, data.Summary, data.Status, data.ExpiresAt, data.ExecutedAt, data.Id)
+		return conn.ExecCtx(ctx, query, data.ConversationId, data.UserId, data.ToolName, data.Arguments, data.Summary, data.Status, data.RunId, data.CheckpointId, data.InterruptId, data.ExpiresAt, data.ExecutedAt, data.Id)
 	}, aiConfirmationsIdKey)
 	return err
 }

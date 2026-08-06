@@ -10,6 +10,9 @@ type Confirmation struct {
 	Arguments      map[string]any
 	Summary        string
 	Status         string
+	RunID          string
+	CheckpointID   string
+	InterruptID    string
 	ExpiresAt      time.Time
 	ExecutedAt     *time.Time
 }

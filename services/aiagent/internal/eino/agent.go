@@ -31,13 +31,48 @@ type RunRequest struct {
 	OnEvent        func(context.Context, domain.AgentEvent) error
 }
 
+type ResumeRequest struct {
+	UserID         uint64
+	ConversationID string
+	ConfirmationID string
+	RunID          string
+	CheckpointID   string
+	InterruptID    string
+	Approved       bool
+	ClientIP       string
+	OnEvent        func(context.Context, domain.AgentEvent) error
+}
+
 type Runner interface {
 	Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error)
+	Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error)
 	Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error)
+	ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error)
 }
 
 type agent struct {
-	root adk.Agent
+	root            adk.Agent
+	checkpointStore adk.CheckPointStore
+	highRiskTools   *aitools.HighRiskTools
+}
+
+type supervisorOptions struct {
+	highRiskTools   *aitools.HighRiskTools
+	checkpointStore adk.CheckPointStore
+}
+
+type SupervisorOption func(*supervisorOptions)
+
+func WithHighRiskTools(highRiskTools *aitools.HighRiskTools) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.highRiskTools = highRiskTools
+	}
+}
+
+func WithCheckpointStore(store adk.CheckPointStore) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.checkpointStore = store
+	}
 }
 
 type agentSpec struct {
@@ -85,14 +120,20 @@ var supervisorSubAgentSpecs = []agentSpec{
 	},
 }
 
-func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry) (Runner, error) {
+func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, options ...SupervisorOption) (Runner, error) {
 	if factory == nil || registry == nil {
 		return nil, ErrModelUnavailable
+	}
+	opts := supervisorOptions{}
+	for _, option := range options {
+		if option != nil {
+			option(&opts)
+		}
 	}
 	_ = adk.SetLanguage(adk.LanguageChinese)
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
 	for _, spec := range supervisorSubAgentSpecs {
-		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, spec)
+		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.highRiskTools, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -122,11 +163,11 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
-	return &agent{root: root}, nil
+	return &agent{root: root, checkpointStore: opts.checkpointStore, highRiskTools: opts.highRiskTools}, nil
 }
 
 // newDomainAgent 创建子agent
-func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, spec agentSpec) (adk.Agent, error) {
+func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, highRiskTools *aitools.HighRiskTools, spec agentSpec) (adk.Agent, error) {
 	infos, err := registry.ToolInfosByNames(ctx, spec.tools...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
@@ -139,6 +180,10 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
+	handlers := []adk.ChatModelAgentMiddleware{}
+	if highRiskTools != nil {
+		handlers = append(handlers, newHighRiskApprovalMiddleware(highRiskTools))
+	}
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        spec.name,
 		Description: spec.description,
@@ -149,6 +194,7 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 				Tools: invokableToolsToBaseTools(tools),
 			},
 		},
+		Handlers:      handlers,
 		MaxIterations: defaultAgentMaxIterations,
 	})
 	if err != nil {
@@ -174,6 +220,22 @@ func buildInputMessages(req RunRequest) ([]*schema.Message, error) {
 }
 
 func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error) {
+	stream, err := r.Stream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return collectStream(stream), nil
+}
+
+func (r *agent) Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error) {
+	stream, err := r.ResumeStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return collectStream(stream), nil
+}
+
+func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
 	if r == nil || r.root == nil {
 		return nil, ErrModelUnavailable
 	}
@@ -181,15 +243,112 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 	if err != nil {
 		return nil, err
 	}
+	checkpointID := stableCheckpointID(req.MessageID, req.ConversationID)
+	runID := checkpointID
 	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		MessageID:      req.MessageID,
 		ClientIP:       req.ClientIP,
+		RunID:          runID,
+		CheckpointID:   checkpointID,
 	})
-	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root}).Run(ctx, input)
-	events := make([]domain.AgentEvent, 0, 2)
+	ctx = withApprovalRunMeta(ctx, approvalRunMeta{RunID: runID, CheckpointID: checkpointID})
+	store := r.checkpointStoreOrInit()
+	out := make(chan domain.AgentEvent, 4)
+	emit := func(eventCtx context.Context, event domain.AgentEvent) error {
+		select {
+		case out <- event:
+			return nil
+		case <-eventCtx.Done():
+			return eventCtx.Err()
+		}
+	}
+	// callback handler manager
+	bridge := newAgentEventCallbackBridge(req, r.highRiskTools, emit)
+	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).Run(ctx, input,
+		adk.WithCheckPointID(checkpointID),
+		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
+		adk.WithCallbacks(bridge.toolHandler()))
+	go func() {
+		defer close(out)
+		r.consumeEvents(ctx, iter, req, bridge, emit)
+	}()
+	return out, nil
+}
+
+func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error) {
+	if r == nil || r.root == nil {
+		return nil, ErrModelUnavailable
+	}
+	checkpointID := strings.TrimSpace(req.CheckpointID)
+	interruptID := strings.TrimSpace(req.InterruptID)
+	if checkpointID == "" || interruptID == "" {
+		return nil, fmt.Errorf("%w: checkpoint or interrupt target is empty", ErrModelUnavailable)
+	}
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" {
+		runID = checkpointID
+	}
+	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		ClientIP:       req.ClientIP,
+		RunID:          runID,
+		CheckpointID:   checkpointID,
+	})
+	ctx = withApprovalRunMeta(ctx, approvalRunMeta{RunID: runID, CheckpointID: checkpointID})
+	store := r.checkpointStoreOrInit()
+	out := make(chan domain.AgentEvent, 4)
+	// 事件发送器
+	emit := func(eventCtx context.Context, event domain.AgentEvent) error {
+		select {
+		case out <- event:
+			return nil
+		case <-eventCtx.Done():
+			return eventCtx.Err()
+		}
+	}
+	runReq := RunRequest{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		MessageID:      req.ConfirmationID,
+		ClientIP:       req.ClientIP,
+		OnEvent:        req.OnEvent,
+	}
+	// 桥接器，跟踪业务执行状态
+	bridge := newAgentEventCallbackBridge(runReq, r.highRiskTools, emit)
+	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
+		Targets: map[string]any{
+			interruptID: &ApprovalResult{Approved: req.Approved},
+		},
+	},
+		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
+		adk.WithCallbacks(bridge.toolHandler()))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
+	}
+	go func() {
+		defer close(out)
+		r.consumeEvents(ctx, iter, runReq, bridge, emit)
+	}()
+	return out, nil
+}
+
+func (r *agent) checkpointStoreOrInit() adk.CheckPointStore {
+	if r.checkpointStore == nil {
+		r.checkpointStore = newMemoryCheckpointStore()
+	}
+	return r.checkpointStore
+}
+
+func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest, bridge *agentEventCallbackBridge, emit func(context.Context, domain.AgentEvent) error) {
+	// 是否收到assistant消息事件
 	hasAssistant := false
+	// 是否收到中断事件
+	hasInterrupt := false
+	// 是否收到任何事件
+	hasAny := false
 	for {
 		event, ok := iter.Next()
 		if !ok {
@@ -199,42 +358,132 @@ func (r *agent) Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, e
 			continue
 		}
 		if event.Err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, event.Err)
+			businessExecuted := bridge != nil && bridge.hasBusinessExecuted()
+			content := fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", event.Err)
+			dataJSON := ""
+			if businessExecuted {
+				content = fmt.Sprintf("业务结果已产生，但模型总结失败，请勿重复操作：%v", event.Err)
+				dataJSON = `{"business_executed":true}`
+			}
+			_ = emit(ctx, domain.AgentEvent{
+				Type:             domain.EventError,
+				ConversationID:   req.ConversationID,
+				MessageID:        newAgentMessageID(),
+				Content:          content,
+				Status:           "failed",
+				DataJSON:         dataJSON,
+				Done:             true,
+				BusinessExecuted: businessExecuted,
+			})
+			return
+		}
+		// 中断事件处理
+		if event.Action != nil && event.Action.Interrupted != nil {
+			// 将中断事件转换为自定义AgentEvent事件
+			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.highRiskTools)
+			if err != nil {
+				_ = emit(ctx, domain.AgentEvent{
+					Type:           domain.EventError,
+					ConversationID: req.ConversationID,
+					MessageID:      newAgentMessageID(),
+					Content:        fmt.Sprintf("确认请求创建失败：%v", err),
+					Status:         "failed",
+					Done:           true,
+				})
+				return
+			}
+			if ok {
+				hasInterrupt = true
+				hasAny = true
+				// 如果req传了回调函数，则执行这个回调函数
+				if req.OnEvent != nil {
+					if err := req.OnEvent(ctx, domainEvent); err != nil {
+						return
+					}
+				}
+				_ = emit(ctx, domainEvent)
+			}
+			return
 		}
 		domainEvent, ok, err := adkEventToDomainEvent(event, req)
 		if err != nil {
-			return nil, err
+			_ = emit(ctx, domain.AgentEvent{
+				Type:           domain.EventError,
+				ConversationID: req.ConversationID,
+				MessageID:      newAgentMessageID(),
+				Content:        fmt.Sprintf("AI 事件解析失败：%v", err),
+				Status:         "failed",
+				Done:           true,
+			})
+			return
 		}
 		if !ok {
 			continue
 		}
+		hasAny = true
 		if domainEvent.Type == domain.EventAssistantMessage {
 			hasAssistant = true
 		}
-		if req.OnEvent != nil {
-			if err := req.OnEvent(ctx, domainEvent); err != nil {
-				return nil, err
+		// callback 已经捕获的可见 assistant 内容在 iterator 结束时统一生成 final。
+		if domainEvent.Type == domain.EventAssistantMessage && bridge != nil && (bridge.hasAssistantEvent() || bridge.hasBufferedAssistantContent()) {
+			continue
+		}
+		// 工具调用事件处理
+		if domainEvent.Type == domain.EventToolResult {
+			// 如果已经发送过该工具调用事件，则忽略后续的工具调用事件
+			if bridge != nil && bridge.hasToolResult(domainEvent) {
+				continue
+			}
+			// 高风险工具执行事件
+			if domainEvent.Status == "success" && (isBusinessWriteTool(domainEvent.Tool) || (r.highRiskTools != nil && r.highRiskTools.RequiresConfirmation(domainEvent.Tool))) {
+				domainEvent.BusinessExecuted = true
+				if bridge != nil {
+					bridge.markBusinessExecuted()
+				}
+			}
+			if bridge != nil && !bridge.markToolResult(domainEvent) {
+				continue
 			}
 		}
-		events = append(events, domainEvent)
+		if req.OnEvent != nil {
+			if err := req.OnEvent(ctx, domainEvent); err != nil {
+				return
+			}
+		}
+		_ = emit(ctx, domainEvent)
 	}
-	if !hasAssistant {
-		return nil, ErrEmptyModelResponse
+	if !hasInterrupt && bridge != nil {
+		if finalEvent, ok := bridge.finalAssistantEvent(); ok {
+			if err := bridge.send(ctx, finalEvent); err != nil {
+				return
+			}
+			hasAssistant = true
+			hasAny = true
+		}
 	}
-	return events, nil
+	if bridge != nil {
+		hasAssistant = hasAssistant || bridge.hasAssistantEvent()
+		hasAny = hasAny || bridge.hasAnyEvent()
+	}
+	// 如果没有任务事件发生，则发送空响应错误事件
+	if !hasAssistant && !hasInterrupt && !hasAny {
+		_ = emit(ctx, domain.AgentEvent{
+			Type:           domain.EventError,
+			ConversationID: req.ConversationID,
+			MessageID:      newAgentMessageID(),
+			Content:        ErrEmptyModelResponse.Error(),
+			Status:         "failed",
+			Done:           true,
+		})
+	}
 }
 
-func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
-	events, err := r.Run(ctx, req)
-	if err != nil {
-		return nil, err
+func collectStream(stream <-chan domain.AgentEvent) []domain.AgentEvent {
+	events := make([]domain.AgentEvent, 0, 2)
+	for event := range stream {
+		events = append(events, event)
 	}
-	out := make(chan domain.AgentEvent, len(events))
-	for _, event := range events {
-		out <- event
-	}
-	close(out)
-	return out, nil
+	return events
 }
 
 func invokableToolsToBaseTools(tools []einotool.InvokableTool) []einotool.BaseTool {
@@ -260,6 +509,14 @@ func baseToolInfos(ctx context.Context, tools []einotool.BaseTool) ([]*schema.To
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func stableCheckpointID(messageID, conversationID string) string {
+	checkpointID := strings.TrimSpace(messageID)
+	if checkpointID == "" {
+		checkpointID = strings.TrimSpace(conversationID)
+	}
+	return checkpointID
 }
 
 func adkEventToDomainEvent(event *adk.AgentEvent, req RunRequest) (domain.AgentEvent, bool, error) {

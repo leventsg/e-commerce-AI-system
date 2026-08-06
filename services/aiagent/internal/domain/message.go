@@ -2,7 +2,9 @@ package domain
 
 const (
 	EventAssistantMessage     = "assistant_message"
+	EventAssistantDelta       = "assistant_delta"
 	EventToolResult           = "tool_result"
+	EventToolProgress         = "tool_progress"
 	EventConfirmationRequired = "confirmation_required"
 	EventError                = "error"
 )

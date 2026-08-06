@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -17,15 +16,19 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/couponsclient"
 	"github.com/leventsg/e-commerce-AI-system/services/order/order"
 	"github.com/leventsg/e-commerce-AI-system/services/order/orderservice"
+	"github.com/leventsg/e-commerce-AI-system/services/product/productcatalogservice"
 	"google.golang.org/grpc"
 )
 
-func TestHighRiskEinoToolsCreateConfirmationWithoutExecutingBusinessRPC(t *testing.T) {
+func TestHighRiskEinoToolInvokableRunExecutesAfterApprovalWithoutCreatingConfirmation(t *testing.T) {
 	creator := &fakeConfirmationCreator{confirmation: &domain.Confirmation{
 		ID: "confirm-1", ToolName: domain.ToolCartDelete, Summary: "确认删除购物车条目 8？",
 		ExpiresAt: time.Unix(12345, 0), Arguments: map[string]any{"cart_item_id": float64(8)},
 	}}
-	cartRPC := &fakeHighRiskCartRPC{}
+	cartRPC := &fakeHighRiskCartRPC{
+		listResp:   &cartsclient.CartItemListResponse{Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 11, Quantity: 2}}},
+		deleteResp: &cartsclient.EmptyCartResponse{},
+	}
 	registry := NewRegistry(config.ToolTimeoutConfig{})
 	NewHighRiskTools(NewExecutor(registry), creator, HighRiskToolClients{Cart: cartRPC})
 	tool, err := registry.Tool(domain.ToolCartDelete)
@@ -38,23 +41,49 @@ func TestHighRiskEinoToolsCreateConfirmationWithoutExecutingBusinessRPC(t *testi
 
 	raw, err := tool.InvokableRun(ctx, `{"cart_item_id":8,"user_id":999}`)
 	if err != nil {
-		t.Fatalf("cart_delete confirmation: %v", err)
+		t.Fatalf("cart_delete execute: %v", err)
 	}
-	if cartRPC.deleteCalls != 0 || cartRPC.listCalls != 0 {
-		t.Fatalf("business RPC called before confirmation: list=%d delete=%d", cartRPC.listCalls, cartRPC.deleteCalls)
+	if cartRPC.deleteCalls != 1 || cartRPC.listCalls != 1 {
+		t.Fatalf("business RPC calls: list=%d delete=%d", cartRPC.listCalls, cartRPC.deleteCalls)
 	}
-	if creator.req.UserID != 42 || creator.req.ConversationID != "conv-1" || creator.req.ToolName != domain.ToolCartDelete {
-		t.Fatalf("confirmation request = %#v", creator.req)
+	if creator.calls != 0 {
+		t.Fatalf("direct invokable should not create confirmation, calls=%d", creator.calls)
 	}
-	if _, ok := creator.req.Arguments["user_id"]; ok {
-		t.Fatalf("confirmation persisted untrusted user_id: %#v", creator.req.Arguments)
+	if !strings.Contains(raw, "cart_item_id") {
+		t.Fatalf("execution payload = %s", raw)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		t.Fatalf("decode confirmation payload: %v", err)
+}
+
+func TestHighRiskCartDeleteSummaryUsesProductName(t *testing.T) {
+	creator := &fakeConfirmationCreator{confirmation: &domain.Confirmation{
+		ID: "confirm-1", ExpiresAt: time.Unix(12345, 0),
+	}}
+	cartRPC := &fakeHighRiskCartRPC{listResp: &cartsclient.CartItemListResponse{
+		Data: []*cartsclient.CartInfoResponse{{Id: 3, UserId: 42, ProductId: 11, Quantity: 1}},
+	}}
+	productRPC := &fakeProductQueryRPC{detailResp: &productcatalogservice.GetProductResp{
+		Product: &productcatalogservice.Product{Id: 11, Name: "无线蓝牙耳机"},
+	}}
+	highRisk := NewHighRiskTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), creator, HighRiskToolClients{Cart: cartRPC, Product: productRPC})
+
+	event := highRisk.RequestConfirmation(context.Background(), ExecuteRequest{
+		UserID:         42,
+		ConversationID: "conv-1",
+		ToolName:       domain.ToolCartDelete,
+		Arguments:      map[string]any{"cart_item_id": 3},
+	})
+
+	if event.Type != domain.EventConfirmationRequired {
+		t.Fatalf("event = %#v", event)
 	}
-	if payload["type"] != domain.EventConfirmationRequired || payload["confirmation_id"] != "confirm-1" {
-		t.Fatalf("confirmation payload = %#v", payload)
+	if !strings.Contains(event.Summary, "无线蓝牙耳机") || !strings.Contains(event.Summary, "数量 1") {
+		t.Fatalf("summary = %q, want user-friendly product name and quantity", event.Summary)
+	}
+	if strings.Contains(event.Summary, "条目 3") {
+		t.Fatalf("summary = %q, should not expose cart item id as the primary label", event.Summary)
+	}
+	if productRPC.detailReq == nil || productRPC.detailReq.Id != 11 || productRPC.detailReq.UserId != 42 {
+		t.Fatalf("GetProduct request = %#v", productRPC.detailReq)
 	}
 }
 

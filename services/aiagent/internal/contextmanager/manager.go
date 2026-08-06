@@ -225,6 +225,7 @@ func (m *manager) appendUserProfile(ctx context.Context, req domain.BuildContext
 	}
 }
 
+// 过滤tool消息，按时间顺序排序
 func selectRecentMessages(rows []*aimessages.AiMessages, currentMessageID string, summary *domain.ConversationSummary) []*aimessages.AiMessages {
 	recent := make([]*aimessages.AiMessages, 0, len(rows))
 	for _, row := range rows {

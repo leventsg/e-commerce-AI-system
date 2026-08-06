@@ -21,8 +21,8 @@ type (
 	ConfirmActionResponse = aiagent.ConfirmActionResponse
 
 	AiAgent interface {
-		Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error)
-		ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (*ConfirmActionResponse, error)
+		Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ChatClient, error)
+		ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ConfirmActionClient, error)
 	}
 
 	defaultAiAgent struct {
@@ -36,12 +36,12 @@ func NewAiAgent(cli zrpc.Client) AiAgent {
 	}
 }
 
-func (m *defaultAiAgent) Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error) {
+func (m *defaultAiAgent) Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ChatClient, error) {
 	client := aiagent.NewAiAgentClient(m.cli.Conn())
 	return client.Chat(ctx, in, opts...)
 }
 
-func (m *defaultAiAgent) ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (*ConfirmActionResponse, error) {
+func (m *defaultAiAgent) ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ConfirmActionClient, error) {
 	client := aiagent.NewAiAgentClient(m.cli.Conn())
 	return client.ConfirmAction(ctx, in, opts...)
 }

@@ -27,6 +27,8 @@ type ExecuteRequest struct {
 	ConversationID string
 	MessageID      string
 	ClientIP       string
+	RunID          string
+	CheckpointID   string
 	ToolName       string
 	Arguments      map[string]any
 }

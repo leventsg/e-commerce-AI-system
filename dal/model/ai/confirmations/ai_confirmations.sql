@@ -6,11 +6,15 @@ CREATE TABLE `ai_confirmations` (
   `arguments` json NOT NULL COMMENT '待执行参数',
   `summary` varchar(512) NOT NULL COMMENT '确认摘要',
   `status` varchar(16) NOT NULL COMMENT 'pending/approved/rejected/expired/executed/failed',
+  `run_id` varchar(64) NOT NULL DEFAULT '' COMMENT 'Agent run ID',
+  `checkpoint_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino checkpoint ID',
+  `interrupt_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino interrupt ID',
   `expires_at` datetime NOT NULL COMMENT '过期时间',
   `executed_at` datetime DEFAULT NULL COMMENT '执行时间',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`),
-  KEY `idx_conversation_created` (`conversation_id`, `created_at`)
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_checkpoint_interrupt` (`checkpoint_id`, `interrupt_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

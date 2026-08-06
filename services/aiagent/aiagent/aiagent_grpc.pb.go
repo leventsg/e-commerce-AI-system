@@ -27,8 +27,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AiAgentClient interface {
-	Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error)
-	ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (*ConfirmActionResponse, error)
+	Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentEvent], error)
+	ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentEvent], error)
 }
 
 type aiAgentClient struct {
@@ -39,32 +39,50 @@ func NewAiAgentClient(cc grpc.ClientConnInterface) AiAgentClient {
 	return &aiAgentClient{cc}
 }
 
-func (c *aiAgentClient) Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error) {
+func (c *aiAgentClient) Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChatResponse)
-	err := c.cc.Invoke(ctx, AiAgent_Chat_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &AiAgent_ServiceDesc.Streams[0], AiAgent_Chat_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ChatRequest, AgentEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
 
-func (c *aiAgentClient) ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (*ConfirmActionResponse, error) {
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AiAgent_ChatClient = grpc.ServerStreamingClient[AgentEvent]
+
+func (c *aiAgentClient) ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ConfirmActionResponse)
-	err := c.cc.Invoke(ctx, AiAgent_ConfirmAction_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &AiAgent_ServiceDesc.Streams[1], AiAgent_ConfirmAction_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ConfirmActionRequest, AgentEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AiAgent_ConfirmActionClient = grpc.ServerStreamingClient[AgentEvent]
 
 // AiAgentServer is the server API for AiAgent service.
 // All implementations must embed UnimplementedAiAgentServer
 // for forward compatibility.
 type AiAgentServer interface {
-	Chat(context.Context, *ChatRequest) (*ChatResponse, error)
-	ConfirmAction(context.Context, *ConfirmActionRequest) (*ConfirmActionResponse, error)
+	Chat(*ChatRequest, grpc.ServerStreamingServer[AgentEvent]) error
+	ConfirmAction(*ConfirmActionRequest, grpc.ServerStreamingServer[AgentEvent]) error
 	mustEmbedUnimplementedAiAgentServer()
 }
 
@@ -75,11 +93,11 @@ type AiAgentServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAiAgentServer struct{}
 
-func (UnimplementedAiAgentServer) Chat(context.Context, *ChatRequest) (*ChatResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Chat not implemented")
+func (UnimplementedAiAgentServer) Chat(*ChatRequest, grpc.ServerStreamingServer[AgentEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method Chat not implemented")
 }
-func (UnimplementedAiAgentServer) ConfirmAction(context.Context, *ConfirmActionRequest) (*ConfirmActionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ConfirmAction not implemented")
+func (UnimplementedAiAgentServer) ConfirmAction(*ConfirmActionRequest, grpc.ServerStreamingServer[AgentEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method ConfirmAction not implemented")
 }
 func (UnimplementedAiAgentServer) mustEmbedUnimplementedAiAgentServer() {}
 func (UnimplementedAiAgentServer) testEmbeddedByValue()                 {}
@@ -102,41 +120,27 @@ func RegisterAiAgentServer(s grpc.ServiceRegistrar, srv AiAgentServer) {
 	s.RegisterService(&AiAgent_ServiceDesc, srv)
 }
 
-func _AiAgent_Chat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChatRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _AiAgent_Chat_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ChatRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(AiAgentServer).Chat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AiAgent_Chat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AiAgentServer).Chat(ctx, req.(*ChatRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(AiAgentServer).Chat(m, &grpc.GenericServerStream[ChatRequest, AgentEvent]{ServerStream: stream})
 }
 
-func _AiAgent_ConfirmAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConfirmActionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AiAgent_ChatServer = grpc.ServerStreamingServer[AgentEvent]
+
+func _AiAgent_ConfirmAction_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ConfirmActionRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(AiAgentServer).ConfirmAction(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AiAgent_ConfirmAction_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AiAgentServer).ConfirmAction(ctx, req.(*ConfirmActionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(AiAgentServer).ConfirmAction(m, &grpc.GenericServerStream[ConfirmActionRequest, AgentEvent]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AiAgent_ConfirmActionServer = grpc.ServerStreamingServer[AgentEvent]
 
 // AiAgent_ServiceDesc is the grpc.ServiceDesc for AiAgent service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -144,16 +148,18 @@ func _AiAgent_ConfirmAction_Handler(srv interface{}, ctx context.Context, dec fu
 var AiAgent_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "aiagent.AiAgent",
 	HandlerType: (*AiAgentServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "Chat",
-			Handler:    _AiAgent_Chat_Handler,
+			StreamName:    "Chat",
+			Handler:       _AiAgent_Chat_Handler,
+			ServerStreams: true,
 		},
 		{
-			MethodName: "ConfirmAction",
-			Handler:    _AiAgent_ConfirmAction_Handler,
+			StreamName:    "ConfirmAction",
+			Handler:       _AiAgent_ConfirmAction_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "services/aiagent/aiagent.proto",
 }

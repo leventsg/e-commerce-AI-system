@@ -17,7 +17,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 			[]rest.Middleware{serverCtx.WithClientMiddleware, serverCtx.WrapperAuthMiddleware},
 			[]rest.Route{
 				{
-					Method:  http.MethodGet,
+					Method:  http.MethodPost,
 					Path:    "/chat",
 					Handler: ChatHandler(serverCtx),
 				},

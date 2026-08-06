@@ -25,6 +25,7 @@ type (
 		ResolvePending(ctx context.Context, id string, userID uint64, nextStatus string, now time.Time) (bool, error)
 		ExpirePending(ctx context.Context, id string, userID uint64, now time.Time) (bool, error)
 		CompleteApproved(ctx context.Context, id string, userID uint64, nextStatus string, executedAt time.Time) (bool, error)
+		BindResumeTarget(ctx context.Context, id string, userID uint64, runID string, checkpointID string, interruptID string) (bool, error)
 	}
 
 	customAiConfirmationsModel struct {
@@ -65,6 +66,11 @@ func (m *customAiConfirmationsModel) CompleteApproved(ctx context.Context, id st
 	}
 	query := fmt.Sprintf("update %s set `status` = ?, `executed_at` = ? where `id` = ? and `user_id` = ? and `status` = 'approved'", m.table)
 	return m.execConditionalUpdate(ctx, id, query, nextStatus, executedAt, id, userID)
+}
+
+func (m *customAiConfirmationsModel) BindResumeTarget(ctx context.Context, id string, userID uint64, runID string, checkpointID string, interruptID string) (bool, error) {
+	query := fmt.Sprintf("update %s set `run_id` = ?, `checkpoint_id` = ?, `interrupt_id` = ? where `id` = ? and `user_id` = ? and `status` = 'pending'", m.table)
+	return m.execConditionalUpdate(ctx, id, query, runID, checkpointID, interruptID, id, userID)
 }
 
 func (m *customAiConfirmationsModel) execConditionalUpdate(ctx context.Context, id, query string, args ...any) (bool, error) {

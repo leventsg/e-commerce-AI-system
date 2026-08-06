@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 基于现有电商微服务新增 AI 智能客服能力，支持 WebSocket 多轮对话、业务查询、商品推荐、低风险自动操作、高风险确认执行和审计追踪。
+**Goal:** 基于现有电商微服务新增 AI 智能客服能力，支持 SSE 多轮对话、业务查询、商品推荐、低风险自动操作、高风险确认执行和审计追踪。
 
-**Architecture:** 新增 `apis/ai` 作为对外 WebSocket 网关，新增 `services/aiagent` 作为 AI 编排 RPC 服务。`services/aiagent` 基于 Eino 提供 ChatModel、Tool、ToolsNode、Agent/Chain/Graph 编排能力，本地代码负责会话、工具风险元数据、Execution Guard、确认管理和审计。AI Agent 不侵入商品、库存、订单、优惠券、购物车、结算等核心服务，只通过现有 RPC 客户端调用业务能力，并强制从登录态注入用户 ID。
+**Architecture:** 新增 `apis/ai` 作为对外 SSE 网关，新增 `services/aiagent` 作为 AI 编排 RPC 服务。`services/aiagent` 基于 Eino 提供 ChatModel、Tool、ToolsNode、Agent/Chain/Graph 编排能力，本地代码负责会话、工具风险元数据、Execution Guard、确认管理和审计。AI Agent 不侵入商品、库存、订单、优惠券、购物车、结算等核心服务，只通过现有 RPC 客户端调用业务能力，并强制从登录态注入用户 ID。
 
-**Tech Stack:** Go、go-zero API/RPC、Eino、WebSocket、MySQL、Redis、OpenAI-compatible/DeepSeek ChatModel、现有 product/inventory/order/carts/coupons/checkout/audit RPC。
+**Tech Stack:** Go、go-zero API/RPC、Eino、SSE、MySQL、Redis、OpenAI-compatible/DeepSeek ChatModel、现有 product/inventory/order/carts/coupons/checkout/audit RPC。
 
 ---
 
@@ -18,7 +18,7 @@
 
 首期交付 PRD 中的核心闭环：
 
-- WebSocket 实时聊天入口：`GET /douyin/ai/chat?conversation_id=optional`
+- SSE 实时聊天入口：`POST /douyin/ai/chat`
 - 多轮会话、消息持久化、工具调用记录。
 - 通过 Eino ChatModel 接入模型，首期配置兼容 OpenAI-compatible API 与 DeepSeek。
 - 查询工具：商品、库存、订单、优惠券、购物车、结算单。
@@ -52,7 +52,7 @@
 职责：
 
 - 沿用 `WithClientMiddleware,WrapperAuthMiddleware` 获取登录态。
-- 建立 WebSocket 连接。
+- 接收 POST JSON 并建立 SSE 响应流。
 - 校验客户端消息类型。
 - 将 `user_id`、`conversation_id`、消息体转发给 `services/aiagent`。
 - 将 Agent 返回的 assistant/tool/confirmation/error 事件推送给客户端。
@@ -73,8 +73,8 @@
 
 ```proto
 service AiAgent {
-  rpc Chat(ChatRequest) returns (ChatResponse);
-  rpc ConfirmAction(ConfirmActionRequest) returns (ConfirmActionResponse);
+  rpc Chat(ChatRequest) returns (stream AgentEvent);
+  rpc ConfirmAction(ConfirmActionRequest) returns (stream AgentEvent);
 }
 ```
 
@@ -218,13 +218,17 @@ CREATE TABLE `ai_confirmations` (
   `arguments` json NOT NULL COMMENT '待执行参数',
   `summary` varchar(512) NOT NULL COMMENT '确认摘要',
   `status` varchar(16) NOT NULL COMMENT 'pending/approved/rejected/expired/executed/failed',
+  `run_id` varchar(64) NOT NULL DEFAULT '' COMMENT 'Agent run ID',
+  `checkpoint_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino checkpoint ID',
+  `interrupt_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Eino interrupt ID',
   `expires_at` datetime NOT NULL COMMENT '过期时间',
   `executed_at` datetime DEFAULT NULL COMMENT '执行时间',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`),
-  KEY `idx_conversation_created` (`conversation_id`, `created_at`)
+  KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_checkpoint_interrupt` (`checkpoint_id`, `interrupt_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
@@ -316,8 +320,8 @@ message ConfirmActionResponse {
 }
 
 service AiAgent {
-  rpc Chat(ChatRequest) returns (ChatResponse);
-  rpc ConfirmAction(ConfirmActionRequest) returns (ConfirmActionResponse);
+  rpc Chat(ChatRequest) returns (stream AgentEvent);
+  rpc ConfirmAction(ConfirmActionRequest) returns (stream AgentEvent);
 }
 ```
 
@@ -417,12 +421,14 @@ type ModelFactory interface {
 
 - [x] **Step 5: 实现 Agent Runner**
 
-Agent Runner 输入当前用户消息、会话历史和工具集合，输出 `AgentEvent` 列表。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。ADK assistant/tool 中间事件会转换为领域事件并写入 `ai_messages`。对外只暴露稳定接口：
+Agent Runner 输入当前用户消息、会话历史和工具集合，主链路输出 `AgentEvent` channel。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。主链路使用 `adk.WithCallbacks` 捕获模型和工具生命周期：模型 callback 只绑定 `supervisor_agent`，自然语言流式输出转为 `assistant_delta` 并在 bridge 中累计；ADK iterator 结束后统一生成一条完整 `assistant_message` 用于持久化，已有 delta 时不重复下发。工具 callback 全局捕获，工具开始转为按 `tool + arguments` 去重的 `tool_progress`，工具完成转为按 `tool + status + data/content` 去重的 `tool_result`。ADK iterator 继续负责 interrupt、最终错误和生命周期收尾。`Run` / `Resume` 只作为收集型兼容适配器，不再作为流式主路径。
 
 ```go
 type Runner interface {
 	Run(ctx context.Context, req RunRequest) ([]domain.AgentEvent, error)
+	Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEvent, error)
 	Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error)
+	ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error)
 }
 ```
 
@@ -794,20 +800,24 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 
 **Files:**
 
+- Create/Modify: `services/aiagent/internal/eino/approval.go`
+- Create/Modify: `services/aiagent/internal/eino/checkpoint_store.go`
 - Modify: `services/aiagent/internal/tools/cart_tools.go`
 - Modify: `services/aiagent/internal/tools/order_tools.go`
 - Modify: `services/aiagent/internal/logic/confirmactionlogic.go`
 - Test: `services/aiagent/internal/logic/confirmactionlogic_test.go`
 
-- [x] **Step 1: 首次请求只创建确认**
+- [x] **Step 1: 首次请求创建确认并中断**
 
-这些工具首次规划后只返回 `confirmation_required`，不调用业务 RPC：
+这些工具首次规划后由 ChatModelAgent middleware 创建 `ai_confirmations`，再调用官方 `tool.StatefulInterrupt` 返回 `confirmation_required`，不调用业务 RPC。响应必须包含 `confirmation_id`，并在服务端绑定 `checkpoint_id/interrupt_id`：
 
 - `cart_delete`
 - `order_create`
 - `order_cancel`
 
-- [x] **Step 2: 用户确认后通过 Execution Guard 执行业务 RPC**
+- [x] **Step 2: 用户确认后通过 Eino Resume 与 Execution Guard 执行业务 RPC**
+
+客户端只发送结构化 `confirm_action`，携带 `confirmation_id` 和 `approved`。`ConfirmAction` 通过 Confirmation Manager CAS 领取确认记录后，`approved=true` 才使用确认记录里的 `checkpoint_id/interrupt_id` 调用 `runner.ResumeWithParams`，恢复原工具 endpoint 并执行业务 RPC；`approved=false` 是确定性取消终态，后端直接返回 rejected `tool_result` 和最终 `assistant_message`，不恢复 checkpoint、不调用 LLM、不调用业务 RPC。
 
 RPC 对应：
 
@@ -845,7 +855,7 @@ go test ./services/aiagent/internal/logic -run TestConfirmAction -count=1
 
 Expected: 未确认不执行、确认后执行、过期和重复确认被拒绝。
 
-## 8. WebSocket API 接入
+## 8. SSE API 接入
 
 ### Task 12: 新增 `apis/ai`
 
@@ -869,7 +879,7 @@ syntax = "v1"
 )
 service ai-api {
   @handler ChatHandler
-  get /chat
+  post /chat
 }
 ```
 
@@ -883,7 +893,7 @@ goctl api go -api apis/ai/ai.api -dir apis/ai
 
 Expected: 生成 handler、logic、svc、types 目录。
 
-- [x] **Step 3: 实现 WebSocket 升级和消息协议**
+- [x] **Step 3: 实现 SSE 消息协议**
 
 客户端输入类型：
 
@@ -897,7 +907,7 @@ Expected: 生成 handler、logic、svc、types 目录。
 - `confirmation_required`
 - `error`
 
-`ChatLogic` 负责会话准备、Intent Planner、Eino Runner 或受控 Tool 分发、事件持久化；API 网关只负责鉴权、协议转换与逐条推送。
+`ChatLogic` 负责会话准备、Eino Runner 或受控 Tool 分发、事件持久化；API 网关只负责鉴权、协议转换与 SSE flush。
 
 - [x] **Step 4: 强制从登录态读取用户 ID**
 
@@ -913,7 +923,7 @@ go test ./apis/ai/...
 
 Expected: API 包全部可编译。
 
-### Task 13: WebSocket 集成测试
+### Task 13: SSE 集成测试
 
 **Files:**
 
@@ -921,14 +931,14 @@ Expected: API 包全部可编译。
 
 - [ ] **Step 1: 测试未登录拒绝**
 
-无认证上下文连接 `/douyin/ai/chat`，期望返回 401 或连接关闭。
+无认证上下文请求 `/douyin/ai/chat`，期望返回 401。
 
 - [ ] **Step 2: 测试普通聊天**
 
 发送：
 
 ```json
-{"type":"user_message","client_message_id":"client_msg_0190f1f0e8a57000","content":"你好","metadata":{"source":"web"}}
+{"type":"user_message","conversation_id":"conv_001","client_message_id":"client_msg_0190f1f0e8a57000","content":"你好","metadata":{"source":"web"}}
 ```
 
 期望收到 `assistant_message`，`done=true`。
@@ -944,7 +954,7 @@ Expected: API 包全部可编译。
 Run:
 
 ```bash
-go test ./apis/ai/internal/logic -run TestChatWebSocket -count=1
+go test ./apis/ai/internal/logic -run TestChatSSE -count=1
 ```
 
 Expected: 鉴权、聊天、确认请求流程通过。
@@ -1014,7 +1024,7 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 - Create: `test/ai-customer-service-e2e.md`
 
-- [ ] **Step 1: WebSocket 连续对话**
+- [ ] **Step 1: SSE 连续对话**
 
 用户可创建会话、继续传入 `conversation_id`，上下文不丢失。
 
@@ -1218,27 +1228,27 @@ Expected: 摘要窗口、消息去重、记忆生命周期、聊天来源画像 
 - Modify: `construct/depend/sql/init.sql`
 - Modify: `construct/depend/sql/migrations/20260722_ai_context_engineering.sql`
 - Create/Modify: `services/aiagent/internal/contextmanager/task_state.go`
-- Create/Modify: `services/aiagent/internal/contextmanager/checkpoint_store.go`
+- Create/Modify: `services/aiagent/internal/eino/checkpoint_store.go`
 - Modify: `services/aiagent/internal/tools/high_risk_tools.go`
 - Modify: `services/aiagent/internal/logic/confirmactionlogic.go`
 - Test: `services/aiagent/internal/contextmanager/task_state_test.go`
 - Test: `services/aiagent/internal/logic/confirmactionlogic_test.go`
 
-- [ ] **Step 1: 先写状态和恢复测试**
+- [x] **Step 1: 先写状态和恢复测试**
 
-覆盖 running、waiting_confirmation、completed、failed、expired 状态；TaskState CAS 冲突；Redis 丢失后从 MySQL 恢复；跨用户和跨会话恢复拒绝；重复 checkpoint 恢复不重复调用写 RPC。
+覆盖 confirmation resume target 绑定、Redis 丢失后从 MySQL checkpoint blob 恢复、批准 resume 执行业务 RPC、拒绝确认由后端直接收口且不进入完成标记。跨用户、跨会话、过期和重复确认继续由 Confirmation Manager 的 CAS 状态机拒绝。
 
-- [ ] **Step 2: 新增或保留 AgentRun model**
+- [x] **Step 2: 新增 AgentRun model**
 
-按设计文档建立 `ai_agent_runs`，使用唯一 `idempotency_key` 防止重复运行。生成 model 后在自定义 model 文件增加带 user ID、conversation ID 和旧状态条件的状态更新方法。
+按设计文档建立 `ai_agent_runs`，保存 `run_id`、`conversation_id`、`user_id`、`status`、`checkpoint_id`、`checkpoint_blob`、`task_state`、`idempotency_key`、`expires_at`。
 
-- [ ] **Step 3: 接入高风险确认状态**
+- [x] **Step 3: 接入高风险确认状态**
 
-创建 confirmation 时把 tool name、脱敏参数和 confirmation ID 写入 TaskState，并把 Run 标记为 waiting_confirmation。ConfirmAction 恢复时重新校验用户、会话、确认状态、参数、过期时间和幂等键，然后仍通过原有 Confirmation Manager 与 Execution Guard 执行。
+创建 confirmation 时保存 tool name、脱敏参数、`run_id/checkpoint_id`；Eino 返回 root-cause interrupt 后回写 `interrupt_id`。ConfirmAction 恢复时重新校验用户、会话、确认状态、过期时间，并用 `confirmation_id -> checkpoint_id/interrupt_id` 恢复。
 
-- [ ] **Step 4: 实现 Redis 热 checkpoint**
+- [x] **Step 4: 实现 Redis 热 checkpoint**
 
-Redis 只缓存可从 MySQL 重建的状态；Redis 故障或丢失时恢复语义不变。
+Redis 热缓存 checkpoint blob，MySQL `ai_agent_runs.checkpoint_blob` 作为持久回退；Redis 故障或丢失时恢复语义不变。
 
 - [ ] **Step 5: 运行测试**
 
@@ -1290,7 +1300,7 @@ Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部
 4. Execution Guard 与查询工具：Task 7-8。
 5. 低风险写操作与审计：Task 9、Task 14。
 6. 确认流程与高风险工具：Task 10-11。
-7. WebSocket API：Task 12-13。
+7. SSE API：Task 12-13。
 8. 限流、超时、端到端验收：Task 15-16。
 9. 工具结果引用和按需读取：Task 17。
 10. 轻量 Context Manager 正式接入：Task 18。
@@ -1313,7 +1323,7 @@ go test ./...
 ## 13. 风险与处理策略
 
 - 模型结果不稳定：首期保留规则 Planner 兜底，明确意图不依赖模型。
-- WebSocket 流式与 RPC 非流式不匹配：首期 RPC 返回事件数组，API 网关逐条推送；后续再升级为服务端流式 RPC。
+- SSE 流式与 RPC 必须保持一致：`Chat` 和 `ConfirmAction` 使用同名 server-streaming RPC，API 网关收到事件后立即 flush。
 - 用户越权：所有工具执行前统一覆盖 `user_id`，工具层不信任模型和客户端参数。
 - Eino 抽象泄漏到业务层：只允许 `internal/eino` 和 `internal/tools` 直接依赖 Eino，业务 RPC 转换和确认审计保持本地接口稳定。
 - 确认重复执行：确认状态更新与执行需要在事务或 Redis 锁保护下完成。
@@ -1327,7 +1337,7 @@ go test ./...
 
 ## 14. 完成标准
 
-- `apis/ai` 可通过 WebSocket 完成连续对话。
+- `apis/ai` 可通过 SSE 完成连续对话。
 - `services/aiagent` 可基于 Eino 编排模型、工具调用、确认和审计。
 - 查询、推荐、低风险操作、高风险确认执行均满足 PRD。
 - 过期或重复确认不能执行。

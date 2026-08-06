@@ -61,6 +61,7 @@ type Model interface {
 	ResolvePending(ctx context.Context, id string, userID uint64, nextStatus string, now time.Time) (bool, error)
 	ExpirePending(ctx context.Context, id string, userID uint64, now time.Time) (bool, error)
 	CompleteApproved(ctx context.Context, id string, userID uint64, nextStatus string, executedAt time.Time) (bool, error)
+	BindResumeTarget(ctx context.Context, id string, userID uint64, runID string, checkpointID string, interruptID string) (bool, error)
 }
 
 type MetadataRegistry interface {
@@ -73,6 +74,8 @@ type CreateRequest struct {
 	ToolName       string
 	Arguments      map[string]any
 	Summary        string
+	RunID          string
+	CheckpointID   string
 }
 
 type DecisionRequest struct {
@@ -86,6 +89,15 @@ type CompletionRequest struct {
 	UserID         uint64
 	ConversationID string
 	ConfirmationID string
+}
+
+type ResumeTargetRequest struct {
+	UserID         uint64
+	ConversationID string
+	ConfirmationID string
+	RunID          string
+	CheckpointID   string
+	InterruptID    string
 }
 
 type Manager struct {
@@ -180,6 +192,8 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*domain.Confir
 		Arguments:      string(argumentsJSON),
 		Summary:        summary,
 		Status:         StatusPending,
+		RunId:          strings.TrimSpace(req.RunID),
+		CheckpointId:   strings.TrimSpace(req.CheckpointID),
 		ExpiresAt:      now.Add(m.confirmationTTL),
 	}
 	if strings.TrimSpace(row.Id) == "" {
@@ -197,7 +211,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*domain.Confir
 	return confirmationFromRow(row)
 }
 
-// Decide 用户决策确认请求
+// Decide 用户决策确认请求，更新数据库
 func (m *Manager) Decide(ctx context.Context, req DecisionRequest) (*domain.Confirmation, error) {
 	if req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || strings.TrimSpace(req.ConfirmationID) == "" {
 		return nil, ErrInvalidConfirmation
@@ -252,9 +266,36 @@ func (m *Manager) MarkFailed(ctx context.Context, req CompletionRequest) (*domai
 	return m.complete(ctx, req, StatusFailed)
 }
 
-// complete 完成确认请求的处理，更新状态为执行成功或失败
+func (m *Manager) BindResumeTarget(ctx context.Context, req ResumeTargetRequest) (*domain.Confirmation, error) {
+	if req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || strings.TrimSpace(req.ConfirmationID) == "" ||
+		strings.TrimSpace(req.CheckpointID) == "" || strings.TrimSpace(req.InterruptID) == "" {
+		return nil, ErrInvalidConfirmation
+	}
+	return m.withLock(ctx, req.ConfirmationID, func() (*domain.Confirmation, error) {
+		row, err := m.loadOwned(ctx, req.UserID, req.ConversationID, req.ConfirmationID)
+		if err != nil {
+			return nil, err
+		}
+		if row.Status != StatusPending {
+			return nil, confirmationStateError(row.Status)
+		}
+		updated, err := m.model.BindResumeTarget(ctx, row.Id, req.UserID, strings.TrimSpace(req.RunID), strings.TrimSpace(req.CheckpointID), strings.TrimSpace(req.InterruptID))
+		if err != nil {
+			return nil, err
+		}
+		if !updated {
+			return nil, ErrConfirmationAlreadyProcessed
+		}
+		row.RunId = strings.TrimSpace(req.RunID)
+		row.CheckpointId = strings.TrimSpace(req.CheckpointID)
+		row.InterruptId = strings.TrimSpace(req.InterruptID)
+		return confirmationFromRow(row)
+	})
+}
+
+// complete 完成确认请求的处理，更新状态为执行成功或失败（更新数据库）
 func (m *Manager) complete(ctx context.Context, req CompletionRequest, nextStatus string) (*domain.Confirmation, error) {
-	if req.UserID == 0 || strings.TrimSpace(req.ConversationID) == "" || strings.TrimSpace(req.ConfirmationID) == "" {
+	if req.UserID == 0 || req.ConversationID == "" || req.ConfirmationID == "" {
 		return nil, ErrInvalidConfirmation
 	}
 	return m.withLock(ctx, req.ConfirmationID, func() (*domain.Confirmation, error) {
@@ -336,6 +377,9 @@ func confirmationFromRow(row *aiconfirmations.AiConfirmations) (*domain.Confirma
 		Arguments:      arguments,
 		Summary:        row.Summary,
 		Status:         row.Status,
+		RunID:          row.RunId,
+		CheckpointID:   row.CheckpointId,
+		InterruptID:    row.InterruptId,
 		ExpiresAt:      row.ExpiresAt,
 	}
 	if row.ExecutedAt.Valid {
