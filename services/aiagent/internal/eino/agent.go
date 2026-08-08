@@ -393,8 +393,6 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				return
 			}
 			if ok {
-				hasInterrupt = true
-				hasAny = true
 				// 如果req传了回调函数，则执行这个回调函数
 				if req.OnEvent != nil {
 					if err := req.OnEvent(ctx, domainEvent); err != nil {
