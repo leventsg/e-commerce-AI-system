@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
@@ -16,7 +15,7 @@ import (
 var openAIToolNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 func TestRegistryRegistersDefaultTools(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 
 	metadata := registry.AllMetadata()
 	if len(metadata) != 20 {
@@ -50,7 +49,7 @@ func TestRegistryRegistersDefaultTools(t *testing.T) {
 }
 
 func TestRegistryRiskAndConfirmationMetadata(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 
 	for _, name := range []string{domain.ToolCartDelete, domain.ToolOrderCreate, domain.ToolOrderCancel} {
 		metadata, err := registry.Metadata(name)
@@ -102,15 +101,16 @@ func TestRegistryRiskAndConfirmationMetadata(t *testing.T) {
 }
 
 func TestRegistryTimeoutDefaultsAndOverrides(t *testing.T) {
-	defaultRegistry := NewRegistry(config.ToolTimeoutConfig{})
+	defaultRegistry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 	assertTimeout(t, defaultRegistry, domain.ToolProductSearch, 3)
 	assertTimeout(t, defaultRegistry, domain.ToolCartAdd, 5)
 	assertTimeout(t, defaultRegistry, domain.ToolOrderCancel, 5)
 
-	customRegistry := NewRegistry(config.ToolTimeoutConfig{
+	customTimeout := config.ToolTimeoutConfig{
 		QuerySeconds: 11,
 		WriteSeconds: 17,
-	})
+	}
+	customRegistry := newTestRegistry(DefaultToolClients{}, customTimeout)
 	assertTimeout(t, customRegistry, domain.ToolProductSearch, 11)
 	assertTimeout(t, customRegistry, domain.ToolCartAdd, 17)
 	assertTimeout(t, customRegistry, domain.ToolOrderCancel, 17)
@@ -118,7 +118,7 @@ func TestRegistryTimeoutDefaultsAndOverrides(t *testing.T) {
 
 func TestRegistryToolInfoSchemaDoesNotExposeUserID(t *testing.T) {
 	ctx := context.Background()
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 
 	infos, err := registry.ToolInfos(ctx)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestRegistryToolInfoSchemaDoesNotExposeUserID(t *testing.T) {
 
 func TestRegistryReturnsToolsAndInfosByNamesInRequestedOrder(t *testing.T) {
 	ctx := context.Background()
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 
 	tools, err := registry.ToolsByNames(domain.ToolOrderGet, domain.ToolProductSearch)
 	if err != nil {
@@ -178,7 +178,7 @@ func TestRegistryReturnsToolsAndInfosByNamesInRequestedOrder(t *testing.T) {
 }
 
 func TestRegistryUnknownToolReturnsNotFound(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := NewRegistry()
 
 	if _, err := registry.Metadata("missing.tool"); !errors.Is(err, ErrToolNotFound) {
 		t.Fatalf("Metadata missing error = %v, want ErrToolNotFound", err)
@@ -188,23 +188,19 @@ func TestRegistryUnknownToolReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestRegistryPlaceholderToolReturnsNotImplemented(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	tool, err := registry.Tool(domain.ToolProductSearch)
-	if err != nil {
-		t.Fatalf("Tool returned error: %v", err)
+func TestRegistryWithoutCatalogHasNoPlaceholderTools(t *testing.T) {
+	registry := NewRegistry()
+	if _, err := registry.Tool(domain.ToolProductSearch); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("Tool error = %v, want ErrToolNotFound", err)
 	}
-
-	var invokable einotool.InvokableTool = tool
-	_, err = invokable.InvokableRun(context.Background(), `{}`)
-	if !errors.Is(err, ErrToolHandlerNotImplemented) {
-		t.Fatalf("InvokableRun error = %v, want ErrToolHandlerNotImplemented", err)
+	if len(registry.AllMetadata()) != 0 {
+		t.Fatalf("empty registry metadata = %#v, want none", registry.AllMetadata())
 	}
 }
 
-func TestRegisteredQueryToolBecomesExecutableAfterBindingHandlers(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	NewQueryTools(NewExecutor(registry), QueryToolClients{Product: &fakeProductQueryRPC{}})
+func TestRegisteredToolExecutesThroughUnifiedAdapter(t *testing.T) {
+	registry := newTestRegistry(DefaultToolClients{Product: &fakeProductQueryRPC{}}, config.ToolTimeoutConfig{})
+	NewExecutor(registry)
 	tool, err := registry.Tool(domain.ToolProductSearch)
 	if err != nil {
 		t.Fatalf("Tool returned error: %v", err)
@@ -217,7 +213,7 @@ func TestRegisteredQueryToolBecomesExecutableAfterBindingHandlers(t *testing.T) 
 }
 
 func TestRegistryHighRiskOrderAndCheckoutSchemasMatchRPCContracts(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 
 	checkoutTool, err := registry.Tool(domain.ToolCheckoutPrepare)
 	if err != nil {

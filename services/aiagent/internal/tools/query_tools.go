@@ -8,10 +8,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-
-	einotool "github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/schema"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
 
 // 默认分页参数
@@ -22,12 +18,9 @@ const (
 )
 
 // 错误信息
-var (
-	ErrInvalidToolArguments = errors.New("invalid ai tool arguments")
-	ErrQueryRPCUnavailable  = errors.New("query rpc unavailable")
-	ErrToolExecutionContext = errors.New("trusted tool execution context missing")
-	ErrQueryToolExecution   = errors.New("query tool execution failed")
-)
+var ErrInvalidToolArguments = errors.New("invalid ai tool arguments")
+var ErrQueryRPCUnavailable = errors.New("query rpc unavailable")
+var ErrToolExecutionContext = errors.New("trusted tool execution context missing")
 
 type ToolExecutionContext struct {
 	UserID         uint64
@@ -47,90 +40,6 @@ func WithToolExecutionContext(ctx context.Context, execution ToolExecutionContex
 func ToolExecutionFromContext(ctx context.Context) (ToolExecutionContext, bool) {
 	execution, ok := ctx.Value(toolExecutionContextKey{}).(ToolExecutionContext)
 	return execution, ok
-}
-
-// 包含所有查询工具的 RPC 客户端接口
-type QueryToolClients struct {
-	Product   ProductQueryRPC
-	Inventory InventoryQueryRPC
-	Order     OrderQueryRPC
-	Cart      CartQueryRPC
-	Coupon    CouponQueryRPC
-	Checkout  CheckoutQueryRPC
-}
-
-type QueryTools struct {
-	executor *Executor
-	handlers map[string]HandlerFunc
-}
-
-func NewQueryTools(executor *Executor, clients QueryToolClients) *QueryTools {
-	handlers := make(map[string]HandlerFunc)
-	mergeHandlers(handlers, productQueryHandlers(clients.Product))
-	mergeHandlers(handlers, inventoryQueryHandlers(clients.Inventory))
-	mergeHandlers(handlers, orderQueryHandlers(clients.Order))
-	mergeHandlers(handlers, cartQueryHandlers(clients.Cart))
-	mergeHandlers(handlers, couponQueryHandlers(clients.Coupon))
-	mergeHandlers(handlers, checkoutQueryHandlers(clients.Checkout))
-	queryTools := &QueryTools{executor: executor, handlers: handlers}
-	queryTools.bindEinoTools()
-	return queryTools
-}
-
-func (q *QueryTools) Execute(ctx context.Context, req ExecuteRequest) domain.AgentEvent {
-	return q.executor.Execute(ctx, req, q.handlers[req.ToolName])
-}
-
-func (q *QueryTools) Handler(name string) (HandlerFunc, bool) {
-	handler, ok := q.handlers[name]
-	return handler, ok
-}
-
-// 将查询工具绑定到 eino 标准工具接口
-func (q *QueryTools) bindEinoTools() {
-	if q.executor == nil || q.executor.registry == nil {
-		return
-	}
-	for name := range q.handlers {
-		base, err := q.executor.registry.Tool(name)
-		if err != nil {
-			continue
-		}
-		q.executor.registry.tools[name] = &queryInvokableTool{name: name, base: base, queryTools: q}
-	}
-}
-
-// queryInvokableTool 是基于InvokableTool封装的查询业务工具
-type queryInvokableTool struct {
-	name       string
-	base       einotool.InvokableTool
-	queryTools *QueryTools
-}
-
-// 提供工具的元信息，llm 使用这些信息决定是否以及如何调用该工具
-func (t *queryInvokableTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return t.base.Info(ctx)
-}
-
-func (t *queryInvokableTool) InvokableRun(ctx context.Context, arguments string, _ ...einotool.Option) (string, error) {
-	// 获取工具执行上下文
-	execution, ok := ToolExecutionFromContext(ctx)
-	// 校验userid
-	if !ok || execution.UserID == 0 {
-		return "", ErrToolExecutionContext
-	}
-	args := make(map[string]any)
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		parseErr := fmt.Errorf("%w: invalid JSON arguments: %v", ErrInvalidToolArguments, err)
-		event := t.queryTools.executor.Reject(ctx, executeRequestFromContext(execution, t.name, nil), parseErr)
-		return event.DataJSON, fmt.Errorf("%w: %s", ErrQueryToolExecution, event.Content)
-	}
-	// 工具执行
-	event := t.queryTools.Execute(ctx, executeRequestFromContext(execution, t.name, args))
-	if event.Status != toolStatusSuccess {
-		return event.DataJSON, fmt.Errorf("%w: %s", ErrQueryToolExecution, event.Content)
-	}
-	return event.DataJSON, nil
 }
 
 func executeRequestFromContext(execution ToolExecutionContext, toolName string, arguments map[string]any) ExecuteRequest {

@@ -19,9 +19,9 @@ import (
 )
 
 type agentEventCallbackBridge struct {
-	req           RunRequest
-	highRiskTools *aitools.HighRiskTools
-	emit          func(context.Context, domain.AgentEvent) error
+	req             RunRequest
+	approvalManager *aitools.ApprovalManager
+	emit            func(context.Context, domain.AgentEvent) error
 
 	mu                        sync.Mutex
 	businessExecuted          bool
@@ -35,10 +35,10 @@ type agentEventCallbackBridge struct {
 	activeToolMessageIDs      map[string][]string
 }
 
-func newAgentEventCallbackBridge(req RunRequest, highRiskTools *aitools.HighRiskTools, emit func(context.Context, domain.AgentEvent) error) *agentEventCallbackBridge {
+func newAgentEventCallbackBridge(req RunRequest, approvalManager *aitools.ApprovalManager, emit func(context.Context, domain.AgentEvent) error) *agentEventCallbackBridge {
 	return &agentEventCallbackBridge{
 		req:                  req,
-		highRiskTools:        highRiskTools,
+		approvalManager:      approvalManager,
 		emit:                 emit,
 		toolProgressKeys:     make(map[string]bool),
 		toolResultKeys:       make(map[string]bool),
@@ -194,7 +194,7 @@ func (b *agentEventCallbackBridge) onToolEnd(ctx context.Context, info *einocall
 		DataJSON:       ensureJSONObject(response),
 		Done:           true,
 	}
-	if isBusinessWriteTool(toolName) || (b.highRiskTools != nil && b.highRiskTools.RequiresConfirmation(toolName)) {
+	if isBusinessWriteTool(toolName) || (b.approvalManager != nil && b.approvalManager.RequiresConfirmation(toolName)) {
 		event.BusinessExecuted = true
 	}
 	if event.BusinessExecuted {

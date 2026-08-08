@@ -29,8 +29,8 @@ func TestHighRiskEinoToolInvokableRunExecutesAfterApprovalWithoutCreatingConfirm
 		listResp:   &cartsclient.CartItemListResponse{Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 11, Quantity: 2}}},
 		deleteResp: &cartsclient.EmptyCartResponse{},
 	}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	NewHighRiskTools(NewExecutor(registry), creator, HighRiskToolClients{Cart: cartRPC})
+	registry := newTestRegistry(DefaultToolClients{CartHighRisk: cartRPC}, config.ToolTimeoutConfig{})
+	NewExecutor(registry)
 	tool, err := registry.Tool(domain.ToolCartDelete)
 	if err != nil {
 		t.Fatalf("cart_delete tool: %v", err)
@@ -64,9 +64,9 @@ func TestHighRiskCartDeleteSummaryUsesProductName(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{detailResp: &productcatalogservice.GetProductResp{
 		Product: &productcatalogservice.Product{Id: 11, Name: "无线蓝牙耳机"},
 	}}
-	highRisk := NewHighRiskTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), creator, HighRiskToolClients{Cart: cartRPC, Product: productRPC})
+	approval := newTestApprovalManager(DefaultToolClients{CartHighRisk: cartRPC, Product: productRPC}, creator)
 
-	event := highRisk.RequestConfirmation(context.Background(), ExecuteRequest{
+	event := approval.RequestConfirmation(context.Background(), ExecuteRequest{
 		UserID:         42,
 		ConversationID: "conv-1",
 		ToolName:       domain.ToolCartDelete,
@@ -98,10 +98,9 @@ func TestHighRiskOrderCreateSummaryUsesOwnedCheckoutDetails(t *testing.T) {
 	couponRPC := &fakeCouponCalculateRPC{resp: &couponsclient.CalculateCouponResp{
 		IsUsable: true, FinalAmount: 7600, DiscountAmount: 1200,
 	}}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	highRisk := NewHighRiskTools(NewExecutor(registry), creator, HighRiskToolClients{Checkout: checkoutRPC, Coupon: couponRPC})
+	approval := newTestApprovalManager(DefaultToolClients{CheckoutQuery: checkoutRPC, CouponCalculate: couponRPC}, creator)
 
-	event := highRisk.RequestConfirmation(context.Background(), ExecuteRequest{
+	event := approval.RequestConfirmation(context.Background(), ExecuteRequest{
 		UserID: 42, ConversationID: "conv-1", ToolName: domain.ToolOrderCreate,
 		Arguments: map[string]any{
 			"pre_order_id": "pre-1", "address_id": 7, "payment_method": 1,
@@ -130,11 +129,11 @@ func TestHighRiskOrderCreateSummaryUsesOwnedCheckoutDetails(t *testing.T) {
 
 func TestHighRiskOrderCreateDoesNotCreateConfirmationForInvalidCheckout(t *testing.T) {
 	creator := &fakeConfirmationCreator{}
-	highRisk := NewHighRiskTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), creator, HighRiskToolClients{
-		Checkout: &fakeHighRiskCheckoutRPC{err: errors.New("not owned")},
-	})
+	approval := newTestApprovalManager(DefaultToolClients{
+		CheckoutQuery: &fakeHighRiskCheckoutRPC{err: errors.New("not owned")},
+	}, creator)
 
-	event := highRisk.RequestConfirmation(context.Background(), ExecuteRequest{
+	event := approval.RequestConfirmation(context.Background(), ExecuteRequest{
 		UserID: 42, ConversationID: "conv-1", ToolName: domain.ToolOrderCreate,
 		Arguments: map[string]any{"pre_order_id": "pre-1", "address_id": 7, "payment_method": 1},
 	})
@@ -146,13 +145,13 @@ func TestHighRiskOrderCreateDoesNotCreateConfirmationForInvalidCheckout(t *testi
 
 func TestHighRiskOrderCreateRejectsCheckoutOwnedByAnotherUser(t *testing.T) {
 	creator := &fakeConfirmationCreator{}
-	highRisk := NewHighRiskTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), creator, HighRiskToolClients{
-		Checkout: &fakeHighRiskCheckoutRPC{resp: &checkoutservice.CheckoutDetailResp{Data: &checkout.CheckoutOrder{
+	approval := newTestApprovalManager(DefaultToolClients{
+		CheckoutQuery: &fakeHighRiskCheckoutRPC{resp: &checkoutservice.CheckoutDetailResp{Data: &checkout.CheckoutOrder{
 			PreOrderId: "pre-1", UserId: 99, FinalAmount: 100,
 		}}},
-	})
+	}, creator)
 
-	event := highRisk.RequestConfirmation(context.Background(), ExecuteRequest{
+	event := approval.RequestConfirmation(context.Background(), ExecuteRequest{
 		UserID: 42, ConversationID: "conv-1", ToolName: domain.ToolOrderCreate,
 		Arguments: map[string]any{"pre_order_id": "pre-1", "address_id": 7, "payment_method": 1},
 	})
@@ -167,9 +166,9 @@ func TestHighRiskConfirmationCreationRecordsToolCallWithoutWriteAuditMetadata(t 
 	creator := &fakeConfirmationCreator{confirmation: &domain.Confirmation{
 		ID: "confirm-1", ExpiresAt: time.Unix(12345, 0),
 	}}
-	highRisk := NewHighRiskTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{}), WithToolCallRecorder(recorder)), creator, HighRiskToolClients{})
+	approval := newTestApprovalManager(DefaultToolClients{}, creator, WithToolCallRecorder(recorder))
 
-	event := highRisk.RequestConfirmation(context.Background(), ExecuteRequest{
+	event := approval.RequestConfirmation(context.Background(), ExecuteRequest{
 		UserID: 42, ConversationID: "conv-1", ToolName: domain.ToolOrderCancel,
 		Arguments: map[string]any{"order_id": "order-1"},
 	})
@@ -191,9 +190,9 @@ func TestHighRiskConfirmedHandlersExecuteTrustedRPCRequests(t *testing.T) {
 		createResp: &orderservice.OrderDetailResponse{Order: &orderservice.Order{OrderId: "order-1", PreOrderId: "pre-1", PayableAmount: 8800}},
 		cancelResp: &orderservice.EmptyRes{},
 	}
-	highRisk := NewHighRiskTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), nil, HighRiskToolClients{Cart: cartRPC, Order: orderRPC})
+	harness := newTestToolHarness(DefaultToolClients{CartHighRisk: cartRPC, OrderHighRisk: orderRPC})
 
-	deleteEvent := highRisk.ExecuteConfirmed(context.Background(), ExecuteRequest{
+	deleteEvent := harness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCartDelete, Arguments: map[string]any{"cart_item_id": 8, "user_id": 999},
 	})
 	assertWriteToolSuccess(t, deleteEvent, domain.ToolCartDelete)
@@ -201,7 +200,7 @@ func TestHighRiskConfirmedHandlersExecuteTrustedRPCRequests(t *testing.T) {
 		t.Fatalf("DeleteCartItem request = %#v", cartRPC.deleteReq)
 	}
 
-	createEvent := highRisk.ExecuteConfirmed(context.Background(), ExecuteRequest{
+	createEvent := harness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolOrderCreate,
 		Arguments: map[string]any{"pre_order_id": "pre-1", "address_id": 7, "payment_method": 2, "coupon_id": "coupon-1", "user_id": 999},
 	})
@@ -210,7 +209,7 @@ func TestHighRiskConfirmedHandlersExecuteTrustedRPCRequests(t *testing.T) {
 		t.Fatalf("CreateOrder request = %#v", orderRPC.createReq)
 	}
 
-	cancelEvent := highRisk.ExecuteConfirmed(context.Background(), ExecuteRequest{
+	cancelEvent := harness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolOrderCancel,
 		Arguments: map[string]any{"order_id": "order-1", "reason": "不需要了", "user_id": 999},
 	})

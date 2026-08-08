@@ -128,8 +128,14 @@ func (s *confirmActionFakeStream) Context() context.Context {
 type confirmActionFakeConfirmationManager struct {
 	decided           *domain.Confirmation
 	decideErr         error
+	createCalls       int
 	markExecutedCalls int
 	markFailedCalls   int
+}
+
+func (m *confirmActionFakeConfirmationManager) Create(_ context.Context, _ confirmation.CreateRequest) (*domain.Confirmation, error) {
+	m.createCalls++
+	return m.decided, nil
 }
 
 func (m *confirmActionFakeConfirmationManager) Decide(_ context.Context, _ confirmation.DecisionRequest) (*domain.Confirmation, error) {

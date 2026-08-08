@@ -18,7 +18,10 @@ const (
 	toolStatusFailed  = "failed"
 )
 
-var ErrToolHandlerRequired = errors.New("ai tool handler required")
+var (
+	ErrToolHandlerRequired = errors.New("ai tool handler required")
+	ErrToolExecution       = errors.New("tool execution failed")
+)
 
 var sensitiveToolArgumentKeys = []string{"user_id", "token", "session_id", "auth"}
 
@@ -85,11 +88,14 @@ func WithToolCallRecorder(recorder ToolCallRecorder) ExecutorOption {
 	}
 }
 
-// 创建一个 Executor 实例，opts 可选参数用于用户自定义 Executor 的行为
+// 创建一个 Executor 实例，将其与工具注册表和recoder关联起来
 func NewExecutor(registry *Registry, opts ...ExecutorOption) *Executor {
 	executor := &Executor{registry: registry}
 	for _, opt := range opts {
 		opt(executor)
+	}
+	if registry != nil {
+		registry.setExecutor(executor)
 	}
 	return executor
 }
