@@ -26,6 +26,12 @@ func NewCreateCartItemLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Cr
 }
 
 func (l *CreateCartItemLogic) CreateCartItem(in *carts.CartItemRequest) (*carts.CreateCartResponse, error) {
+	// 0. 计算要增加的数量，默认 1
+	addQty := in.Quantity
+	if addQty <= 0 {
+		addQty = 1
+	}
+
 	// 1. 检查商品是否已存在于购物车
 	id, exists, err := l.svcCtx.CartsModel.CheckCartItemExists(l.ctx, in.UserId, in.ProductId)
 	if err != nil {
@@ -56,7 +62,7 @@ func (l *CreateCartItemLogic) CreateCartItem(in *carts.CartItemRequest) (*carts.
 			}, err
 		}
 
-		// 增加商品数量
+		newQty := int64(quantity) + int64(addQty)
 		err = l.svcCtx.CartsModel.Update(l.ctx, &cart.Carts{
 			Id: int64(id),
 			UserId: sql.NullInt64{
@@ -68,7 +74,7 @@ func (l *CreateCartItemLogic) CreateCartItem(in *carts.CartItemRequest) (*carts.
 				Valid: true,
 			},
 			Quantity: sql.NullInt64{
-				Int64: int64(quantity) + 1, // 增加数量
+				Int64: newQty,
 				Valid: true,
 			},
 			Checked: sql.NullInt64{
@@ -94,7 +100,8 @@ func (l *CreateCartItemLogic) CreateCartItem(in *carts.CartItemRequest) (*carts.
 		l.Logger.Infow("Cart item updated successfully",
 			logx.Field("user_id", in.UserId),
 			logx.Field("product_id", in.ProductId),
-			logx.Field("quantity", quantity+1))
+			logx.Field("added_quantity", addQty),
+			logx.Field("new_quantity", newQty))
 
 		return &carts.CreateCartResponse{
 			StatusCode: code.Success,
@@ -114,7 +121,7 @@ func (l *CreateCartItemLogic) CreateCartItem(in *carts.CartItemRequest) (*carts.
 			Valid: true,
 		},
 		Quantity: sql.NullInt64{
-			Int64: int64(in.Quantity) + 1, // 初始数量为 1
+			Int64: int64(addQty),
 			Valid: true,
 		},
 		Checked: sql.NullInt64{

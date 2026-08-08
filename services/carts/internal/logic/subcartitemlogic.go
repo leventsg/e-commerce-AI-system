@@ -3,6 +3,8 @@ package logic
 import (
 	"context"
 	"database/sql"
+	"fmt"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/cart"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/carts"
@@ -26,6 +28,12 @@ func NewSubCartItemLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SubCa
 }
 
 func (l *SubCartItemLogic) SubCartItem(in *carts.CartItemRequest) (*carts.SubCartResponse, error) {
+	// 0. 计算要减少的数量，默认 1
+	subQty := in.Quantity
+	if subQty <= 0 {
+		subQty = 1
+	}
+
 	// 1. 检查购物车中是否已有该商品
 	id, exists, err := l.svcCtx.CartsModel.CheckCartItemExists(l.ctx, in.UserId, in.ProductId)
 	if err != nil {
@@ -64,16 +72,16 @@ func (l *SubCartItemLogic) SubCartItem(in *carts.CartItemRequest) (*carts.SubCar
 	}
 
 	// 3. 判断数量是否可以减少
-	if quantity <= 1 {
-		// 如果商品数量为 1，则不能再减少
+	if quantity <= subQty {
 		return &carts.SubCartResponse{
 			StatusCode: code.Fail,
-			StatusMsg:  "商品数量不能小于 1",
+			StatusMsg:  fmt.Sprintf("商品数量不能少于 %d", subQty),
 			Id:         0,
 		}, nil
 	}
 
-	// 4. 减少商品数量 1
+	// 4. 减少商品数量
+	newQty := quantity - subQty
 	err = l.svcCtx.CartsModel.Update(l.ctx, &cart.Carts{
 		Id: int64(id),
 		UserId: sql.NullInt64{
@@ -85,7 +93,7 @@ func (l *SubCartItemLogic) SubCartItem(in *carts.CartItemRequest) (*carts.SubCar
 			Valid: true,
 		},
 		Quantity: sql.NullInt64{
-			Int64: int64(quantity) - 1,
+			Int64: int64(newQty),
 			Valid: true,
 		},
 		Checked: sql.NullInt64{
@@ -109,7 +117,8 @@ func (l *SubCartItemLogic) SubCartItem(in *carts.CartItemRequest) (*carts.SubCar
 	l.Logger.Infow("Cart item quantity updated successfully",
 		logx.Field("user_id", in.UserId),
 		logx.Field("product_id", in.ProductId),
-		logx.Field("quantity", quantity-1))
+		logx.Field("subtracted_quantity", subQty),
+		logx.Field("new_quantity", newQty))
 
 	return &carts.SubCartResponse{
 		StatusCode: code.Success,

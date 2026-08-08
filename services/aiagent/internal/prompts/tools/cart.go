@@ -32,13 +32,13 @@ var (
 
 	// CartAdd
 	CartAddDesc = `【职责】
-将指定商品添加到当前用户的购物车。每次调用只添加 1 件，如果商品已在购物车中则数量 +1。
+将指定商品添加到当前用户的购物车，支持指定数量。如果商品已在购物车中则累加数量。
 
 【调用时机】
 - 用户明确说"加入购物车"、"添加到购物车"、"帮我加购这个"
 - 用户说"买这个"但尚未进入结算流程 → 先加入购物车
 - 用户在浏览商品后说"放购物车"、"先加着"
-- 用户说"加 N 件"时 → 连续调用 N 次此工具
+- 用户说"加 N 件"、"要 3 个"时 → 设置 quantity=N
 
 【不要调用】
 - 用户只是想看商品详情但没有加购意图 → 用 product_detail
@@ -49,45 +49,46 @@ var (
 
 【前置条件】
 - 必须知道 product_id（来自 product_search / product_detail / product_recommend 结果）
+- quantity 默认 1，范围 1-100
 - sku_id 可选，仅当用户明确指定 SKU 时传入
 
 【执行限制】
 - 低风险写操作，无需用户确认，直接执行
-- 每次调用固定 +1，product_id 为唯一必填参数
-- 用户要求加 N 件时需连续调用 N 次，执行完毕后告知用户已添加的总数量`
+- product_id 为必填参数，quantity 为可选（默认 1）`
 
 	CartAddParameters = map[string]*schema.ParameterInfo{
 		"product_id": {Type: schema.Integer, Desc: "Product ID.", Required: true},
 		"sku_id":     {Type: schema.Integer, Desc: "SKU ID.", Required: false},
+		"quantity":   {Type: schema.Integer, Desc: "Quantity to add, default 1, max 100.", Required: false},
 	}
 
 	// CartSub
 	CartSubDesc = `【职责】
-减少当前用户购物车中某个商品的数量，每次调用只减 1 件。数量减到 1 时不可再减。
+减少当前用户购物车中某个商品的数量，支持指定减少数量。数量减到不足时不可继续减少。
 
 【调用时机】
-- 用户说"减少数量"、"少买一个"、"减一件"、"不要那么多"
+- 用户说"减少数量"、"少买 N 个"、"减 N 件"、"不要那么多"
 - 用户想将某个商品数量减少但不想完全删除
-- 用户说"减 N 件"时 → 连续调用 N 次此工具
+- 用户说"只留 1 个"时可以计算出需要减多少
 
 【不要调用】
 - 用户想完全删除某个购物车条目 → 用 cart_delete
 - 用户想增加数量 → 用 cart_add
 - 用户没有指定具体的购物车条目 → 先调用 cart_list 让用户确认
-- 当前商品数量为 1 时 → 提示用户数量已是最少，如需移除请用 cart_delete
+- 减少后会清空该条目 → 提示用户改用 cart_delete
 
 【前置条件】
 - 必须知道 cart_item_id（来自 cart_list 的结果）
-- 该条目当前数量必须 > 1，否则 RPC 会返回错误
-- 建议先调用 cart_list 确认条目存在且数量 >= 2
+- quantity 默认 1，不能超过该条目当前数量
+- 建议先调用 cart_list 确认条目存在且数量足够
 
 【执行限制】
 - 低风险写操作，无需用户确认，直接执行
-- 每次调用固定 -1，cart_item_id 为唯一必填参数
-- 用户要求减 N 件时需连续调用 N 次，执行完毕后告知用户剩余数量`
+- cart_item_id 为必填参数，quantity 为可选（默认 1）`
 
 	CartSubParameters = map[string]*schema.ParameterInfo{
 		"cart_item_id": {Type: schema.Integer, Desc: "Cart item ID.", Required: true},
+		"quantity":     {Type: schema.Integer, Desc: "Quantity to subtract, default 1.", Required: false},
 	}
 
 	// CartDelete

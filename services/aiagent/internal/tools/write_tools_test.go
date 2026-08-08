@@ -53,12 +53,12 @@ func TestUnifiedToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing
 	})
 
 	assertWriteToolSuccess(t, event, domain.ToolCartAdd)
-	if len(rpc.createReqs) != 3 {
-		t.Fatalf("CreateCartItem calls = %d, want 3", len(rpc.createReqs))
+	if len(rpc.createReqs) != 1 {
+		t.Fatalf("CreateCartItem calls = %d, want 1 (single call with quantity)", len(rpc.createReqs))
 	}
 	for _, req := range rpc.createReqs {
-		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 0 {
-			t.Fatalf("CreateCartItem request = %#v, want trusted user and one-unit adapter", req)
+		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 3 {
+			t.Fatalf("CreateCartItem request = %#v, want trusted user and quantity=3", req)
 		}
 	}
 	data := decodeEventData(t, event)
@@ -87,12 +87,12 @@ func TestUnifiedToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
 	if rpc.listReq == nil || rpc.listReq.Id != 42 {
 		t.Fatalf("CartItemList request = %#v, want trusted user 42", rpc.listReq)
 	}
-	if len(rpc.subReqs) != 2 {
-		t.Fatalf("SubCartItem calls = %d, want 2", len(rpc.subReqs))
+	if len(rpc.subReqs) != 1 {
+		t.Fatalf("SubCartItem calls = %d, want 1 (single call with quantity=2)", len(rpc.subReqs))
 	}
 	for _, req := range rpc.subReqs {
-		if req.UserId != 42 || req.ProductId != 12 {
-			t.Fatalf("SubCartItem request = %#v, want resolved owned product", req)
+		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 2 {
+			t.Fatalf("SubCartItem request = %#v, want resolved owned product with quantity=2", req)
 		}
 	}
 	data := decodeEventData(t, event)
@@ -128,8 +128,8 @@ func TestUnifiedToolsCartSubRejectsCartItemOutsideAuthenticatedUser(t *testing.T
 	}
 }
 
-func TestUnifiedToolsCartBatchPartialFailureIsReportedAsFailure(t *testing.T) {
-	rpc := &fakeCartWriteRPC{createErrAt: 2, createErr: errors.New("cart unavailable")}
+func TestUnifiedToolsCartAddFailureIsReportedAsFailure(t *testing.T) {
+	rpc := &fakeCartWriteRPC{createErrAt: 1, createErr: errors.New("cart unavailable")}
 	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
 	event := toolHarness.Execute(context.Background(), ExecuteRequest{
@@ -138,24 +138,19 @@ func TestUnifiedToolsCartBatchPartialFailureIsReportedAsFailure(t *testing.T) {
 	})
 
 	assertWriteToolFailed(t, event)
-	if len(rpc.createReqs) != 2 {
-		t.Fatalf("CreateCartItem calls = %d, want stop at second call", len(rpc.createReqs))
-	}
-	if !strings.Contains(event.DataJSON, "completed 1 of 3") {
-		t.Fatalf("partial failure data = %s, want completed count", event.DataJSON)
+	if len(rpc.createReqs) != 1 {
+		t.Fatalf("CreateCartItem calls = %d, want 1", len(rpc.createReqs))
 	}
 	if strings.Contains(event.Content, "成功") {
 		t.Fatalf("failure content claims success: %q", event.Content)
 	}
 }
 
-func TestUnifiedToolsCartSubPartialFailureIsReportedAsFailure(t *testing.T) {
+func TestUnifiedToolsCartSubFailureIsReportedAsFailure(t *testing.T) {
 	rpc := &fakeCartWriteRPC{
 		listResp: &cartsclient.CartItemListResponse{
 			Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 12, Quantity: 4}},
-		},
-		subErrAt: 2,
-		subErr:   errors.New("cart unavailable"),
+		},		subErrAt: 1,		subErr: errors.New("cart unavailable"),
 	}
 	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
@@ -165,11 +160,8 @@ func TestUnifiedToolsCartSubPartialFailureIsReportedAsFailure(t *testing.T) {
 	})
 
 	assertWriteToolFailed(t, event)
-	if len(rpc.subReqs) != 2 {
-		t.Fatalf("SubCartItem calls = %d, want stop at second call", len(rpc.subReqs))
-	}
-	if !strings.Contains(event.DataJSON, "completed 1 of 2") {
-		t.Fatalf("partial failure data = %s, want completed count", event.DataJSON)
+	if len(rpc.subReqs) != 1 {
+		t.Fatalf("SubCartItem calls = %d, want 1", len(rpc.subReqs))
 	}
 }
 
