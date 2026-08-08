@@ -105,7 +105,6 @@ func cartDeleteHandler(rpc CartHighRiskRPC) HandlerFunc {
 // cartAddHandler 添加商品到购物车工具处理函数
 func cartAddHandler(rpc CartWriteRPC) HandlerFunc {
 	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
-		// 解析参数
 		userID, err := authenticatedUserID32(req.UserID)
 		if err != nil {
 			return HandlerResult{}, err
@@ -123,31 +122,24 @@ func cartAddHandler(rpc CartWriteRPC) HandlerFunc {
 			return HandlerResult{}, err
 		}
 
-		var cartItemID int32
-		// 循环创建购物车项，每个项增加数量
-		// TODO: 可以优化为一次性创建购物车项并设置数量，而不是循环调用
-		for completed := int32(0); completed < quantity; completed++ {
-			// 调用 RPC 创建购物车项
-			resp, callErr := rpc.CreateCartItem(ctx, &cartsclient.CartItemRequest{
-				UserId:    userID,
-				ProductId: productID,
-				Quantity:  0,
-			})
-			if callErr != nil {
-				return HandlerResult{}, fmt.Errorf("cart_add completed %d of %d units: %w", completed, quantity, callErr)
-			}
-			if resp == nil {
-				return HandlerResult{}, fmt.Errorf("cart_add completed %d of %d units: nil response", completed, quantity)
-			}
-			if err := validateRPCResponse("cart_add", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
-				return HandlerResult{}, fmt.Errorf("cart_add completed %d of %d units: %w", completed, quantity, err)
-			}
-			cartItemID = resp.Id
+		resp, err := rpc.CreateCartItem(ctx, &cartsclient.CartItemRequest{
+			UserId:    userID,
+			ProductId: productID,
+			Quantity:  quantity,
+		})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("cart_add rpc: %w", err)
+		}
+		if resp == nil {
+			return HandlerResult{}, fmt.Errorf("cart_add returned nil response")
+		}
+		if err := validateRPCResponse("cart_add", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return HandlerResult{}, err
 		}
 
 		return HandlerResult{
 			Data: map[string]any{
-				"cart_item_id":   cartItemID,
+				"cart_item_id":   resp.Id,
 				"product_id":     productID,
 				"added_quantity": quantity,
 			},
@@ -197,23 +189,20 @@ func cartSubHandler(rpc CartWriteRPC) HandlerFunc {
 			return HandlerResult{}, invalidArgument("quantity", "would remove the cart item; use cart_delete with confirmation")
 		}
 
-		// 循环减少购物车项的数量
-		// TODO: 可以优化为一次性减少购物车项并设置数量，而不是循环调用
-		for completed := int32(0); completed < quantity; completed++ {
-			result, callErr := rpc.SubCartItem(ctx, &cartsclient.CartItemRequest{
-				Id:        cartItemID,
-				UserId:    userID,
-				ProductId: item.ProductId,
-			})
-			if callErr != nil {
-				return HandlerResult{}, fmt.Errorf("cart_sub completed %d of %d units: %w", completed, quantity, callErr)
-			}
-			if result == nil {
-				return HandlerResult{}, fmt.Errorf("cart_sub completed %d of %d units: nil response", completed, quantity)
-			}
-			if err := validateRPCResponse("cart_sub", result, int64(result.StatusCode), result.StatusMsg); err != nil {
-				return HandlerResult{}, fmt.Errorf("cart_sub completed %d of %d units: %w", completed, quantity, err)
-			}
+		result, err := rpc.SubCartItem(ctx, &cartsclient.CartItemRequest{
+			Id:        cartItemID,
+			UserId:    userID,
+			ProductId: item.ProductId,
+			Quantity:  quantity,
+		})
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("cart_sub rpc: %w", err)
+		}
+		if result == nil {
+			return HandlerResult{}, fmt.Errorf("cart_sub returned nil response")
+		}
+		if err := validateRPCResponse("cart_sub", result, int64(result.StatusCode), result.StatusMsg); err != nil {
+			return HandlerResult{}, err
 		}
 
 		remaining := item.Quantity - quantity

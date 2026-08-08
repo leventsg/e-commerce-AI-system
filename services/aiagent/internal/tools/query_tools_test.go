@@ -20,14 +20,15 @@ import (
 	"google.golang.org/grpc"
 )
 
-func TestQueryToolsRegistersAllQueryHandlers(t *testing.T) {
-	queryTools := newTestQueryTools(QueryToolClients{
-		Product:   &fakeProductQueryRPC{},
-		Inventory: &fakeInventoryQueryRPC{},
-		Order:     &fakeOrderQueryRPC{},
-		Cart:      &fakeCartQueryRPC{},
-		Coupon:    &fakeCouponQueryRPC{},
-		Checkout:  &fakeCheckoutQueryRPC{},
+func TestUnifiedToolsRegistersAllQueryHandlers(t *testing.T) {
+	toolHarness := newTestUnifiedQueryHarness(DefaultToolClients{
+		Product:         &fakeProductQueryRPC{},
+		Inventory:       &fakeInventoryQueryRPC{},
+		OrderQuery:      &fakeOrderQueryRPC{},
+		CartQuery:       &fakeCartQueryRPC{},
+		CouponQuery:     &fakeCouponQueryRPC{},
+		CouponCalculate: &fakeCouponQueryRPC{},
+		CheckoutQuery:   &fakeCheckoutQueryRPC{},
 	})
 	want := []string{
 		domain.ToolProductSearch,
@@ -45,14 +46,14 @@ func TestQueryToolsRegistersAllQueryHandlers(t *testing.T) {
 		domain.ToolCheckoutDetail,
 	}
 	for _, name := range want {
-		if _, ok := queryTools.Handler(name); !ok {
+		if _, ok := toolHarness.Handler(name); !ok {
 			t.Fatalf("query handler %q was not registered", name)
 		}
 	}
 }
 
-func TestQueryToolsRegistrySchemasMatchRPCContracts(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+func TestUnifiedToolsRegistrySchemasMatchRPCContracts(t *testing.T) {
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 
 	inventoryTool, err := registry.Tool(domain.ToolInventoryGet)
 	if err != nil {
@@ -87,12 +88,12 @@ func TestQueryToolsRegistrySchemasMatchRPCContracts(t *testing.T) {
 	}
 }
 
-func TestQueryToolsEinoHandlerUsesTrustedExecutionContext(t *testing.T) {
+func TestUnifiedToolsEinoHandlerUsesTrustedExecutionContext(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{detailResp: &productcatalogservice.GetProductResp{
 		Product: &productcatalogservice.Product{Id: 12, Name: "学生手机", Price: 99900},
 	}}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	NewQueryTools(NewExecutor(registry), QueryToolClients{Product: productRPC})
+	registry := newTestRegistry(DefaultToolClients{Product: productRPC}, config.ToolTimeoutConfig{})
+	NewExecutor(registry)
 	tool, err := registry.Tool(domain.ToolProductDetail)
 	if err != nil {
 		t.Fatalf("get product detail tool: %v", err)
@@ -114,12 +115,12 @@ func TestQueryToolsEinoHandlerUsesTrustedExecutionContext(t *testing.T) {
 	}
 }
 
-func TestQueryToolsEinoHandlerRejectsMissingTrustedExecutionContext(t *testing.T) {
+func TestUnifiedToolsEinoHandlerRejectsMissingTrustedExecutionContext(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{detailResp: &productcatalogservice.GetProductResp{
 		Product: &productcatalogservice.Product{Id: 12, Name: "学生手机"},
 	}}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	NewQueryTools(NewExecutor(registry), QueryToolClients{Product: productRPC})
+	registry := newTestRegistry(DefaultToolClients{Product: productRPC}, config.ToolTimeoutConfig{})
+	NewExecutor(registry)
 	tool, err := registry.Tool(domain.ToolProductDetail)
 	if err != nil {
 		t.Fatalf("get product detail tool: %v", err)
@@ -132,11 +133,11 @@ func TestQueryToolsEinoHandlerRejectsMissingTrustedExecutionContext(t *testing.T
 	}
 }
 
-func TestQueryToolsEinoMalformedJSONIsRecorded(t *testing.T) {
+func TestUnifiedQueryToolEinoMalformedJSONIsRecorded(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
 	recorder := &capturingToolCallRecorder{}
-	NewQueryTools(NewExecutor(registry, WithToolCallRecorder(recorder)), QueryToolClients{Product: productRPC})
+	registry := newTestRegistry(DefaultToolClients{Product: productRPC}, config.ToolTimeoutConfig{})
+	NewExecutor(registry, WithToolCallRecorder(recorder))
 	tool, err := registry.Tool(domain.ToolProductDetail)
 	if err != nil {
 		t.Fatalf("product detail tool: %v", err)
@@ -156,7 +157,7 @@ func TestQueryToolsEinoMalformedJSONIsRecorded(t *testing.T) {
 	}
 }
 
-func TestQueryToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
+func TestUnifiedToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{
 		queryResp: &productcatalogservice.GetAllProductsResp{
 			Total: 1,
@@ -171,9 +172,9 @@ func TestQueryToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
 			Products: []*productcatalogservice.Product{{Id: 13, Name: "推荐手机", Price: 129900}},
 		},
 	}
-	queryTools := newTestQueryTools(QueryToolClients{Product: productRPC})
+	toolHarness := newTestUnifiedQueryHarness(DefaultToolClients{Product: productRPC})
 
-	searchEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	searchEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID:   42,
 		ToolName: domain.ToolProductSearch,
 		Arguments: map[string]any{
@@ -201,7 +202,7 @@ func TestQueryToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
 		t.Fatalf("search total = %#v, want 1", searchData["total"])
 	}
 
-	detailEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	detailEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID:    42,
 		ToolName:  domain.ToolProductDetail,
 		Arguments: map[string]any{"product_id": 12, "user_id": 999},
@@ -211,7 +212,7 @@ func TestQueryToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
 		t.Fatalf("GetProduct request = %#v, want product 12 user 42", productRPC.detailReq)
 	}
 
-	recommendEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	recommendEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID:   42,
 		ToolName: domain.ToolProductRecommend,
 		Arguments: map[string]any{
@@ -227,7 +228,7 @@ func TestQueryToolsProductHandlersConvertArgumentsAndInjectUser(t *testing.T) {
 	}
 }
 
-func TestQueryToolsInventoryAndOrderHandlersUseAuthenticatedUser(t *testing.T) {
+func TestUnifiedToolsInventoryAndOrderHandlersUseAuthenticatedUser(t *testing.T) {
 	inventoryRPC := &fakeInventoryQueryRPC{resp: &inventoryclient.GetInventoryResp{Inventory: 9, SoldCount: 4}}
 	orderRPC := &fakeOrderQueryRPC{
 		getResp: &orderservice.OrderDetailResponse{
@@ -238,9 +239,9 @@ func TestQueryToolsInventoryAndOrderHandlersUseAuthenticatedUser(t *testing.T) {
 			Orders: []*orderservice.Order{{OrderId: "order-1", UserId: 42, OrderStatus: order.OrderStatus_ORDER_STATUS_PAID}},
 		},
 	}
-	queryTools := newTestQueryTools(QueryToolClients{Inventory: inventoryRPC, Order: orderRPC})
+	toolHarness := newTestUnifiedQueryHarness(DefaultToolClients{Inventory: inventoryRPC, OrderQuery: orderRPC})
 
-	inventoryEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	inventoryEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolInventoryGet, Arguments: map[string]any{"product_id": 12},
 	})
 	assertQueryToolSuccess(t, inventoryEvent, domain.ToolInventoryGet)
@@ -248,7 +249,7 @@ func TestQueryToolsInventoryAndOrderHandlersUseAuthenticatedUser(t *testing.T) {
 		t.Fatalf("GetInventory product = %d, want 12", inventoryRPC.req.ProductId)
 	}
 
-	getEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	getEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolOrderGet, Arguments: map[string]any{"order_id": "order-1", "user_id": 999},
 	})
 	assertQueryToolSuccess(t, getEvent, domain.ToolOrderGet)
@@ -256,7 +257,7 @@ func TestQueryToolsInventoryAndOrderHandlersUseAuthenticatedUser(t *testing.T) {
 		t.Fatalf("GetOrder request = %#v", orderRPC.getReq)
 	}
 
-	listEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	listEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID:    42,
 		ToolName:  domain.ToolOrderList,
 		Arguments: map[string]any{"page": 2, "page_size": 7, "status": "paid", "user_id": 999},
@@ -271,7 +272,7 @@ func TestQueryToolsInventoryAndOrderHandlersUseAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
+func TestUnifiedToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 	cartRPC := &fakeCartQueryRPC{resp: &cartsclient.CartItemListResponse{
 		Total: 3,
 		Data: []*cartsclient.CartInfoResponse{
@@ -295,9 +296,9 @@ func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 	checkoutRPC := &fakeCheckoutQueryRPC{resp: &checkoutservice.CheckoutDetailResp{Data: &checkoutservice.CheckoutOrder{
 		PreOrderId: "pre-1", UserId: 42, OriginalAmount: 20000, FinalAmount: 18000,
 	}}}
-	queryTools := newTestQueryTools(QueryToolClients{Cart: cartRPC, Coupon: couponRPC, Checkout: checkoutRPC})
+	toolHarness := newTestUnifiedQueryHarness(DefaultToolClients{CartQuery: cartRPC, CouponQuery: couponRPC, CouponCalculate: couponRPC, CheckoutQuery: checkoutRPC})
 
-	cartEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	cartEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCartList, Arguments: map[string]any{"page": 2, "page_size": 1, "user_id": 999},
 	})
 	assertQueryToolSuccess(t, cartEvent, domain.ToolCartList)
@@ -310,21 +311,21 @@ func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 		t.Fatalf("paginated cart items = %#v", items)
 	}
 
-	assertQueryToolSuccess(t, queryTools.Execute(context.Background(), ExecuteRequest{
+	assertQueryToolSuccess(t, toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCouponList, Arguments: map[string]any{"page": 2, "page_size": 4},
 	}), domain.ToolCouponList)
 	if couponRPC.listReq.Pagination.Page != 2 || couponRPC.listReq.Pagination.Size != 4 {
 		t.Fatalf("ListCoupons pagination = %#v", couponRPC.listReq.Pagination)
 	}
 
-	assertQueryToolSuccess(t, queryTools.Execute(context.Background(), ExecuteRequest{
+	assertQueryToolSuccess(t, toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCouponDetail, Arguments: map[string]any{"coupon_id": "coupon-1"},
 	}), domain.ToolCouponDetail)
 	if couponRPC.getReq.Id != "coupon-1" {
 		t.Fatalf("GetCoupon id = %q", couponRPC.getReq.Id)
 	}
 
-	myEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	myEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCouponMyList,
 		Arguments: map[string]any{"page": 1, "page_size": 10, "status": "used", "user_id": 999},
 	})
@@ -337,7 +338,7 @@ func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 		t.Fatalf("filtered user coupons = %#v", myData["coupons"])
 	}
 
-	assertQueryToolSuccess(t, queryTools.Execute(context.Background(), ExecuteRequest{
+	assertQueryToolSuccess(t, toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCouponUsageList,
 		Arguments: map[string]any{"page": 1, "page_size": 10, "user_id": 999},
 	}), domain.ToolCouponUsageList)
@@ -345,7 +346,7 @@ func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 		t.Fatalf("ListCouponUsages user = %d, want 42", couponRPC.usageReq.UserId)
 	}
 
-	calculateEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	calculateEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCouponCalculate,
 		Arguments: map[string]any{
 			"coupon_id": "coupon-1",
@@ -358,7 +359,7 @@ func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 		t.Fatalf("CalculateCoupon request = %#v", couponRPC.calculateReq)
 	}
 
-	checkoutEvent := queryTools.Execute(context.Background(), ExecuteRequest{
+	checkoutEvent := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCheckoutDetail,
 		Arguments: map[string]any{"pre_order_id": "pre-1", "user_id": 999},
 	})
@@ -368,14 +369,14 @@ func TestQueryToolsCartCouponAndCheckoutHandlersConvertArguments(t *testing.T) {
 	}
 }
 
-func TestQueryToolsBusinessFailureReturnsFailedEvent(t *testing.T) {
+func TestUnifiedToolsBusinessFailureReturnsFailedEvent(t *testing.T) {
 	productRPC := &fakeProductQueryRPC{detailResp: &productcatalogservice.GetProductResp{
 		StatusCode: 60001,
 		StatusMsg:  "商品不存在",
 	}}
-	queryTools := newTestQueryTools(QueryToolClients{Product: productRPC})
+	toolHarness := newTestUnifiedQueryHarness(DefaultToolClients{Product: productRPC})
 
-	event := queryTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolProductDetail, Arguments: map[string]any{"product_id": 404},
 	})
 	if event.Status != toolStatusFailed {
@@ -383,8 +384,8 @@ func TestQueryToolsBusinessFailureReturnsFailedEvent(t *testing.T) {
 	}
 }
 
-func newTestQueryTools(clients QueryToolClients) *QueryTools {
-	return NewQueryTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), clients)
+func newTestUnifiedQueryHarness(clients DefaultToolClients) *toolTestHarness {
+	return newTestToolHarness(clients)
 }
 
 func assertQueryToolSuccess(t *testing.T, event domain.AgentEvent, toolName string) {

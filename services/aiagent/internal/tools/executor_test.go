@@ -12,7 +12,7 @@ import (
 )
 
 func TestExecutorInjectsAuthenticatedUserID(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 	executor := NewExecutor(registry)
 
 	var got HandlerRequest
@@ -57,7 +57,7 @@ func TestExecutorInjectsAuthenticatedUserID(t *testing.T) {
 }
 
 func TestExecutorUsesRegistryTimeouts(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 	executor := NewExecutor(registry)
 
 	assertToolDeadline(t, executor, domain.ToolProductSearch, 3*time.Second)
@@ -65,7 +65,7 @@ func TestExecutorUsesRegistryTimeouts(t *testing.T) {
 }
 
 func TestExecutorFailureEventDoesNotClaimSuccess(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 	executor := NewExecutor(registry)
 
 	event := executor.Execute(context.Background(), ExecuteRequest{
@@ -93,7 +93,7 @@ func TestExecutorFailureEventDoesNotClaimSuccess(t *testing.T) {
 }
 
 func TestExecutorUnknownToolFailsBeforeHandler(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 	executor := NewExecutor(registry)
 
 	called := false
@@ -120,7 +120,7 @@ func TestExecutorUnknownToolFailsBeforeHandler(t *testing.T) {
 }
 
 func TestExecutorWriteAuditFailureDoesNotReportBusinessWriteAsSuccess(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
+	registry := newTestRegistry(DefaultToolClients{}, config.ToolTimeoutConfig{})
 	executor := NewExecutor(registry, WithToolCallRecorder(errorToolCallRecorder{err: errors.New("audit unavailable")}))
 
 	event := executor.Execute(context.Background(), ExecuteRequest{
@@ -139,7 +139,8 @@ func TestExecutorWriteAuditFailureDoesNotReportBusinessWriteAsSuccess(t *testing
 }
 
 func TestExecutorRecorderCapturesWriteSuccessFailureAndTimeout(t *testing.T) {
-	registry := NewRegistry(config.ToolTimeoutConfig{WriteSeconds: 1})
+	timeout := config.ToolTimeoutConfig{WriteSeconds: 1}
+	registry := newTestRegistry(DefaultToolClients{}, timeout)
 	recorder := &capturingToolCallRecorder{}
 	executor := NewExecutor(registry, WithToolCallRecorder(recorder))
 

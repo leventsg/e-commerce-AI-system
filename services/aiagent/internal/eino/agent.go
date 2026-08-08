@@ -53,19 +53,19 @@ type Runner interface {
 type agent struct {
 	root            adk.Agent
 	checkpointStore adk.CheckPointStore
-	highRiskTools   *aitools.HighRiskTools
+	approvalManager *aitools.ApprovalManager
 }
 
 type supervisorOptions struct {
-	highRiskTools   *aitools.HighRiskTools
+	approvalManager *aitools.ApprovalManager
 	checkpointStore adk.CheckPointStore
 }
 
 type SupervisorOption func(*supervisorOptions)
 
-func WithHighRiskTools(highRiskTools *aitools.HighRiskTools) SupervisorOption {
+func WithApprovalManager(approvalManager *aitools.ApprovalManager) SupervisorOption {
 	return func(opts *supervisorOptions) {
-		opts.highRiskTools = highRiskTools
+		opts.approvalManager = approvalManager
 	}
 }
 
@@ -133,7 +133,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	_ = adk.SetLanguage(adk.LanguageChinese)
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
 	for _, spec := range supervisorSubAgentSpecs {
-		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.highRiskTools, spec)
+		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.approvalManager, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -163,11 +163,11 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
-	return &agent{root: root, checkpointStore: opts.checkpointStore, highRiskTools: opts.highRiskTools}, nil
+	return &agent{root: root, checkpointStore: opts.checkpointStore, approvalManager: opts.approvalManager}, nil
 }
 
 // newDomainAgent 创建子agent
-func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, highRiskTools *aitools.HighRiskTools, spec agentSpec) (adk.Agent, error) {
+func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, spec agentSpec) (adk.Agent, error) {
 	infos, err := registry.ToolInfosByNames(ctx, spec.tools...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
@@ -181,8 +181,8 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
 	handlers := []adk.ChatModelAgentMiddleware{}
-	if highRiskTools != nil {
-		handlers = append(handlers, newHighRiskApprovalMiddleware(highRiskTools))
+	if approvalManager != nil {
+		handlers = append(handlers, newHighRiskApprovalMiddleware(approvalManager))
 	}
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        spec.name,
@@ -265,7 +265,7 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 		}
 	}
 	// callback handler manager
-	bridge := newAgentEventCallbackBridge(req, r.highRiskTools, emit)
+	bridge := newAgentEventCallbackBridge(req, r.approvalManager, emit)
 	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).Run(ctx, input,
 		adk.WithCheckPointID(checkpointID),
 		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
@@ -317,7 +317,7 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 		OnEvent:        req.OnEvent,
 	}
 	// 桥接器，跟踪业务执行状态
-	bridge := newAgentEventCallbackBridge(runReq, r.highRiskTools, emit)
+	bridge := newAgentEventCallbackBridge(runReq, r.approvalManager, emit)
 	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
 		Targets: map[string]any{
 			interruptID: &ApprovalResult{Approved: req.Approved},
@@ -380,7 +380,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		// 中断事件处理
 		if event.Action != nil && event.Action.Interrupted != nil {
 			// 将中断事件转换为自定义AgentEvent事件
-			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.highRiskTools)
+			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.approvalManager)
 			if err != nil {
 				_ = emit(ctx, domain.AgentEvent{
 					Type:           domain.EventError,
@@ -393,8 +393,6 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				return
 			}
 			if ok {
-				hasInterrupt = true
-				hasAny = true
 				// 如果req传了回调函数，则执行这个回调函数
 				if req.OnEvent != nil {
 					if err := req.OnEvent(ctx, domainEvent); err != nil {
@@ -435,7 +433,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				continue
 			}
 			// 高风险工具执行事件
-			if domainEvent.Status == "success" && (isBusinessWriteTool(domainEvent.Tool) || (r.highRiskTools != nil && r.highRiskTools.RequiresConfirmation(domainEvent.Tool))) {
+			if domainEvent.Status == "success" && (isBusinessWriteTool(domainEvent.Tool) || (r.approvalManager != nil && r.approvalManager.RequiresConfirmation(domainEvent.Tool))) {
 				domainEvent.BusinessExecuted = true
 				if bridge != nil {
 					bridge.markBusinessExecuted()

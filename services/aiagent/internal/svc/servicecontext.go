@@ -38,6 +38,8 @@ import (
 )
 
 type ConfirmationManager interface {
+	// 创建高风险确认请求
+	Create(ctx context.Context, req aiconfirmation.CreateRequest) (*domain.Confirmation, error)
 	// 用户确认请求的决策处理，返回确认记录
 	Decide(ctx context.Context, req aiconfirmation.DecisionRequest) (*domain.Confirmation, error)
 	// 标记确认请求为已执行状态
@@ -46,10 +48,6 @@ type ConfirmationManager interface {
 	MarkFailed(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
 	// 绑定 Eino checkpoint interrupt 恢复目标
 	BindResumeTarget(ctx context.Context, req aiconfirmation.ResumeTargetRequest) (*domain.Confirmation, error)
-}
-
-type HighRiskToolExecutor interface {
-	ExecuteConfirmed(ctx context.Context, req aitools.ExecuteRequest) domain.AgentEvent
 }
 
 type ServiceContext struct {
@@ -74,7 +72,6 @@ type ServiceContext struct {
 	ToolRegistry           *aitools.Registry
 	ToolExecutor           *aitools.Executor
 	ConfirmationManager    ConfirmationManager
-	HighRiskTools          HighRiskToolExecutor
 	ConversationManager    conversation.Manager
 	ContextManager         contextmanager.Manager
 	SummaryManager         *contextmanager.SummaryManager
@@ -98,22 +95,18 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	toolCallsModel := aitoolcalls.NewAiToolCallsModel(mysql, c.Cache)
 	confirmationsModel := aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache)
 	agentRunsModel := aiagentruns.NewAiAgentRunsModel(mysql, c.Cache)
-	toolRegistry := aitools.NewRegistry(c.ToolTimeout)
 	toolRecorder := aiaudit.NewRecorder(toolCallsModel, auditRPC)
-	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
-	aitools.NewQueryTools(toolExecutor, aitools.QueryToolClients{
+	defaultTools := aitools.DefaultTools(aitools.DefaultToolClients{
 		Product:   productRPC,
 		Inventory: inventoryRPC,
 		Order:     orderRPC,
 		Cart:      cartRPC,
 		Coupon:    couponRPC,
 		Checkout:  checkoutRPC,
-	})
-	aitools.NewWriteTools(toolExecutor, aitools.WriteToolClients{
-		Cart:     cartRPC,
-		Coupon:   couponRPC,
-		Checkout: checkoutRPC,
-	})
+	}, c.ToolTimeout)
+	toolRegistry := aitools.NewRegistry(defaultTools)
+	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
+	// 数据层，工具执行数据管理器
 	confirmationManager := aiconfirmation.NewManager(
 		confirmationsModel,
 		toolRegistry,
@@ -121,13 +114,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		aiconfirmation.WithConfirmationTTL(time.Duration(c.Confirmation.ExpireSeconds)*time.Second),
 		aiconfirmation.WithLockTTL(time.Duration(c.Confirmation.LockExpireSeconds)*time.Second),
 	)
-	highRiskTools := aitools.NewHighRiskTools(toolExecutor, confirmationManager, aitools.HighRiskToolClients{
-		Cart:     cartRPC,
-		Order:    orderRPC,
-		Product:  productRPC,
-		Checkout: checkoutRPC,
-		Coupon:   couponRPC,
-	})
+	// 编排层，工具管理器负责高风险操作的确认请求和恢复点绑定
+	approvalManager := aitools.NewApprovalManager(toolRegistry, toolExecutor, confirmationManager)
 	conversationsModel := aiconversations.NewAiConversationsModel(mysql, c.Cache)
 	messagesModel := aimessages.NewAiMessagesModel(mysql, c.Cache)
 	summariesModel := aiconversationsummaries.NewAiConversationSummariesModel(mysql, c.Cache)
@@ -164,7 +152,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	var agentRunner eino.Runner
 	checkpointTTL := time.Duration(c.Confirmation.ExpireSeconds) * time.Second
 	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry,
-		eino.WithHighRiskTools(highRiskTools),
+		eino.WithApprovalManager(approvalManager),
 		eino.WithCheckpointStore(eino.NewPersistentCheckpointStore(redisClient, agentRunsModel, checkpointTTL)),
 	); err == nil {
 		agentRunner = runner
@@ -194,7 +182,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ToolRegistry:           toolRegistry,
 		ToolExecutor:           toolExecutor,
 		ConfirmationManager:    confirmationManager,
-		HighRiskTools:          highRiskTools,
 		ConversationManager:    conversationManager,
 		ContextManager:         contextManager,
 		SummaryManager:         summaryManager,

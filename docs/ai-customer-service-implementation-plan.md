@@ -489,7 +489,7 @@ Expected: 创建、恢复、隔离、裁剪均通过。
 - Create: `services/aiagent/internal/tools/registry.go`
 - Test: `services/aiagent/internal/tools/registry_test.go`
 
-- [ ] **Step 1: 定义风险等级**
+- [x] **Step 1: 定义风险等级**
 
 ```go
 const (
@@ -498,9 +498,9 @@ const (
 )
 ```
 
-- [ ] **Step 2: 定义本地工具元数据**
+- [x] **Step 2: 定义统一 Tool 与本地工具元数据**
 
-每个工具保留本地元数据，用于风险控制、超时、审计和 RPC 路由：
+每个工具由 `tools.Tool` 统一承载 schema、metadata、handler 和高风险确认摘要；metadata 用于风险控制、超时、审计和 RPC 路由：
 
 ```go
 type Metadata struct {
@@ -512,7 +512,9 @@ type Metadata struct {
 }
 ```
 
-- [ ] **Step 3: 注册首期 Eino Tool**
+运行时链路已收敛为 `Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC`。旧 `QueryTools`、`WriteTools`、`HighRiskTools` manager 和 `queryInvokableTool/writeInvokableTool/highRiskInvokableTool` 已删除；`DefaultTools(clients, timeout)` 直接产出完整 `[]Tool`。
+
+- [x] **Step 3: 注册首期 Eino Tool**
 
 低风险：
 
@@ -540,20 +542,21 @@ type Metadata struct {
 - `order_create`
 - `order_cancel`
 
-- [ ] **Step 4: 单测确认策略**
+- [x] **Step 4: 单测确认策略**
 
 断言 `cart_delete`、`order_create`、`order_cancel` 必须确认，查询和低风险写操作不需要确认。
 
-- [ ] **Step 5: 单测 Eino Tool schema**
+- [x] **Step 5: 单测 Eino Tool schema**
 
 断言每个工具都能导出 Eino 可识别的 schema，且 schema 中不要求模型传入 `user_id`。
 
-- [ ] **Step 6: 运行测试**
+- [x] **Step 6: 运行测试**
 
 Run:
 
 ```bash
 go test ./services/aiagent/internal/tools -run TestRegistry -count=1
+go test ./services/aiagent/internal/tools -count=1
 ```
 
 Expected: Eino Tool 注册、本地白名单、风险等级、超时配置全部符合 PRD。
@@ -691,7 +694,7 @@ RPC 对应：
 Run:
 
 ```bash
-go test ./services/aiagent/internal/tools -run TestQueryTools -count=1
+go test ./services/aiagent/internal/tools -run TestUnified -count=1
 ```
 
 Expected: Eino Tool 入参转换、用户 ID 注入、RPC 调用、结果摘要字段均正确。
@@ -703,7 +706,6 @@ Expected: Eino Tool 入参转换、用户 ID 注入、RPC 调用、结果摘要�
 - Modify: `services/aiagent/internal/tools/cart_tools.go`
 - Modify: `services/aiagent/internal/tools/coupon_tools.go`
 - Modify: `services/aiagent/internal/tools/executor.go`
-- Create: `services/aiagent/internal/tools/write_tools.go`
 - Create: `services/aiagent/internal/audit/recorder.go`
 - Modify: `services/aiagent/internal/svc/servicecontext.go`
 - Test: `services/aiagent/internal/tools/write_tools_test.go`
@@ -737,7 +739,7 @@ Task 9 前置最小可复用 recorder：共享 Executor 的所有工具调用写
 Run:
 
 ```bash
-go test ./services/aiagent/internal/tools -run TestWriteTools -count=1
+go test ./services/aiagent/internal/tools -run TestUnified -count=1
 go test ./services/aiagent/internal/audit -run TestRecorder -count=1
 ```
 

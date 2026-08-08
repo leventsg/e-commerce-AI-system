@@ -18,6 +18,7 @@ type CartItemListResp struct {
 
 type CreateCartReq struct {
 	ProductId int32 `json:"product_id"`
+	Quantity  int32 `json:"quantity"`
 }
 
 type CreateCartResp struct {
@@ -34,6 +35,7 @@ type DeleteCartResp struct {
 
 type SubCartReq struct {
 	ProductId int32 `json:"product_id"`
+	Quantity  int32 `json:"quantity"`
 }
 
 type SubCartResp struct {

@@ -193,6 +193,9 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 
 ### 3.6 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
+
+工具层统一链路为：`Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC`。`services/aiagent/internal/tools.Tool` 是工具定义的单一事实来源，统一承载 `Name`、`Desc`、`Params`、`Metadata`、`Handler` 和可选 `ConfirmationSummary`。启动时由 `DefaultTools(clients, timeout)` 生成完整 catalog，Registry 只保存 `map[string]Tool` 并负责导出 ToolInfo、InvokableTool adapter、metadata 和确认摘要。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再有 schema-only 占位工具和二次绑定。
+
 首期工具：
 - product_search
 - product_detail
@@ -217,13 +220,16 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 
 每个工具需要定义：
 - 工具名称。
+- 工具描述。
 - 风险等级。
 - 参数 schema。
 - 是否需要确认。
 - 超时时间。
 - 对应 RPC 调用。
+- Handler。
 - 结果转换逻辑。
 - Eino Tool schema。
+- 高风险确认摘要函数。
 
 首期下单工具契约：
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
 	"google.golang.org/grpc"
@@ -15,9 +14,9 @@ func TestCheckoutPrepareInjectsUserAndConvertsOrderItems(t *testing.T) {
 	rpc := &fakeCheckoutWriteRPC{resp: &checkoutservice.CheckoutResp{
 		PreOrderId: "pre-1", ExpireTime: 12345, PayMethod: []int64{1, 2},
 	}}
-	writeTools := NewWriteTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), WriteToolClients{Checkout: rpc})
+	toolHarness := newTestToolHarness(DefaultToolClients{CheckoutWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCheckoutPrepare,
 		Arguments: map[string]any{
 			"user_id":   999,
@@ -56,7 +55,7 @@ func TestCheckoutPrepareRejectsInvalidItemsAndRPCFailures(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			event := NewWriteTools(NewExecutor(NewRegistry(config.ToolTimeoutConfig{})), WriteToolClients{Checkout: tt.rpc}).Execute(
+			event := newTestToolHarness(DefaultToolClients{CheckoutWrite: tt.rpc}).Execute(
 				context.Background(), ExecuteRequest{UserID: 42, ToolName: domain.ToolCheckoutPrepare, Arguments: tt.args},
 			)
 			assertWriteToolFailed(t, event)

@@ -36,19 +36,19 @@ type approvalRunMetaKey struct{}
 
 type highRiskApprovalMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	highRiskTools *aitools.HighRiskTools
+	approvalManager *aitools.ApprovalManager
 }
 
-func newHighRiskApprovalMiddleware(highRiskTools *aitools.HighRiskTools) adk.ChatModelAgentMiddleware {
+func newHighRiskApprovalMiddleware(approvalManager *aitools.ApprovalManager) adk.ChatModelAgentMiddleware {
 	return &highRiskApprovalMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		highRiskTools:                highRiskTools,
+		approvalManager:              approvalManager,
 	}
 }
 
 // WrapInvokableToolCall 在真正执行工具之前调用，判断是否需要中断
 func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, endpoint adk.InvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.InvokableToolCallEndpoint, error) {
-	if m == nil || m.highRiskTools == nil || tCtx == nil || !m.highRiskTools.RequiresConfirmation(tCtx.Name) {
+	if m == nil || m.approvalManager == nil || tCtx == nil || !m.approvalManager.RequiresConfirmation(tCtx.Name) {
 		return endpoint, nil
 	}
 	return func(ctx context.Context, argumentsInJSON string, opts ...einotool.Option) (string, error) {
@@ -95,7 +95,7 @@ func (m *highRiskApprovalMiddleware) createApprovalInfo(ctx context.Context, too
 	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
 		return nil, fmt.Errorf("%w: invalid JSON arguments: %v", aitools.ErrInvalidToolArguments, err)
 	}
-	event := m.highRiskTools.RequestConfirmation(ctx, aitools.ExecuteRequest{
+	event := m.approvalManager.RequestConfirmation(ctx, aitools.ExecuteRequest{
 		UserID:         execution.UserID,
 		ConversationID: execution.ConversationID,
 		MessageID:      execution.MessageID,
@@ -106,7 +106,7 @@ func (m *highRiskApprovalMiddleware) createApprovalInfo(ctx context.Context, too
 		Arguments:      args,
 	})
 	if event.Type != domain.EventConfirmationRequired {
-		return nil, fmt.Errorf("%w: %s", aitools.ErrHighRiskToolExecution, event.Content)
+		return nil, fmt.Errorf("%w: %s", aitools.ErrToolExecution, event.Content)
 	}
 	return &ApprovalInfo{
 		ConfirmationID:   event.ConfirmationID,
@@ -128,7 +128,7 @@ func approvalRunMetaFromContext(ctx context.Context) approvalRunMeta {
 }
 
 // 解析中断信息中的 ApprovalInfo
-func interruptEventToDomainEvent(ctx context.Context, info *adk.InterruptInfo, req RunRequest, highRiskTools *aitools.HighRiskTools) (domain.AgentEvent, bool, error) {
+func interruptEventToDomainEvent(ctx context.Context, info *adk.InterruptInfo, req RunRequest, approvalManager *aitools.ApprovalManager) (domain.AgentEvent, bool, error) {
 	if info == nil {
 		return domain.AgentEvent{}, false, nil
 	}
@@ -141,8 +141,8 @@ func interruptEventToDomainEvent(ctx context.Context, info *adk.InterruptInfo, r
 			continue
 		}
 		meta := approvalRunMetaFromContext(ctx)
-		if highRiskTools != nil {
-			if err := highRiskTools.BindResumeTarget(ctx, confirmation.ResumeTargetRequest{
+		if approvalManager != nil {
+			if err := approvalManager.BindResumeTarget(ctx, confirmation.ResumeTargetRequest{
 				UserID:         req.UserID,
 				ConversationID: req.ConversationID,
 				ConfirmationID: approval.ConfirmationID,

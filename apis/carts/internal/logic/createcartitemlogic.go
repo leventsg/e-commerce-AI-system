@@ -70,6 +70,7 @@ func (l *CreateCartItemLogic) CreateCartItem(req *types.CreateCartReq) (resp *ty
 	res, err := l.svcCtx.CartsRpc.CreateCartItem(l.ctx, &carts.CartItemRequest{
 		UserId:    int32(userId),
 		ProductId: req.ProductId,
+		Quantity:  req.Quantity,
 	})
 	if err != nil {
 		l.Logger.Errorw("call rpc CreateCartItem failed",

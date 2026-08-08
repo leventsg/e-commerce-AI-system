@@ -14,17 +14,17 @@ import (
 	"google.golang.org/grpc"
 )
 
-func TestWriteToolsRegistersLowRiskHandlers(t *testing.T) {
-	writeTools := newTestWriteTools(WriteToolClients{
-		Cart:   &fakeCartWriteRPC{},
-		Coupon: &fakeCouponWriteRPC{},
+func TestUnifiedToolsRegistersLowRiskHandlers(t *testing.T) {
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{
+		CartWrite:   &fakeCartWriteRPC{},
+		CouponWrite: &fakeCouponWriteRPC{},
 	})
 
 	for _, name := range []string{domain.ToolCartAdd, domain.ToolCartSub, domain.ToolCouponClaim} {
-		if _, ok := writeTools.Handler(name); !ok {
+		if _, ok := toolHarness.Handler(name); !ok {
 			t.Fatalf("write handler %q was not registered", name)
 		}
-		metadata, err := writeTools.executor.registry.Metadata(name)
+		metadata, err := toolHarness.executor.registry.Metadata(name)
 		if err != nil {
 			t.Fatalf("metadata %q: %v", name, err)
 		}
@@ -37,11 +37,11 @@ func TestWriteToolsRegistersLowRiskHandlers(t *testing.T) {
 	}
 }
 
-func TestWriteToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing.T) {
+func TestUnifiedToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing.T) {
 	rpc := &fakeCartWriteRPC{}
-	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID:   42,
 		ToolName: domain.ToolCartAdd,
 		Arguments: map[string]any{
@@ -53,12 +53,12 @@ func TestWriteToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing.T
 	})
 
 	assertWriteToolSuccess(t, event, domain.ToolCartAdd)
-	if len(rpc.createReqs) != 3 {
-		t.Fatalf("CreateCartItem calls = %d, want 3", len(rpc.createReqs))
+	if len(rpc.createReqs) != 1 {
+		t.Fatalf("CreateCartItem calls = %d, want 1 (single call with quantity)", len(rpc.createReqs))
 	}
 	for _, req := range rpc.createReqs {
-		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 0 {
-			t.Fatalf("CreateCartItem request = %#v, want trusted user and one-unit adapter", req)
+		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 3 {
+			t.Fatalf("CreateCartItem request = %#v, want trusted user and quantity=3", req)
 		}
 	}
 	data := decodeEventData(t, event)
@@ -67,13 +67,13 @@ func TestWriteToolsCartAddUsesAuthenticatedUserAndRequestedQuantity(t *testing.T
 	}
 }
 
-func TestWriteToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
+func TestUnifiedToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
 	rpc := &fakeCartWriteRPC{listResp: &cartsclient.CartItemListResponse{
 		Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 12, Quantity: 4}},
 	}}
-	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID:   42,
 		ToolName: domain.ToolCartSub,
 		Arguments: map[string]any{
@@ -87,12 +87,12 @@ func TestWriteToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
 	if rpc.listReq == nil || rpc.listReq.Id != 42 {
 		t.Fatalf("CartItemList request = %#v, want trusted user 42", rpc.listReq)
 	}
-	if len(rpc.subReqs) != 2 {
-		t.Fatalf("SubCartItem calls = %d, want 2", len(rpc.subReqs))
+	if len(rpc.subReqs) != 1 {
+		t.Fatalf("SubCartItem calls = %d, want 1 (single call with quantity=2)", len(rpc.subReqs))
 	}
 	for _, req := range rpc.subReqs {
-		if req.UserId != 42 || req.ProductId != 12 {
-			t.Fatalf("SubCartItem request = %#v, want resolved owned product", req)
+		if req.UserId != 42 || req.ProductId != 12 || req.Quantity != 2 {
+			t.Fatalf("SubCartItem request = %#v, want resolved owned product with quantity=2", req)
 		}
 	}
 	data := decodeEventData(t, event)
@@ -101,7 +101,7 @@ func TestWriteToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
 	}
 
 	rpc.subReqs = nil
-	event = writeTools.Execute(context.Background(), ExecuteRequest{
+	event = toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCartSub,
 		Arguments: map[string]any{"cart_item_id": 8, "quantity": 4},
 	})
@@ -111,13 +111,13 @@ func TestWriteToolsCartSubResolvesOwnedCartItemAndPreservesOne(t *testing.T) {
 	}
 }
 
-func TestWriteToolsCartSubRejectsCartItemOutsideAuthenticatedUser(t *testing.T) {
+func TestUnifiedToolsCartSubRejectsCartItemOutsideAuthenticatedUser(t *testing.T) {
 	rpc := &fakeCartWriteRPC{listResp: &cartsclient.CartItemListResponse{
 		Data: []*cartsclient.CartInfoResponse{{Id: 9, UserId: 42, ProductId: 18, Quantity: 2}},
 	}}
-	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCartSub,
 		Arguments: map[string]any{"cart_item_id": 8, "quantity": 1},
 	})
@@ -128,58 +128,50 @@ func TestWriteToolsCartSubRejectsCartItemOutsideAuthenticatedUser(t *testing.T) 
 	}
 }
 
-func TestWriteToolsCartBatchPartialFailureIsReportedAsFailure(t *testing.T) {
-	rpc := &fakeCartWriteRPC{createErrAt: 2, createErr: errors.New("cart unavailable")}
-	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+func TestUnifiedToolsCartAddFailureIsReportedAsFailure(t *testing.T) {
+	rpc := &fakeCartWriteRPC{createErrAt: 1, createErr: errors.New("cart unavailable")}
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCartAdd,
 		Arguments: map[string]any{"product_id": 12, "quantity": 3},
 	})
 
 	assertWriteToolFailed(t, event)
-	if len(rpc.createReqs) != 2 {
-		t.Fatalf("CreateCartItem calls = %d, want stop at second call", len(rpc.createReqs))
-	}
-	if !strings.Contains(event.DataJSON, "completed 1 of 3") {
-		t.Fatalf("partial failure data = %s, want completed count", event.DataJSON)
+	if len(rpc.createReqs) != 1 {
+		t.Fatalf("CreateCartItem calls = %d, want 1", len(rpc.createReqs))
 	}
 	if strings.Contains(event.Content, "成功") {
 		t.Fatalf("failure content claims success: %q", event.Content)
 	}
 }
 
-func TestWriteToolsCartSubPartialFailureIsReportedAsFailure(t *testing.T) {
+func TestUnifiedToolsCartSubFailureIsReportedAsFailure(t *testing.T) {
 	rpc := &fakeCartWriteRPC{
 		listResp: &cartsclient.CartItemListResponse{
 			Data: []*cartsclient.CartInfoResponse{{Id: 8, UserId: 42, ProductId: 12, Quantity: 4}},
-		},
-		subErrAt: 2,
-		subErr:   errors.New("cart unavailable"),
+		},		subErrAt: 1,		subErr: errors.New("cart unavailable"),
 	}
-	writeTools := newTestWriteTools(WriteToolClients{Cart: rpc})
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CartWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCartSub,
 		Arguments: map[string]any{"cart_item_id": 8, "quantity": 2},
 	})
 
 	assertWriteToolFailed(t, event)
-	if len(rpc.subReqs) != 2 {
-		t.Fatalf("SubCartItem calls = %d, want stop at second call", len(rpc.subReqs))
-	}
-	if !strings.Contains(event.DataJSON, "completed 1 of 2") {
-		t.Fatalf("partial failure data = %s, want completed count", event.DataJSON)
+	if len(rpc.subReqs) != 1 {
+		t.Fatalf("SubCartItem calls = %d, want 1", len(rpc.subReqs))
 	}
 }
 
-func TestWriteToolsCouponClaimUsesAuthenticatedUserAndCompactResult(t *testing.T) {
+func TestUnifiedToolsCouponClaimUsesAuthenticatedUserAndCompactResult(t *testing.T) {
 	rpc := &fakeCouponWriteRPC{resp: &couponsclient.ClaimCouponResp{
 		Coupon: &couponsclient.Coupon{Id: "coupon-1", Name: "新人券", Type: coupons.CouponType_COUPON_TYPE_FIXED_AMOUNT},
 	}}
-	writeTools := newTestWriteTools(WriteToolClients{Coupon: rpc})
+	toolHarness := newTestUnifiedWriteHarness(DefaultToolClients{CouponWrite: rpc})
 
-	event := writeTools.Execute(context.Background(), ExecuteRequest{
+	event := toolHarness.Execute(context.Background(), ExecuteRequest{
 		UserID: 42, ToolName: domain.ToolCouponClaim,
 		Arguments: map[string]any{"coupon_id": "coupon-1", "user_id": 999},
 	})
@@ -197,7 +189,7 @@ func TestWriteToolsCouponClaimUsesAuthenticatedUserAndCompactResult(t *testing.T
 	}
 }
 
-func TestWriteToolsCouponClaimRejectsBusinessFailureNilAndRPCError(t *testing.T) {
+func TestUnifiedToolsCouponClaimRejectsBusinessFailureNilAndRPCError(t *testing.T) {
 	tests := []struct {
 		name string
 		rpc  *fakeCouponWriteRPC
@@ -208,7 +200,7 @@ func TestWriteToolsCouponClaimRejectsBusinessFailureNilAndRPCError(t *testing.T)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			event := newTestWriteTools(WriteToolClients{Coupon: tt.rpc}).Execute(context.Background(), ExecuteRequest{
+			event := newTestUnifiedWriteHarness(DefaultToolClients{CouponWrite: tt.rpc}).Execute(context.Background(), ExecuteRequest{
 				UserID: 42, ToolName: domain.ToolCouponClaim,
 				Arguments: map[string]any{"coupon_id": "coupon-1"},
 			})
@@ -217,12 +209,12 @@ func TestWriteToolsCouponClaimRejectsBusinessFailureNilAndRPCError(t *testing.T)
 	}
 }
 
-func TestWriteToolsEinoHandlerRequiresTrustedExecutionContext(t *testing.T) {
+func TestUnifiedToolsEinoHandlerRequiresTrustedExecutionContext(t *testing.T) {
 	rpc := &fakeCouponWriteRPC{resp: &couponsclient.ClaimCouponResp{
 		Coupon: &couponsclient.Coupon{Id: "coupon-1", Name: "新人券"},
 	}}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	NewWriteTools(NewExecutor(registry), WriteToolClients{Coupon: rpc})
+	registry := newTestRegistry(DefaultToolClients{CouponWrite: rpc}, config.ToolTimeoutConfig{})
+	NewExecutor(registry)
 	tool, err := registry.Tool(domain.ToolCouponClaim)
 	if err != nil {
 		t.Fatalf("coupon claim tool: %v", err)
@@ -244,11 +236,11 @@ func TestWriteToolsEinoHandlerRequiresTrustedExecutionContext(t *testing.T) {
 	}
 }
 
-func TestWriteToolsEinoMalformedJSONIsRecorded(t *testing.T) {
+func TestUnifiedWriteToolEinoMalformedJSONIsRecorded(t *testing.T) {
 	rpc := &fakeCouponWriteRPC{}
-	registry := NewRegistry(config.ToolTimeoutConfig{})
 	recorder := &capturingToolCallRecorder{}
-	NewWriteTools(NewExecutor(registry, WithToolCallRecorder(recorder)), WriteToolClients{Coupon: rpc})
+	registry := newTestRegistry(DefaultToolClients{CouponWrite: rpc}, config.ToolTimeoutConfig{})
+	NewExecutor(registry, WithToolCallRecorder(recorder))
 	tool, err := registry.Tool(domain.ToolCouponClaim)
 	if err != nil {
 		t.Fatalf("coupon claim tool: %v", err)
@@ -275,9 +267,8 @@ func TestWriteToolsEinoMalformedJSONIsRecorded(t *testing.T) {
 	}
 }
 
-func newTestWriteTools(clients WriteToolClients) *WriteTools {
-	registry := NewRegistry(config.ToolTimeoutConfig{})
-	return NewWriteTools(NewExecutor(registry), clients)
+func newTestUnifiedWriteHarness(clients DefaultToolClients) *toolTestHarness {
+	return newTestToolHarness(clients)
 }
 
 func assertWriteToolSuccess(t *testing.T, event domain.AgentEvent, toolName string) {
