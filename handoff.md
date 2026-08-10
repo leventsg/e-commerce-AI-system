@@ -1,311 +1,325 @@
-# AI 智能客服 Agent 交接文档
+# AI Tool 链路重构交接文档
 
-更新时间：2026-08-04
+更新时间：2026-08-10  
+当前分支：`main`  
+当前最新提交：`e5919e6 Refactor/tools (#35)`  
 
-当前分支：`feat/context_optimization`
-
-写给新会话：你不需要知道之前聊天历史。先读 `AGENTS.md`，再读本文档。当前工作区是脏的，里面有连续多轮 AI 客服改造成果；不要随手 `reset`、`checkout`、删除文件或回退未理解的改动。
+写给新会话：你不需要知道之前聊天历史。先读仓库根目录 `AGENTS.md`，再读本文档。当前 AGENTS 规则里仍写着 `apis/ai` 是 WebSocket 网关，但代码和 AI 客服设计文档已经改成 SSE；遇到冲突时，先检查代码，再同步文档，不要靠旧描述猜。
 
 ## 1. 我们在做什么任务
 
-我们在改造 `services/aiagent` 这套电商 AI 客服 Agent，让它真正基于 Eino/ADK 完成：
+最近一轮任务是彻底重构 AI 智能客服的工具层，让工具执行链路从旧的多组 manager 收敛成一条清晰路径：
 
-- 聊天上下文组装与滚动摘要。
-- 聊天来源用户画像抽取与注入。
-- `ai_messages` 幂等与 UUIDv7 消息 ID。
-- Eino Tool Calling 与 Execution Guard。
-- 多 Agent 编排：Supervisor 负责意图识别、任务拆解、领域 Agent 路由和最终总结。
-- 子 Agent 负责本领域工具选择、参数抽取、业务 RPC 调用和工具失败处理。
+```text
+Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC
+```
 
-必读文档：
+目标是删除原来的运行时分组和二次绑定机制，不再维护 `QueryTools`、`WriteTools`、`HighRiskTools` 这三套 manager。统一使用 `services/aiagent/internal/tools.Tool` 作为 schema、metadata、handler 和确认摘要的单一事实来源。
 
-1. `AGENTS.md`
-2. `docs/ai-customer-service-prd.md`
-3. `docs/ai-customer-service-design.md`
-4. `docs/ai-customer-service-implementation-plan.md`
-5. `docs/ai-agent-context-optimization.md`
-6. `docs/ai-agent-tool-calling.md`
+本轮没有做 tool schema 数据库动态注册。之前用户明确取消了 “tool schema 动态注册/DB 配置化” 方案，这次只做代码内工具链路收敛。
 
 ## 2. 已经完成了什么
 
-### 2.1 Context Manager / 摘要 / 记忆
+### 2.1 统一 Tool Catalog
 
-当前在线聊天只构建 `AgentContext`，旧 `IntentContext` / `IntentPlanner` / `IntentModel` 已移除。
+已新增/保留的核心文件：
 
-上下文构建入口：
-
-- `services/aiagent/internal/logic/chatlogic.go`
-  - 保存用户消息后调用 `ContextManager.Build(...)`。
-  - 然后调用 `runSupervisor(..., agentContext.Messages)`。
-- `services/aiagent/internal/contextmanager/manager.go`
-  - 组装 `[]domain.ContextMessage`。
-
-当前 `AgentContext` 组装顺序：
-
-1. system：`agentprompt.SystemPrompt`
-2. conversation summary
-3. 最近 user/assistant 消息，最多 20 条
-4. latest tool result
-5. historical tool refs
-6. active task state
-7. active user memories
-8. active user profile
-9. 当前用户输入
-
-注意：`ContextManager` 只负责每轮用户请求进入 Supervisor 前的初始上下文快照。本轮运行中 Supervisor、AgentTool、子 Agent、ToolsNode 的内部消息由 ADK runSession/state 在内存里维护，不会回写到原来的 `agentContext.Messages` slice。
-
-跨轮上下文靠持久化实现：`ChatLogic.runSupervisor` 的 `OnEvent` 会边运行边把可转换的 assistant/tool event 写入 `ai_messages`，下一轮再由 `ContextManager` 从 DB 重新组装。
-
-### 2.2 Supervisor Agent + AgentTool
-
-最新完成：移除了 ADK `prebuilt/supervisor` / AgentTransfer，改为 `ChatModelAgent + AgentTool`。
-
-关键文件：
-
-- `services/aiagent/internal/eino/agent.go`
-- `services/aiagent/internal/eino/agent_test.go`
-- `services/aiagent/internal/prompts/agent/*.txt`
-- `services/aiagent/internal/svc/servicecontext.go`
-
-当前结构：
-
-- Root：`supervisor_agent`
-  - 普通 ADK `ChatModelAgent`
-  - 只绑定 5 个 AgentTool：
-    - `product_agent`
-    - `order_agent`
-    - `cart_checkout_agent`
-    - `coupon_agent`
-    - `general_agent`
-  - 不直接绑定业务 RPC 工具。
-  - `ToolsConfig.EmitInternalEvents = true`，用于把子 Agent 内部真实业务 tool event 暴露给外层 Runner。
-
-- 子 Agent：
-  - 都是普通 ADK `ChatModelAgent`
-  - 只绑定各自领域业务工具。
-  - 默认只接收 Supervisor 传入的紧凑 `request`，没有使用 `adk.WithFullChatHistoryAsInput()`，不会共享完整聊天历史。
-
-当前领域划分：
-
-- `product_agent`：`product_search`、`product_detail`、`product_recommend`、`inventory_get`
-- `order_agent`：`order_get`、`order_list`、`order_cancel`
-- `cart_checkout_agent`：`cart_list`、`cart_add`、`cart_sub`、`cart_delete`、`checkout_prepare`、`checkout_detail`、`order_create`
-- `coupon_agent`：`coupon_list`、`coupon_detail`、`coupon_claim`、`coupon_my_list`、`coupon_usage_list`、`coupon_calculate`
-- `general_agent`：无业务工具，用于普通客服解释、闲聊、无法归类问题
-
-ADK event 转换规则：
-
-- 跳过 assistant 中带 `ToolCalls` 的中间消息。
-- 跳过非 Supervisor 的 assistant 消息，避免子 Agent 内部回复直接展示给用户。
-- 跳过 AgentTool 包装层 tool event，例如 `product_agent` 返回。
-- 保留真实业务工具 event，例如 `product_search`、`order_get`，并写入 `ai_messages`。
-
-### 2.3 Eino Tool Calling / Execution Guard
-
-已完成：
-
-- 工具封装为 Eino `InvokableTool`。
-- `Registry.ToolsByNames(...)` 和 `Registry.ToolInfosByNames(...)` 可按领域取工具。
-- `ModelFactory.NewChatModel(ctx, cfg, tools...)` 支持 tools 参数。
-- tools 非空时使用 `ToolCallingChatModel.WithTools(tools)`，不用 deprecated `BindTools`。
-- 工具执行前由 Runner 注入可信 `ToolExecutionContext`：
-  - authenticated `user_id`
-  - `conversation_id`
-  - 当前 `message_id`
-  - `client_ip`
-- Eino tool arguments 里的 `user_id` 不可信，Execution Guard 必须覆盖或清理。
-
-关键文件：
-
-- `services/aiagent/internal/eino/model_factory.go`
+- `services/aiagent/internal/tools/tool.go`
+- `services/aiagent/internal/tools/catalog.go`
 - `services/aiagent/internal/tools/registry.go`
-- `services/aiagent/internal/tools/query_tools.go`
+- `services/aiagent/internal/tools/approval_manager.go`
+- `services/aiagent/internal/tools/confirmation_summaries.go`
+
+`tools.Tool` 现在统一承载：
+
+- `Name`
+- `Desc`
+- `Params`
+- `Metadata`
+- `Handler`
+- `ConfirmationSummary`
+
+`DefaultTools(clients, timeout)` 负责生成完整 `[]Tool` catalog。当前 20 个 AI 工具都从这里进入 Registry。
+
+### 2.2 删除旧运行时 manager
+
+旧文件已删除：
+
 - `services/aiagent/internal/tools/write_tools.go`
 - `services/aiagent/internal/tools/high_risk_tools.go`
-- `services/aiagent/internal/tools/executor.go`
 
-### 2.4 UserProfile / UserMemory
+旧概念已从生产代码清掉：
 
-方向已确定：
+- `QueryTools`
+- `WriteTools`
+- `HighRiskTools`
+- `queryInvokableTool`
+- `writeInvokableTool`
+- `highRiskInvokableTool`
+- `toolSpec`
+- `defaultToolSpecs`
+- `ToolDefinition`
 
-- 不再从 users RPC 获取账号资料当画像。
-- `ai_user_memories` 保存原子化长期记忆/证据。
-- `ai_user_profiles` 保存面向模型注入的聚合画像 JSON。
-- 每轮聊天消息持久化后投递 Kafka topic `ai-user-profile-updates`。
-- Profile Extractor 异步读取本轮消息、现有 profile、相关 active memories，调用 LLM 生成候选 patch。
-- 后端负责 JSON 校验、证据归属、敏感信息拒绝、用户隔离、删除/遗忘优先级和 upsert。
+注意：文档中仍允许出现“旧模块已删除”的说明，不代表代码里还有旧模块。
 
-结构化输出已改为 DeepSeek/OpenAI-compatible `json_object`：
+### 2.3 Registry 与 Eino adapter
 
-- 不再使用 `json_schema`。
-- `NewStructuredChatModel` 应设置 `response_format: {"type":"json_object"}`。
-- prompt 必须明确要求只输出 JSON 对象，并给示例。
+`Registry` 现在只保存：
 
-关键文件：
+```go
+map[string]tools.Tool
+```
 
-- `services/aiagent/internal/eino/profile_model.go`
-- `services/aiagent/internal/profileextractor/**`
-- `services/aiagent/internal/consumer/profile_update/**`
-- `services/aiagent/internal/contextmanager/user_profile.go`
-- `dal/model/ai/user_profiles/**`
+它负责：
 
-### 2.5 ai_messages 幂等与 UUIDv7
+- 返回本地 `domain.Metadata`
+- 返回 Eino `ToolInfo`
+- 返回统一 `invokableToolAdapter`
+- 查找 handler
+- 判断是否需要高风险确认
+- 构建确认摘要
 
-已按用户要求完成：
+统一 Eino adapter 的执行路径：
 
-- 前端聊天请求增加 `client_message_id`。
-- 同一轮 user/assistant/tool 消息保存同一个 `client_message_id`。
-- `msg_id` 使用 UUIDv7。
-- `id` 作为 DB 内部自增顺序 ID。
-- 重复提交按同一用户的 user 消息幂等判断。
-- 重放旧响应时只查同一会话、同一 `client_message_id` 的 assistant 消息，并按 `id asc` 返回。
+```text
+InvokableRun
+  -> ToolExecutionContext 取可信 UserID
+  -> JSON 参数解析
+  -> Executor.Execute(ctx, req, tool.Handler)
+  -> Handler 调业务 RPC
+  -> 返回 DataJSON 给 Eino
+```
 
-重要概念：
+`InvokableRun` 只强制要求可信 `UserID`；`ConversationID/MessageID/ClientIP` 尽量传，用于审计和链路追踪，但测试里允许为空。
 
-- `client_message_id`：前端生成的一轮请求幂等 ID。
-- `dedupe_client_message_id`：MySQL 生成列，只用于 user 消息唯一索引。
-- 不能唯一约束 `(user_id, client_message_id)`，因为同一轮 assistant/tool 也要保存相同 `client_message_id`。
+### 2.4 Executor 保持 Execution Guard 职责
+
+`Executor` 仍负责：
+
+- 工具白名单 metadata 检查
+- 参数脱敏
+- 覆盖模型传入的 `user_id`
+- 超时
+- 调用 handler
+- 生成统一 `tool_result`
+- 写入 `ai_tool_calls`
+- 写操作审计
+- `BusinessExecuted` 标记
+
+改动点：`NewExecutor(registry, ...)` 会把 executor 回填到 registry，供 `Registry.Tool(...)` 返回的统一 adapter 调用。
+
+### 2.5 高风险确认链路
+
+新增 `ApprovalManager`，只负责确认相关轻量能力：
+
+- `RequiresConfirmation`
+- `RequestConfirmation`
+- `BindResumeTarget`
+
+Eino ChatModelAgent middleware 不再依赖 `HighRiskTools`，而是通过 `ApprovalManager + Registry` 判断和创建确认。
+
+高风险工具仍是：
+
+- `cart_delete`
+- `order_create`
+- `order_cancel`
+
+首次调用：
+
+```text
+middleware
+  -> Registry.Metadata / RequiresConfirmation
+  -> Registry.ConfirmationSummary
+  -> ConfirmationManager.Create
+  -> tool.StatefulInterrupt
+  -> confirmation_required
+```
+
+批准后：
+
+```text
+ConfirmAction approved=true
+  -> ResumeStream / ResumeWithParams
+  -> 同一个 invokableToolAdapter
+  -> Executor
+  -> Handler
+  -> 业务 RPC
+```
+
+拒绝后：
+
+```text
+ConfirmAction approved=false
+  -> 后端直接返回 rejected tool_result + assistant_message
+  -> 不恢复 checkpoint
+  -> 不调用 LLM
+  -> 不调用业务 RPC
+```
+
+### 2.6 ServiceContext 简化
+
+`services/aiagent/internal/svc/servicecontext.go` 初始化顺序已改成：
+
+```text
+业务 RPC clients
+  -> tool recorder
+  -> tools.DefaultTools(...)
+  -> tools.NewRegistry(...)
+  -> tools.NewExecutor(...)
+  -> confirmation manager
+  -> tools.NewApprovalManager(...)
+  -> eino.NewSupervisorAgent(... WithApprovalManager ...)
+```
+
+`ServiceContext.HighRiskTools` 字段已删除。
+
+### 2.7 文档已同步
+
+已同步更新：
+
+- `docs/ai-agent-tool-calling.md`
+- `docs/ai-customer-service-design.md`
+- `docs/ai-customer-service-implementation-plan.md`
+
+文档现在描述统一工具链路和旧 manager 删除状态。
 
 ## 3. 当前卡在哪儿
 
-当前没有明确代码阻塞，最近一轮任务“移除 ADK prebuilt Supervisor，改用 ChatModelAgent + AgentTool”已经完成并通过目标测试。
+当前没有代码阻塞。工具链路重构已经合入当前 `main` 最新提交 `e5919e6 Refactor/tools (#35)`，工作树里没有这次工具重构的未提交 diff。
 
-需要注意的环境问题：
+当前 `git status --short` 只看到两个未跟踪目录：
 
-- 系统 `/tmp` / 默认 Go build cache 所在卷曾满过，`go test` 报：
-  - `link: mapping output file failed: no space left on device`
-- workaround 是临时使用仓库所在卷：
-  - `GOCACHE=/Volumes/macOS/VSCodeProject/GoProject/project/go-mall/.cache/go-build`
-  - `GOTMPDIR=/Volumes/macOS/VSCodeProject/GoProject/project/go-mall/.cache/go-tmp`
-- 验证后 `.cache` 已被清理。
-- `apis/ai/...` 测试在 sandbox 下可能因为 `httptest` 绑定本地端口失败：
-  - `bind: operation not permitted`
-  - 需要按规则申请非 sandbox 运行同一 `go test` 命令。
+```text
+?? frontend/
+?? frontend_docs/
+```
 
-当前工作区仍有很多未提交改动，其中大部分来自前序任务，不要误判为本轮新增。
+这两个目录不是本轮 AI tool 重构产生的内容。不要在不了解来源的情况下删除、提交或重置。
 
-最新 `git status --short` 只显示本轮直接相关改动为：
-
-- `services/aiagent/internal/eino/agent.go`
-- `services/aiagent/internal/eino/agent_test.go`
-
-但 docs 中关于 AgentTool 的更新也已经存在于工作区；请以实际 `git diff` 为准。
+还有一个环境提示：code-review graph 显示它是在 `refactor/tools` 分支上构建的，但当前在 `main`。如果新会话要做代码审查或依赖 code-review graph，请先重建 graph，不要信旧 graph。
 
 ## 4. 最近验证结果
 
-最近一次完成 AgentTool 替换后验证：
+计划内测试已经通过：
 
 ```bash
+go test ./services/aiagent/internal/tools -count=1
 go test ./services/aiagent/internal/eino -count=1
 go test ./services/aiagent/internal/logic -count=1
-go test ./services/aiagent/... -count=1
-go test ./apis/ai/... -count=1
+go test ./services/aiagent/... ./apis/ai/... -count=1
 git diff --check
 ```
 
 结果：
 
-- `services/aiagent/internal/eino` 通过。
-- `services/aiagent/internal/logic` 通过。
-- `services/aiagent/...` 通过。
-- `apis/ai/...` sandbox 下因本地端口绑定失败，非 sandbox 重跑通过。
-- `git diff --check` 通过。
+- `services/aiagent/internal/tools` 通过
+- `services/aiagent/internal/eino` 通过
+- `services/aiagent/internal/logic` 通过
+- `services/aiagent/... ./apis/ai/...` 通过
+- `git diff --check` 通过
 
-残留检查：
+完整测试也跑过：
 
 ```bash
-rg -n "prebuilt/supervisor|supervisoragent|TransferToAgent|AgentTransfer|Successfully transferred" services docs
+go test ./... -count=1
 ```
 
-结果：
+结果：失败，但失败集中在外部集成测试环境，不是 AI tool 重构本身：
 
-- `services/**` 无旧 supervisor/transfer 代码残留。
-- `docs/**` 中只允许出现“当前不使用 `prebuilt/supervisor` / AgentTransfer”的说明。
+- `test/rpc/audit`：`127.0.0.1:10008 connection refused`
+- `test/rpc/inventory`：`127.0.0.1:10011 connection refused`
+- `test/rpc/order`：`0.0.0.0:10004 connection refused`
+- `test/rpc/payment`：`0.0.0.0:10006 connection refused`
+- `test/rpc/product`：`0.0.0.0:10002 connection refused`
+- `test/rpc/users/*`：`0.0.0.0:10001 connection refused`
+- `test/rpc/product` 还依赖 Elasticsearch、MySQL 用户权限和本地 `a.jpg`
+
+如果要让 `go test ./...` 全绿，需要先启动这些 RPC 服务、Elasticsearch、MySQL，并补齐测试资源。
 
 ## 5. 下一步计划
 
-建议新会话接手后先做这几件事：
+建议新会话接手后按这个顺序做：
 
-1. 只读确认当前状态：
+1. 先确认当前状态：
 
 ```bash
+git branch --show-current
+git log --oneline -5
 git status --short
-git rev-parse --abbrev-ref HEAD
-rg -n "prebuilt/supervisor|supervisoragent|TransferToAgent|AgentTransfer|Successfully transferred" services docs
-rg -n "NewSupervisorAgent|NewAgentTool|EmitInternalEvents|WithFullChatHistoryAsInput" services/aiagent/internal/eino
+rg "NewQueryTools|QueryTools|NewWriteTools|WriteTools|NewHighRiskTools|HighRiskTools|HighRiskTool|WithHighRiskTools|toolSpec|defaultToolSpecs|ToolDefinition" services/aiagent/internal apis/ai/internal -n
 ```
 
-2. 确认文档和实现是否完全一致：
+2. 如果要继续做 AI tool 相关改动，先读：
 
-- `docs/ai-agent-tool-calling.md`
-- `docs/ai-customer-service-design.md`
-- `docs/ai-customer-service-implementation-plan.md`
-- `docs/ai-agent-context-optimization.md`
-
-3. 如果继续优化上下文，要明确区分三层：
-
-- ContextManager：每轮开始前组装初始模型输入。
-- ADK runSession/state：本轮内部 supervisor/subagent/tool 消息传递。
-- DB：跨轮持久化上下文来源，下一轮再被 ContextManager 读取。
-
-4. 如果继续优化事件持久化，重点检查：
-
-- 是否需要持久化更多子 Agent 内部 assistant 消息。
-- AgentTool wrapper event 是否仍应跳过。
-- 真实业务 tool event 是否都能通过 `EmitInternalEvents` 暴露并写入 `ai_messages`。
-
-5. 如果继续查 DeepSeek JSON Output，必须写真实 HTTP 请求体测试：
-
-- 不要只测本地 config struct。
-- 用 `httptest.Server` 捕获请求 body。
-- 断言真实请求包含：
-
-```json
-"response_format": {"type":"json_object"}
+```text
+docs/ai-customer-service-prd.md
+docs/ai-customer-service-design.md
+docs/ai-customer-service-implementation-plan.md
+docs/ai-agent-tool-calling.md
 ```
 
-## 6. 踩过的坑，绝对不要再踩
+3. 如果新增工具：
 
-1. 不要再用 ADK `prebuilt/supervisor` / AgentTransfer。
+- 在 `domain` 定义稳定工具名。
+- 在 `DefaultTools` catalog 中声明 schema、metadata、RPC 映射。
+- 在对应 `*_tools.go` 增加 handler。
+- 高风险工具必须提供 `ConfirmationSummaryFunc`。
+- schema 绝对不能暴露 `user_id`。
+- 业务 RPC user id 必须来自 `HandlerRequest.UserID`。
 
-   已确认不适合当前客服场景：全量上下文共享、注意力稀释、transfer 成功消息污染上下文、强制注入 Transfer Tool。当前采用 `ChatModelAgent + AgentTool`。
+4. 如果新增测试：
 
-2. 不要给子 Agent 使用 `WithFullChatHistoryAsInput()`。
+当前 AGENTS 最新规则要求“所有测试文件一律放在 workspace 根目录 `tests/` 下”。仓库已有大量历史测试仍在包目录内，这是既有状态；新会话如果新增测试，应先和用户确认是否要严格执行新规则，避免一边遵守新规则、一边破坏 Go 包内测试惯例。
 
-   当前设计要求子 Agent 默认只收到 Supervisor 传入的紧凑 `request`，避免全量历史共享和上下文污染。
+5. 如果做审查或继续重构，优先跑：
 
-3. 不要让 Supervisor 直接绑定业务 RPC 工具。
+```bash
+go test ./services/aiagent/internal/tools -count=1
+go test ./services/aiagent/internal/eino -count=1
+go test ./services/aiagent/internal/logic -count=1
+go test ./services/aiagent/... ./apis/ai/... -count=1
+```
 
-   Supervisor 只绑定 AgentTool。业务工具只给领域子 Agent，才能保持领域边界和工具列表可控。
+完整 `go test ./...` 只有在外部服务准备好后才有意义。
 
-4. 不要把 AgentTool wrapper event 当业务工具结果落库。
+## 6. 绝对不要再踩的坑
 
-   `product_agent`、`order_agent` 等 wrapper event 只是协调层返回。应跳过。真正要落库的是 `product_search`、`order_get` 等业务工具 event。
+1. 不要再恢复 `QueryTools/WriteTools/HighRiskTools`
 
-5. 不要再恢复 IntentPlanner / IntentContext。
+这次重构的目标就是删除它们。不要为了“兼容”又加回旧 manager、旧 invokable wrapper 或 registry 二次绑定。
 
-   用户已经明确：Intent agent 改为 Supervisor Agent，具备意图识别、路由、任务拆解能力；旧 planner 职责过大，已经移除。
+2. 不要让 Registry 自动生成 schema-only 占位工具
 
-6. 不要信任模型、客户端、metadata 或 tool arguments 里的 `user_id`。
+旧 `NewRegistry(config)` 会注册默认 schema，然后其他 manager 反向替换可执行工具。这个模式已经删除。现在必须显式传入 `DefaultTools(...)`。
 
-   登录态用户 ID 是唯一可信来源；工具执行前必须由后端注入/覆盖。
+3. 不要让模型或客户端提供 `user_id`
 
-7. 不要再用 `json_schema` 结构化输出。
+Tool schema 不能有 `user_id`。handler 调业务 RPC 前必须使用登录态注入的 `HandlerRequest.UserID`。
 
-   DeepSeek 报过：`This response_format type is unavailable now`。当前统一使用 `json_object`。
+4. 不要把高风险拒绝交回 LLM
 
-8. 不要把 prompt 约束当成 `response_format`。
+`approved=false` 是确定性终态，后端直接收口。否则模型会被旧 confirmation 上下文带偏，继续问用户是否确认。
 
-   DeepSeek JSON Output 需要两者都满足：请求体带 `response_format: {"type":"json_object"}`，prompt 明确要求输出 JSON 并给示例。
+5. 不要在高风险首次调用时执行业务 RPC
 
-9. 不要只测本地配置对象。
+首次调用只能创建 confirmation 并 `StatefulInterrupt`。批准后 resume 才能进入真实 handler。
 
-   如果用户质疑真实请求参数，必须用 `httptest.Server` 捕获真实 HTTP body。
+6. 不要吞掉写操作审计失败
 
-10. 不要直接唯一约束 `(user_id, client_message_id)`。
+写操作业务 RPC 成功但审计失败时，事件必须标记失败并带 `business_executed=true`，防止用户重复执行造成二次写入。
 
-    同一轮 assistant/tool 也要保存相同 `client_message_id`。幂等唯一约束要只作用在 user 消息。
+7. 不要把 `assistant_delta` / `tool_progress` 当作持久化消息
 
-11. 不要把 `ContextManager` 理解成本轮运行时动态上下文容器。
+它们是 SSE 瞬时事件。完整持久化只应该保存 `assistant_message`、`tool_result`、`confirmation_required`、`error`。
 
-    它只负责每轮开始前组装初始上下文；本轮内部消息由 ADK 管，跨轮靠 `ai_messages` / summary / memory / profile 再组装。
+8. 不要相信旧 AGENTS 里的 WebSocket 描述
+
+代码和文档当前主链路是 SSE：`POST /douyin/ai/chat`，aiagent 的 `Chat/ConfirmAction` 是 server-streaming。WebSocket 已删除。
+
+9. 不要用旧 code-review graph 直接下结论
+
+当前 graph 提示建在 `refactor/tools`，现在分支是 `main`。要用 graph 就先 rebuild。
+
+10. 不要随手处理 `frontend/` 和 `frontend_docs/`
+
+它们当前是未跟踪目录，来源不属于本轮工具重构。没有用户明确指令前，不要删除、格式化或提交。
