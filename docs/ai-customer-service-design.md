@@ -91,7 +91,7 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 }
 ```
 
-服务端响应为 `text/event-stream`。每个事件使用 `event: <type>`、`id: <message_id>` 和 `data: <ServerEvent JSON>` 输出，并在事件产生后立即 flush；空闲连接每 10 秒发送 `: ping`，单次连接最长 5 分钟。前端使用 `fetch + ReadableStream` 发送 POST JSON 并消费 SSE。模型自然语言输出按 `assistant_delta` 片段实时推送；如果本轮已有 delta，最终 `assistant_message` 只用于落库和幂等重放，不在同一次 SSE 中重复下发。工具调用前发送去重后的 `tool_progress`，工具完成后发送去重后的中文摘要 `tool_result`。
+服务端响应为 `text/event-stream`。每个事件使用 `event: <type>`、`id: <message_id>` 和 `data: <ServerEvent JSON>` 输出，并在事件产生后立即 flush；空闲连接每 10 秒发送 `: ping`，单次连接最长 5 分钟；当事件没有 `message_id` 时不输出 `id:` 行。前端使用 `fetch + ReadableStream` 发送 POST JSON 并消费 SSE。模型面向用户的最终自然语言输出按 `assistant_delta` 片段实时推送并携带消息 ID；模型 reasoning 或工具调用前的中间过程按无消息 ID 的 `assistant_thinking_delta` 推送，前端按会话本地折叠展示，不与最终回答拼接，不落库。如果本轮已有 `assistant_delta`，最终 `assistant_message` 只用于落库和幂等重放，不在同一次 SSE 中重复下发；只有 `assistant_thinking_delta` 时仍允许最终 `assistant_message` 下发。工具调用前发送去重后的 `tool_progress`，工具完成后发送去重后的中文摘要 `tool_result`。
 
 ## 3. 核心模块
 ### 3.1 Eino 模型接入
@@ -115,7 +115,7 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 - 将会话上下文转换为 Eino message。
 - 构建系统提示词，约束模型只能调用已注册工具。
 - 使用 Eino ADK ChatModelAgent 编排“模型推理 -> ToolsNode 工具调用 -> 工具结果回填 -> 最终回复”流程。
-- 通过 Eino `adk.WithCallbacks` 捕获 Agent、ChatModel 和 Tool 生命周期；模型 callback 仅绑定 `supervisor_agent`，工具 callback 全局捕获并过滤 agent tool。模型流式输出转为 `assistant_delta`，工具执行转为去重后的 `tool_progress` / `tool_result`，ADK iterator 仍负责 interrupt、错误和执行收尾。
+- 通过 Eino `adk.WithCallbacks` 捕获 Agent、ChatModel 和 Tool 生命周期；模型 callback 仅绑定 `supervisor_agent`，工具 callback 全局捕获并过滤 agent tool。模型最终回答流式输出转为 `assistant_delta`，模型 reasoning 和工具调用前中间过程转为 `assistant_thinking_delta`，工具执行转为去重后的 `tool_progress` / `tool_result`，ADK iterator 仍负责 interrupt、错误和执行收尾。
 - 将 Eino callback 或本地包装器中的工具调用事件写入 `ai_tool_calls`。
 - 在 Eino 执行工具前调用本地风险策略，拦截高风险工具并创建确认请求。
 

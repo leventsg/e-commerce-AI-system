@@ -68,8 +68,15 @@ func (b *agentEventCallbackBridge) onModelEnd(ctx context.Context, info *einocal
 	if !b.shouldExposeModel(info) || output == nil || output.Message == nil {
 		return ctx
 	}
+	if reasoning := reasoningContent(output.Message); reasoning != "" {
+		_ = b.sendThinkingDelta(ctx, reasoning)
+	}
 	content := strings.TrimSpace(output.Message.Content)
-	if content == "" || len(output.Message.ToolCalls) > 0 {
+	if content == "" {
+		return ctx
+	}
+	if len(output.Message.ToolCalls) > 0 {
+		_ = b.sendThinkingDelta(ctx, content)
 		return ctx
 	}
 	b.recordNonStreamingAssistantContent(content)
@@ -88,6 +95,9 @@ func (b *agentEventCallbackBridge) onModelEndWithStreamOutput(ctx context.Contex
 			}
 		}
 	}
+	contentChunks := make([]string, 0, 4)
+	reasoningChunks := make([]string, 0, 2)
+	hasToolCall := false
 	for {
 		chunk, err := output.Recv()
 		if errors.Is(err, io.EOF) {
@@ -104,13 +114,29 @@ func (b *agentEventCallbackBridge) onModelEndWithStreamOutput(ctx context.Contex
 			})
 			return ctx
 		}
-		if chunk == nil || chunk.Message == nil || len(chunk.Message.ToolCalls) > 0 {
+		if chunk == nil || chunk.Message == nil {
 			continue
 		}
-		text := chunk.Message.Content
-		if text == "" {
-			continue
+		if len(chunk.Message.ToolCalls) > 0 {
+			hasToolCall = true
 		}
+		if reasoning := reasoningContent(chunk.Message); reasoning != "" {
+			reasoningChunks = append(reasoningChunks, reasoning)
+		}
+		if chunk.Message.Content != "" {
+			contentChunks = append(contentChunks, chunk.Message.Content)
+		}
+	}
+	for _, text := range reasoningChunks {
+		_ = b.sendThinkingDelta(ctx, text)
+	}
+	if hasToolCall {
+		for _, text := range contentChunks {
+			_ = b.sendThinkingDelta(ctx, text)
+		}
+		return ctx
+	}
+	for _, text := range contentChunks {
 		messageID := b.assistantMessageID()
 		// 汇总流式的 assistant chunk内容
 		b.appendAssistantDelta(text)
@@ -323,6 +349,18 @@ func (b *agentEventCallbackBridge) assistantMessageIDLocked() string {
 	return b.visibleAssistantMessageID
 }
 
+func (b *agentEventCallbackBridge) sendThinkingDelta(ctx context.Context, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return b.send(ctx, domain.AgentEvent{
+		Type:           domain.EventAssistantThinkingDelta,
+		ConversationID: b.req.ConversationID,
+		Content:        text,
+		Done:           false,
+	})
+}
+
 func (b *agentEventCallbackBridge) startToolMessageID(toolName string) string {
 	toolName = strings.TrimSpace(toolName)
 	messageID := newAgentMessageID()
@@ -406,7 +444,20 @@ func toolProgressDedupeKey(event domain.AgentEvent) string {
 }
 
 func shouldEmitToOnEvent(eventType string) bool {
-	return eventType != domain.EventAssistantDelta && eventType != domain.EventToolProgress
+	return eventType != domain.EventAssistantDelta && eventType != domain.EventAssistantThinkingDelta && eventType != domain.EventToolProgress
+}
+
+func reasoningContent(message *schema.Message) string {
+	if message == nil {
+		return ""
+	}
+	if strings.TrimSpace(message.ReasoningContent) != "" {
+		return message.ReasoningContent
+	}
+	if value, ok := message.Extra["reasoning-content"].(string); ok && strings.TrimSpace(value) != "" {
+		return value
+	}
+	return ""
 }
 
 // 工具名称 + 状态 + 数据JSON + 内容 作为去重的key

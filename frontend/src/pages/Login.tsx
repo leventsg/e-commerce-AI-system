@@ -4,24 +4,22 @@ import { Bot, Loader2 } from 'lucide-react'
 import { useAuth } from '@/contexts'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { loginWithPassword } = useAuth()
   const navigate = useNavigate()
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!username.trim() || !password.trim()) { setError('请输入用户名和密码'); return }
+    if (!email.trim() || !password.trim()) { setError('请输入邮箱和密码'); return }
     setLoading(true); setError('')
     try {
-      // Mock login
-      await new Promise(r => setTimeout(r, 500))
-      login('mock-token-' + Date.now(), username.trim())
+      await loginWithPassword(email.trim(), password)
       navigate('/agent', { replace: true })
-    } catch {
-      setError('登录失败，请重试')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '登录失败，请重试')
     } finally {
       setLoading(false)
     }
@@ -38,11 +36,11 @@ export default function LoginPage() {
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">用户名</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">邮箱</label>
             <input
-              type="text" value={username} onChange={e => setUsername(e.target.value)}
+              type="email" value={email} onChange={e => setEmail(e.target.value)}
               className="w-full rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
-              placeholder="admin" autoComplete="username"
+              placeholder="you@example.com" autoComplete="email"
             />
           </div>
           <div>

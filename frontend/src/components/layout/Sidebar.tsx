@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
-import { Plus, MessageSquare, Search, MoreHorizontal, Trash2, Pencil, Check, X, Bot } from 'lucide-react'
+import { Plus, MessageSquare, Search, MoreHorizontal, Trash2, Pencil, Bot } from 'lucide-react'
 import { useAuth } from '@/contexts'
 import type { ConversationSummary } from '@/types'
 

@@ -1,7 +1,7 @@
 /** 统一消息类型（对话流中渲染的原子单元） */
 export interface UIMessage {
   id: string
-  type: 'user' | 'assistant' | 'tool-result' | 'confirmation' | 'error' | 'system'
+  type: 'user' | 'assistant' | 'thinking' | 'tool-result' | 'confirmation' | 'error' | 'system'
   content: string
   timestamp: number
   streaming?: boolean
@@ -11,8 +11,10 @@ export interface UIMessage {
   toolCallId?: string
   dataJson?: string
   /** 确认卡片 */
+  conversationId?: string
   confirmationId?: string
   expiresAt?: number
+  confirmationStatus?: 'pending' | 'approved' | 'rejected' | 'expired'
   /** 工具调用链路步骤 */
   trace?: TraceStep[]
 }

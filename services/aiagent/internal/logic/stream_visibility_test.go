@@ -25,9 +25,21 @@ func TestEventForwardStateForwardsFinalAssistantWhenNoDelta(t *testing.T) {
 	}
 }
 
+func TestEventForwardStateThinkingDeltaDoesNotSuppressFinalAssistant(t *testing.T) {
+	state := newEventForwardState()
+
+	if !state.shouldForward(domain.AgentEvent{Type: "assistant_thinking_delta", Content: "我先分析一下"}) {
+		t.Fatal("assistant_thinking_delta should be forwarded")
+	}
+	if !state.shouldForward(domain.AgentEvent{Type: domain.EventAssistantMessage, Content: "最终答复", Done: true}) {
+		t.Fatal("assistant_message should still be forwarded after thinking delta")
+	}
+}
+
 func TestAgentEventsToMessagesSkipsTransientEvents(t *testing.T) {
 	messages, err := agentEventsToMessages(1, "client-1", []domain.AgentEvent{
 		{Type: domain.EventAssistantDelta, ConversationID: "conv-1", MessageID: "msg-delta", Content: "你"},
+		{Type: "assistant_thinking_delta", ConversationID: "conv-1", Content: "我先分析一下"},
 		{Type: domain.EventToolProgress, ConversationID: "conv-1", MessageID: "msg-progress", Content: "正在查询商品..."},
 		{Type: domain.EventAssistantMessage, ConversationID: "conv-1", MessageID: "msg-final", Content: "你好", Done: true},
 	})

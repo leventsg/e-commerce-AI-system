@@ -77,6 +77,72 @@ func TestAgentEventCallbackBridgeStreamsModelDeltasAndBuffersFinalMessage(t *tes
 	}
 }
 
+func TestAgentEventCallbackBridgeStreamsReasoningAsThinkingDelta(t *testing.T) {
+	ctx := context.Background()
+	var events []domain.AgentEvent
+	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	reader, writer := schema.Pipe[*model.CallbackOutput](1)
+	writer.Send(&model.CallbackOutput{Message: &schema.Message{Role: schema.Assistant, ReasoningContent: "我需要先分析用户想买什么。"}}, nil)
+	writer.Close()
+
+	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
+
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1 thinking delta; events=%+v", len(events), events)
+	}
+	if events[0].Type != "assistant_thinking_delta" || events[0].Content != "我需要先分析用户想买什么。" || events[0].Done {
+		t.Fatalf("event = %+v, want assistant_thinking_delta", events[0])
+	}
+	if events[0].MessageID != "" {
+		t.Fatalf("thinking delta message id = %q, want empty", events[0].MessageID)
+	}
+	if _, ok := bridge.finalAssistantEvent(); ok {
+		t.Fatal("reasoning content should not produce final assistant message")
+	}
+}
+
+func TestAgentEventCallbackBridgeTreatsToolCallPreambleAsThinking(t *testing.T) {
+	ctx := context.Background()
+	var events []domain.AgentEvent
+	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	reader, writer := schema.Pipe[*model.CallbackOutput](2)
+	writer.Send(&model.CallbackOutput{Message: &schema.Message{Role: schema.Assistant, Content: "我先帮您搜索。"}}, nil)
+	writer.Send(&model.CallbackOutput{Message: &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			ID: "call-1",
+			Function: schema.FunctionCall{
+				Name:      domain.ToolProductSearch,
+				Arguments: `{"keyword":"蓝牙耳机"}`,
+			},
+		}},
+	}}, nil)
+	writer.Close()
+
+	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
+
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1 thinking delta; events=%+v", len(events), events)
+	}
+	if events[0].Type != "assistant_thinking_delta" || events[0].Content != "我先帮您搜索。" {
+		t.Fatalf("event = %+v, want tool-call preamble as thinking delta", events[0])
+	}
+	if events[0].MessageID != "" {
+		t.Fatalf("thinking delta message id = %q, want empty", events[0].MessageID)
+	}
+	if _, ok := bridge.finalAssistantEvent(); ok {
+		t.Fatal("tool-call preamble should not produce final assistant message")
+	}
+}
+
 func TestAgentEventCallbackBridgeBuffersNonStreamingModelFinal(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
@@ -123,8 +189,14 @@ func TestAgentEventCallbackBridgeSkipsToolCallModelChunks(t *testing.T) {
 
 	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
 
-	if len(events) != 0 {
-		t.Fatalf("events len = %d, want 0 for tool-call model chunks; events=%+v", len(events), events)
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1 thinking delta for tool-call model chunks; events=%+v", len(events), events)
+	}
+	if events[0].Type != domain.EventAssistantThinkingDelta || events[0].Content != "我先帮您搜索。" {
+		t.Fatalf("event = %+v, want tool-call content as thinking delta", events[0])
+	}
+	if events[0].MessageID != "" {
+		t.Fatalf("thinking delta message id = %q, want empty", events[0].MessageID)
 	}
 }
 

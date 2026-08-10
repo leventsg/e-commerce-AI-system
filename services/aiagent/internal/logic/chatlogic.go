@@ -296,7 +296,7 @@ func agentEventToMessage(userID uint64, clientMessageID string, event domain.Age
 
 // 是否是增量事件或者工具调用进度事件，这类事件不需要持久化
 func isTransientAgentEvent(eventType string) bool {
-	return eventType == domain.EventAssistantDelta || eventType == domain.EventToolProgress
+	return eventType == domain.EventAssistantDelta || eventType == domain.EventAssistantThinkingDelta || eventType == domain.EventToolProgress
 }
 
 func shouldPersistAgentEvent(eventType string) bool {

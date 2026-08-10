@@ -1,9 +1,11 @@
-export const API_BASE = '/api/v1'
+export const API_BASE = import.meta.env.VITE_API_BASE || ''
 export const CONVERSATIONS_PAGE_SIZE = 30
 
 export const STORAGE_KEYS = {
   TOKEN: 'go-mall-token',
+  REFRESH_TOKEN: 'go-mall-refresh-token',
   USERNAME: 'go-mall-username',
+  USER: 'go-mall-user',
   THEME: 'go-mall-theme',
 } as const
 

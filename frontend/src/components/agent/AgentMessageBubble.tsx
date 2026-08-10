@@ -1,19 +1,24 @@
 import { useState } from 'react'
-import { Bot, User, Loader2, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import { Bot, User, Loader2, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronUp, Cpu } from 'lucide-react'
 import type { UIMessage } from '@/types'
 import { TOOL_DISPLAY_NAMES, TOOL_ICONS } from '@/constants'
 import { MarkdownRenderer, CopyButton } from '@/components/common'
 import { AgentThinkingBlock } from './AgentThinkingBlock'
 import { ConfirmationCard } from './ConfirmationCard'
 
-interface AgentMessageBubbleProps { message: UIMessage; isLast?: boolean }
+interface AgentMessageBubbleProps {
+  message: UIMessage
+  isLast?: boolean
+  onConfirmAction?: (conversationId: string, confirmationId: string, approved: boolean) => Promise<void> | void
+}
 
-export function AgentMessageBubble({ message, isLast }: AgentMessageBubbleProps) {
+export function AgentMessageBubble({ message, onConfirmAction }: AgentMessageBubbleProps) {
   switch (message.type) {
     case 'user': return <UserBubble message={message} />
-    case 'assistant': return <AssistantBubble message={message} isLast={isLast} />
+    case 'assistant': return <AssistantBubble message={message} />
+    case 'thinking': return <ThinkingBubble message={message} />
     case 'tool-result': return <ToolBubble message={message} />
-    case 'confirmation': return <ConfirmationCard message={message} />
+    case 'confirmation': return <ConfirmationCard message={message} onConfirm={(conversationId, id) => onConfirmAction?.(conversationId, id, true)} onReject={(conversationId, id) => onConfirmAction?.(conversationId, id, false)} />
     case 'error': return <ErrorBubble message={message} />
     default: return null
   }
@@ -34,7 +39,34 @@ function UserBubble({ message }: { message: UIMessage }) {
   )
 }
 
-function AssistantBubble({ message, isLast }: { message: UIMessage; isLast?: boolean }) {
+function ThinkingBubble({ message }: { message: UIMessage }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="flex animate-slide-up mb-3">
+      <div className="flex items-start gap-3 max-w-[85%] ml-11">
+        <div className="min-w-0 flex-1 rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800/50 transition-colors"
+          >
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            <Cpu className="w-3.5 h-3.5 text-orange-400" />
+            <span className="font-medium text-gray-300">模型思考</span>
+            {message.streaming && <Loader2 className="w-3 h-3 text-orange-400 animate-spin ml-1" />}
+          </button>
+          {expanded && (
+            <div className="border-t border-gray-800 px-3 py-2 text-xs text-gray-400 whitespace-pre-wrap break-words">
+              {message.content}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AssistantBubble({ message }: { message: UIMessage }) {
   const [expanded, setExpanded] = useState(false)
   const MAX_PREVIEW = 500
   const isLong = message.content.length > MAX_PREVIEW

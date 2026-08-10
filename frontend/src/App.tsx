@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, useMemo } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { useAuth, useTheme } from '@/contexts'
+import { useCallback, useEffect, useState } from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { useAuth } from '@/contexts'
 import { useAgent } from '@/hooks'
 import { TopBar, Sidebar } from '@/components/layout'
 import { AgentChatWindow, AgentChatInput } from '@/components/agent'
@@ -23,18 +23,18 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function AgentConsole() {
-  const { activeId, messages, sessions, isStreaming, sendMessage, selectSession, newSession, stopGeneration, error } = useAgent()
+  const { activeId, messages, sessions, isStreaming, sendMessage, confirmAction, selectSession, newSession, stopGeneration } = useAgent()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const handleSend = useCallback((content: string) => {
     sendMessage(content)
   }, [sendMessage])
 
-  const handleDelete = useCallback((id: string) => {
+  const handleDelete = useCallback((_id: string) => {
     // Simple delete — just filter out
   }, [])
 
-  const handleRename = useCallback((id: string, title: string) => {
+  const handleRename = useCallback((_id: string, _title: string) => {
     // Simple rename
   }, [])
 
@@ -63,6 +63,7 @@ function AgentConsole() {
             messages={messages}
             isStreaming={isStreaming}
             onSuggestionClick={handleSend}
+            onConfirmAction={confirmAction}
           />
           <AgentChatInput
             onSend={handleSend}

@@ -7,6 +7,7 @@ interface AgentChatWindowProps {
   messages: UIMessage[]
   isStreaming: boolean
   onSuggestionClick?: (text: string) => void
+  onConfirmAction?: (conversationId: string, confirmationId: string, approved: boolean) => Promise<void> | void
 }
 
 const SUGGESTIONS = [
@@ -16,7 +17,7 @@ const SUGGESTIONS = [
   { icon: <Ticket className="w-5 h-5 text-orange-400" />, text: '有什么优惠券' },
 ]
 
-export function AgentChatWindow({ messages, isStreaming, onSuggestionClick }: AgentChatWindowProps) {
+export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggestionClick, onConfirmAction }: AgentChatWindowProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [nearBottom, setNearBottom] = useState(true)
   const [userScrolling, setUserScrolling] = useState(false)
@@ -62,7 +63,7 @@ export function AgentChatWindow({ messages, isStreaming, onSuggestionClick }: Ag
       ) : (
         <div className="max-w-3xl mx-auto w-full">
           {messages.map((msg, i) => (
-            <AgentMessageBubble key={msg.id} message={msg} isLast={i === messages.length - 1} />
+            <AgentMessageBubble key={msg.id} message={msg} isLast={i === messages.length - 1} onConfirmAction={onConfirmAction} />
           ))}
         </div>
       )}
@@ -79,7 +80,7 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick?: (text: string) 
       </div>
       <h2 className="text-2xl font-bold text-gray-100 mb-2">go-mall AI 助手</h2>
       <p className="text-gray-400 text-center max-w-md mb-8">
-        基于 Eino Agent 架构的智能客服。我可以帮你搜索商品、管理购物车、查询订单、领取优惠券等。
+        Hello，我是你的智能客服。我可以帮你搜索商品、管理购物车、查询订单、领取优惠券等。
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-lg w-full">
         {SUGGESTIONS.map((s, i) => (
