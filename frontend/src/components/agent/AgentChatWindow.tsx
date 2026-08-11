@@ -2,6 +2,8 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { Bot, Search, ShoppingCart, Ticket, Package } from 'lucide-react'
 import type { UIMessage } from '@/types'
 import { AgentMessageBubble } from './AgentMessageBubble'
+import { AssistantResponseGroup } from './AssistantResponseGroup'
+import { buildChatRenderItems } from './chatRenderItems'
 
 interface AgentChatWindowProps {
   messages: UIMessage[]
@@ -16,6 +18,11 @@ const SUGGESTIONS = [
   { icon: <Package className="w-5 h-5 text-orange-400" />, text: '查看我的订单' },
   { icon: <Ticket className="w-5 h-5 text-orange-400" />, text: '有什么优惠券' },
 ]
+
+function scrollToBottom(el: HTMLDivElement | null) {
+  if (!el || typeof el.scrollTo !== 'function') return
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+}
 
 export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggestionClick, onConfirmAction }: AgentChatWindowProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -36,7 +43,7 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
   // Force scroll on new user message
   useEffect(() => {
     if (messages.length > prevLen.current && messages[messages.length - 1]?.type === 'user') {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+      scrollToBottom(scrollRef.current)
     }
     prevLen.current = messages.length
   }, [messages])
@@ -44,7 +51,7 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
   // Auto-scroll when near bottom
   useEffect(() => {
     if (nearBottom && !userScrolling) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+      scrollToBottom(scrollRef.current)
     }
   }, [messages, nearBottom, userScrolling])
 
@@ -55,6 +62,7 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
   }, [handleScroll])
 
   const isEmpty = messages.length === 0
+  const renderItems = buildChatRenderItems(messages)
 
   return (
     <div ref={scrollRef} className={`flex-1 overflow-y-auto px-4 md:px-6 py-4 bg-gradient-to-b from-gray-950 to-gray-900/50 ${isEmpty ? 'overflow-y-hidden' : ''}`}>
@@ -62,8 +70,10 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
         <EmptyState onSuggestionClick={onSuggestionClick} />
       ) : (
         <div className="max-w-3xl mx-auto w-full">
-          {messages.map((msg, i) => (
-            <AgentMessageBubble key={msg.id} message={msg} isLast={i === messages.length - 1} onConfirmAction={onConfirmAction} />
+          {renderItems.map((item, i) => (
+            item.kind === 'user'
+              ? <AgentMessageBubble key={item.message.id} message={item.message} isLast={i === renderItems.length - 1} onConfirmAction={onConfirmAction} />
+              : <AssistantResponseGroup key={item.id} item={item} onConfirmAction={onConfirmAction} />
           ))}
         </div>
       )}

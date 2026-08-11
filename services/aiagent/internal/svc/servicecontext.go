@@ -19,7 +19,6 @@ import (
 	aiconfirmation "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/contextmanager"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
@@ -36,19 +35,6 @@ import (
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
 )
-
-type ConfirmationManager interface {
-	// 创建高风险确认请求
-	Create(ctx context.Context, req aiconfirmation.CreateRequest) (*domain.Confirmation, error)
-	// 用户确认请求的决策处理，返回确认记录
-	Decide(ctx context.Context, req aiconfirmation.DecisionRequest) (*domain.Confirmation, error)
-	// 标记确认请求为已执行状态
-	MarkExecuted(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
-	// 标记确认请求为已失败状态
-	MarkFailed(ctx context.Context, req aiconfirmation.CompletionRequest) (*domain.Confirmation, error)
-	// 绑定 Eino checkpoint interrupt 恢复目标
-	BindResumeTarget(ctx context.Context, req aiconfirmation.ResumeTargetRequest) (*domain.Confirmation, error)
-}
 
 type ServiceContext struct {
 	Config                 config.Config
@@ -71,7 +57,7 @@ type ServiceContext struct {
 	AuditRpc               auditclient.Audit
 	ToolRegistry           *aitools.Registry
 	ToolExecutor           *aitools.Executor
-	ConfirmationManager    ConfirmationManager
+	ConfirmationManager    aiconfirmation.ConfirmationManager
 	ConversationManager    conversation.Manager
 	ContextManager         contextmanager.Manager
 	SummaryManager         *contextmanager.SummaryManager

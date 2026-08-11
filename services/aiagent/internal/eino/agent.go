@@ -393,6 +393,12 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				return
 			}
 			if ok {
+				hasInterrupt = true
+				if bridge != nil {
+					if normalized, normalizedOK := bridge.enterAwaitingConfirmation(domainEvent); normalizedOK {
+						domainEvent = normalized
+					}
+				}
 				// 如果req传了回调函数，则执行这个回调函数
 				if req.OnEvent != nil {
 					if err := req.OnEvent(ctx, domainEvent); err != nil {
@@ -422,23 +428,21 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		if domainEvent.Type == domain.EventAssistantMessage {
 			hasAssistant = true
 		}
-		// callback 已经捕获的可见 assistant 内容在 iterator 结束时统一生成 final。
-		if domainEvent.Type == domain.EventAssistantMessage && bridge != nil && (bridge.hasAssistantEvent() || bridge.hasBufferedAssistantContent()) {
-			continue
-		}
 		// 工具调用事件处理
 		if domainEvent.Type == domain.EventToolResult {
-			// 如果已经发送过该工具调用事件，则忽略后续的工具调用事件
+			// 工具结果去重
 			if bridge != nil && bridge.hasToolResult(domainEvent) {
 				continue
 			}
 			// 高风险工具执行事件
 			if domainEvent.Status == "success" && (isBusinessWriteTool(domainEvent.Tool) || (r.approvalManager != nil && r.approvalManager.RequiresConfirmation(domainEvent.Tool))) {
+				// 表示这个工具调用已经产生了实际的业务影响。
 				domainEvent.BusinessExecuted = true
 				if bridge != nil {
 					bridge.markBusinessExecuted()
 				}
 			}
+			// 记录工具结果，用于去重
 			if bridge != nil && !bridge.markToolResult(domainEvent) {
 				continue
 			}
@@ -449,15 +453,6 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			}
 		}
 		_ = emit(ctx, domainEvent)
-	}
-	if !hasInterrupt && bridge != nil {
-		if finalEvent, ok := bridge.finalAssistantEvent(); ok {
-			if err := bridge.send(ctx, finalEvent); err != nil {
-				return
-			}
-			hasAssistant = true
-			hasAny = true
-		}
 	}
 	if bridge != nil {
 		hasAssistant = hasAssistant || bridge.hasAssistantEvent()
@@ -517,6 +512,7 @@ func stableCheckpointID(messageID, conversationID string) string {
 	return checkpointID
 }
 
+// 只返回tool_result和assistant_message事件
 func adkEventToDomainEvent(event *adk.AgentEvent, req RunRequest) (domain.AgentEvent, bool, error) {
 	if event == nil || event.Output == nil || event.Output.MessageOutput == nil {
 		return domain.AgentEvent{}, false, nil

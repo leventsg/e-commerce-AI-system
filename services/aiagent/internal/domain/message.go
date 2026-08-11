@@ -17,7 +17,7 @@ type AgentEvent struct {
 	ToolCallID       string
 	Content          string
 	Tool             string
-	Status           string
+	Status           string // 事件运行状态：running、success、failed、pending
 	DataJSON         string
 	ConfirmationID   string
 	Action           string

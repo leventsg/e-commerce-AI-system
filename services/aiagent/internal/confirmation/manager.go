@@ -55,6 +55,19 @@ var sensitiveArgumentKeys = []string{
 	"jwt",
 }
 
+type ConfirmationManager interface {
+	// 创建高风险确认请求
+	Create(ctx context.Context, req CreateRequest) (*domain.Confirmation, error)
+	// 用户确认请求的决策处理，返回确认记录
+	Decide(ctx context.Context, req DecisionRequest) (*domain.Confirmation, error)
+	// 标记确认请求为已执行状态
+	MarkExecuted(ctx context.Context, req CompletionRequest) (*domain.Confirmation, error)
+	// 标记确认请求为已失败状态
+	MarkFailed(ctx context.Context, req CompletionRequest) (*domain.Confirmation, error)
+	// 绑定 Eino checkpoint interrupt 恢复目标
+	BindResumeTarget(ctx context.Context, req ResumeTargetRequest) (*domain.Confirmation, error)
+}
+
 type Model interface {
 	Insert(ctx context.Context, data *aiconfirmations.AiConfirmations) (sql.Result, error)
 	FindOneUncached(ctx context.Context, id string) (*aiconfirmations.AiConfirmations, error)
@@ -101,7 +114,7 @@ type ResumeTargetRequest struct {
 }
 
 type Manager struct {
-	model           Model
+	model           aiconfirmations.AiConfirmationsModel
 	registry        MetadataRegistry
 	locker          Locker
 	confirmationTTL time.Duration
@@ -144,7 +157,7 @@ func WithIDGenerator(generator func() string) Option {
 	}
 }
 
-func NewManager(model Model, registry MetadataRegistry, locker Locker, opts ...Option) *Manager {
+func NewManager(model aiconfirmations.AiConfirmationsModel, registry MetadataRegistry, locker Locker, opts ...Option) *Manager {
 	manager := &Manager{
 		model:           model,
 		registry:        registry,

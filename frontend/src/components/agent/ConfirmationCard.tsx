@@ -6,9 +6,10 @@ interface ConfirmationCardProps {
   message: UIMessage
   onConfirm?: (conversationId: string, confirmationId: string) => Promise<void> | void
   onReject?: (conversationId: string, confirmationId: string) => Promise<void> | void
+  embedded?: boolean
 }
 
-export function ConfirmationCard({ message, onConfirm, onReject }: ConfirmationCardProps) {
+export function ConfirmationCard({ message, onConfirm, onReject, embedded = false }: ConfirmationCardProps) {
   const [now, setNow] = useState(() => Date.now())
   const [loading, setLoading] = useState<'confirm' | 'reject' | null>(null)
   const remaining = message.expiresAt ? Math.max(0, Math.floor((message.expiresAt * 1000 - now) / 1000)) : 0
@@ -42,8 +43,8 @@ export function ConfirmationCard({ message, onConfirm, onReject }: ConfirmationC
   }
 
   return (
-    <div className="flex animate-slide-up mb-4">
-      <div className="flex items-start gap-3 max-w-[85%] ml-11 w-full">
+    <div className={embedded ? 'w-full' : 'flex animate-slide-up mb-4'}>
+      <div className={embedded ? 'w-full' : 'flex items-start gap-3 max-w-[85%] ml-11 w-full'}>
         <div className="flex-1 border-2 border-amber-500/30 bg-amber-500/5 rounded-2xl overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-500/10 bg-amber-500/8">
             <AlertTriangle className="w-5 h-5 text-amber-400" />

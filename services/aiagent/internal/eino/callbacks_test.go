@@ -3,6 +3,7 @@ package eino
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	einocallbacks "github.com/cloudwego/eino/callbacks"
@@ -32,7 +33,7 @@ func TestAgentEventCallbackBridgeIgnoresNonSupervisorModelOutput(t *testing.T) {
 	}
 }
 
-func TestAgentEventCallbackBridgeStreamsModelDeltasAndBuffersFinalMessage(t *testing.T) {
+func TestAgentEventCallbackBridgeStreamsModelDeltasWithoutBufferingFinalMessage(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
@@ -62,18 +63,39 @@ func TestAgentEventCallbackBridgeStreamsModelDeltasAndBuffersFinalMessage(t *tes
 	if events[1].MessageID != events[0].MessageID {
 		t.Fatalf("assistant delta message ids = %q, %q; want same id", events[0].MessageID, events[1].MessageID)
 	}
-	final, ok := bridge.finalAssistantEvent()
-	if !ok {
-		t.Fatal("finalAssistantEvent returned ok=false, want buffered final message")
+}
+
+func TestAgentEventCallbackBridgeEmitsModelDeltaBeforeStreamEOF(t *testing.T) {
+	ctx := context.Background()
+	events := make(chan domain.AgentEvent, 2)
+	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
+		events <- event
+		return nil
+	})
+
+	reader, writer := schema.Pipe[*model.CallbackOutput](1)
+	done := make(chan struct{})
+	go func() {
+		bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
+		close(done)
+	}()
+
+	writer.Send(&model.CallbackOutput{Message: &schema.Message{Role: schema.Assistant, Content: "你"}}, nil)
+	select {
+	case event := <-events:
+		if event.Type != domain.EventAssistantDelta || event.Content != "你" {
+			t.Fatalf("event before EOF = %+v, want assistant_delta 你", event)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("no assistant_delta emitted before stream EOF")
 	}
-	if final.Type != domain.EventAssistantMessage || final.Content != "你好" || !final.Done {
-		t.Fatalf("final event = %+v, want assistant_message", final)
-	}
-	if final.MessageID != events[0].MessageID {
-		t.Fatalf("final message id = %q, want delta message id %q", final.MessageID, events[0].MessageID)
-	}
-	if _, ok := bridge.finalAssistantEvent(); ok {
-		t.Fatal("finalAssistantEvent should be idempotent and return ok=false after final is consumed")
+
+	writer.Send(&model.CallbackOutput{Message: &schema.Message{Role: schema.Assistant, Content: "好"}}, nil)
+	writer.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("callback did not finish after stream close")
 	}
 }
 
@@ -100,12 +122,9 @@ func TestAgentEventCallbackBridgeStreamsReasoningAsThinkingDelta(t *testing.T) {
 	if events[0].MessageID != "" {
 		t.Fatalf("thinking delta message id = %q, want empty", events[0].MessageID)
 	}
-	if _, ok := bridge.finalAssistantEvent(); ok {
-		t.Fatal("reasoning content should not produce final assistant message")
-	}
 }
 
-func TestAgentEventCallbackBridgeTreatsToolCallPreambleAsThinking(t *testing.T) {
+func TestAgentEventCallbackBridgeStreamsContentBeforeLaterToolCall(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
@@ -130,20 +149,17 @@ func TestAgentEventCallbackBridgeTreatsToolCallPreambleAsThinking(t *testing.T) 
 	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
 
 	if len(events) != 1 {
-		t.Fatalf("events len = %d, want 1 thinking delta; events=%+v", len(events), events)
+		t.Fatalf("events len = %d, want 1 assistant delta; events=%+v", len(events), events)
 	}
-	if events[0].Type != "assistant_thinking_delta" || events[0].Content != "我先帮您搜索。" {
-		t.Fatalf("event = %+v, want tool-call preamble as thinking delta", events[0])
+	if events[0].Type != domain.EventAssistantDelta || events[0].Content != "我先帮您搜索。" {
+		t.Fatalf("event = %+v, want already streamed assistant delta", events[0])
 	}
-	if events[0].MessageID != "" {
-		t.Fatalf("thinking delta message id = %q, want empty", events[0].MessageID)
-	}
-	if _, ok := bridge.finalAssistantEvent(); ok {
-		t.Fatal("tool-call preamble should not produce final assistant message")
+	if events[0].MessageID == "" {
+		t.Fatal("assistant delta message id should not be empty")
 	}
 }
 
-func TestAgentEventCallbackBridgeBuffersNonStreamingModelFinal(t *testing.T) {
+func TestAgentEventCallbackBridgeDoesNotBufferNonStreamingModelFinal(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
@@ -155,13 +171,6 @@ func TestAgentEventCallbackBridgeBuffersNonStreamingModelFinal(t *testing.T) {
 
 	if len(events) != 0 {
 		t.Fatalf("events len = %d, want no direct callback emission; events=%+v", len(events), events)
-	}
-	final, ok := bridge.finalAssistantEvent()
-	if !ok {
-		t.Fatal("finalAssistantEvent returned ok=false, want non-streaming final message")
-	}
-	if final.Type != domain.EventAssistantMessage || final.Content != "完整回复" || final.MessageID == "" || !final.Done {
-		t.Fatalf("final event = %+v, want buffered assistant_message", final)
 	}
 }
 
@@ -301,26 +310,20 @@ func TestAgentEventCallbackBridgeOnEventSkipsTransientEvents(t *testing.T) {
 	writer.Close()
 	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
 	bridge.onToolStart(ctx, &einocallbacks.RunInfo{Name: domain.ToolProductSearch}, &einotool.CallbackInput{ArgumentsInJSON: `{"keyword":"键盘"}`})
+	bridge.onToolEnd(ctx, &einocallbacks.RunInfo{Name: domain.ToolProductSearch}, &einotool.CallbackOutput{Response: `{"products":[],"total":0}`})
 
-	if len(emittedEvents) != 2 {
-		t.Fatalf("emitted events len = %d, want delta and progress only; events=%+v", len(emittedEvents), emittedEvents)
+	if len(emittedEvents) != 3 {
+		t.Fatalf("emitted events len = %d, want delta, progress, and result; events=%+v", len(emittedEvents), emittedEvents)
 	}
-	if len(hookEvents) != 0 {
-		t.Fatalf("hook events len = %d, want no transient callback hook events; events=%+v", len(hookEvents), hookEvents)
+	if len(hookEvents) != 1 || hookEvents[0].Type != domain.EventToolResult {
+		t.Fatalf("hook events=%+v, want only persistent tool_result before final send", hookEvents)
 	}
-	final, ok := bridge.finalAssistantEvent()
-	if !ok {
-		t.Fatal("finalAssistantEvent returned ok=false, want buffered final assistant event")
-	}
-	if err := bridge.send(ctx, final); err != nil {
-		t.Fatalf("send final assistant event: %v", err)
-	}
-	if len(hookEvents) != 1 || hookEvents[0].Type != domain.EventAssistantMessage {
-		t.Fatalf("hook events=%+v, want only persistent final assistant event after explicit final send", hookEvents)
+	if len(hookEvents) != 1 {
+		t.Fatalf("hook events=%+v, want only persistent tool_result from callbacks", hookEvents)
 	}
 }
 
-func TestConsumeEventsEmitsBufferedAssistantFinalAfterIteratorEnd(t *testing.T) {
+func TestConsumeEventsDoesNotSynthesizeAssistantFinalAfterIteratorEnd(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	req := RunRequest{ConversationID: "conv-1"}
@@ -342,18 +345,12 @@ func TestConsumeEventsEmitsBufferedAssistantFinalAfterIteratorEnd(t *testing.T) 
 	gen.Close()
 	(&agent{}).consumeEvents(ctx, iter, req, bridge, bridge.emit)
 
-	if len(events) != 3 {
-		t.Fatalf("events len after iterator end = %d, want 2 deltas and 1 final; events=%+v", len(events), events)
-	}
-	if events[2].Type != domain.EventAssistantMessage || events[2].Content != "你好" || !events[2].Done {
-		t.Fatalf("final event = %+v, want buffered assistant_message", events[2])
-	}
-	if events[2].MessageID != events[0].MessageID {
-		t.Fatalf("final message id = %q, want delta message id %q", events[2].MessageID, events[0].MessageID)
+	if len(events) != 2 {
+		t.Fatalf("events len after iterator end = %d, want only 2 deltas; events=%+v", len(events), events)
 	}
 }
 
-func TestConsumeEventsSuppressesIteratorAssistantWhenBufferedFinalExists(t *testing.T) {
+func TestConsumeEventsEmitsIteratorAssistantAfterCallbackDelta(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	req := RunRequest{ConversationID: "conv-1"}
@@ -361,23 +358,32 @@ func TestConsumeEventsSuppressesIteratorAssistantWhenBufferedFinalExists(t *test
 		events = append(events, event)
 		return nil
 	})
-	bridge.onModelEnd(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, &model.CallbackOutput{Message: schema.AssistantMessage("完整回复", nil)})
+	reader, writer := schema.Pipe[*model.CallbackOutput](1)
+	writer.Send(&model.CallbackOutput{Message: &schema.Message{Role: schema.Assistant, Content: "你"}}, nil)
+	writer.Close()
+	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
 
 	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
 	gen.Send(&adk.AgentEvent{
 		AgentName: supervisorAgentName,
 		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
-			Message: schema.AssistantMessage("完整回复", nil),
+			Message: schema.AssistantMessage("你好啊", nil),
 			Role:    schema.Assistant,
 		}},
 	})
 	gen.Close()
 	(&agent{}).consumeEvents(ctx, iter, req, bridge, bridge.emit)
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want only one final assistant event; events=%+v", len(events), events)
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want delta and iterator final assistant event; events=%+v", len(events), events)
 	}
-	if events[0].Type != domain.EventAssistantMessage || events[0].Content != "完整回复" {
-		t.Fatalf("event = %+v, want buffered assistant_message", events[0])
+	if events[0].Type != domain.EventAssistantDelta || events[0].Content != "你" {
+		t.Fatalf("first event = %+v, want callback assistant_delta", events[0])
+	}
+	if events[1].Type != domain.EventAssistantMessage || events[1].Content != "你好啊" {
+		t.Fatalf("second event = %+v, want iterator assistant_message", events[1])
+	}
+	if events[1].MessageID == events[0].MessageID {
+		t.Fatalf("iterator final message id = %q, want distinct from delta id %q", events[1].MessageID, events[0].MessageID)
 	}
 }

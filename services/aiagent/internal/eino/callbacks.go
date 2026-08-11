@@ -23,19 +23,19 @@ type agentEventCallbackBridge struct {
 	approvalManager *aitools.ApprovalManager
 	emit            func(context.Context, domain.AgentEvent) error
 
-	mu                        sync.Mutex
-	businessExecuted          bool
-	emittedAny                bool
-	assistantEmitted          bool
-	visibleAssistantMessageID string
-	assistantContent          strings.Builder
-	assistantFinalEmitted     bool
-	toolProgressKeys          map[string]bool
-	toolResultKeys            map[string]bool
-	activeToolMessageIDs      map[string][]string
+	mu                   sync.Mutex
+	businessExecuted     bool
+	emittedAny           bool
+	assistantEmitted     bool
+	toolProgressKeys     map[string]bool
+	toolResultKeys       map[string]bool
+	activeToolMessageIDs map[string][]string
+	runState             *AgentRunStateMachine
 }
 
 func newAgentEventCallbackBridge(req RunRequest, approvalManager *aitools.ApprovalManager, emit func(context.Context, domain.AgentEvent) error) *agentEventCallbackBridge {
+	runState := newAgentRunStateMachine(agentRunConfig{RunID: req.MessageID, ConversationID: req.ConversationID})
+	_ = runState.Start()
 	return &agentEventCallbackBridge{
 		req:                  req,
 		approvalManager:      approvalManager,
@@ -43,6 +43,7 @@ func newAgentEventCallbackBridge(req RunRequest, approvalManager *aitools.Approv
 		toolProgressKeys:     make(map[string]bool),
 		toolResultKeys:       make(map[string]bool),
 		activeToolMessageIDs: make(map[string][]string),
+		runState:             runState,
 	}
 }
 
@@ -71,7 +72,7 @@ func (b *agentEventCallbackBridge) onModelEnd(ctx context.Context, info *einocal
 	if reasoning := reasoningContent(output.Message); reasoning != "" {
 		_ = b.sendThinkingDelta(ctx, reasoning)
 	}
-	content := strings.TrimSpace(output.Message.Content)
+	content := output.Message.Content
 	if content == "" {
 		return ctx
 	}
@@ -79,7 +80,6 @@ func (b *agentEventCallbackBridge) onModelEnd(ctx context.Context, info *einocal
 		_ = b.sendThinkingDelta(ctx, content)
 		return ctx
 	}
-	b.recordNonStreamingAssistantContent(content)
 	return ctx
 }
 
@@ -95,9 +95,6 @@ func (b *agentEventCallbackBridge) onModelEndWithStreamOutput(ctx context.Contex
 			}
 		}
 	}
-	contentChunks := make([]string, 0, 4)
-	reasoningChunks := make([]string, 0, 2)
-	hasToolCall := false
 	for {
 		chunk, err := output.Recv()
 		if errors.Is(err, io.EOF) {
@@ -117,36 +114,17 @@ func (b *agentEventCallbackBridge) onModelEndWithStreamOutput(ctx context.Contex
 		if chunk == nil || chunk.Message == nil {
 			continue
 		}
-		if len(chunk.Message.ToolCalls) > 0 {
-			hasToolCall = true
-		}
 		if reasoning := reasoningContent(chunk.Message); reasoning != "" {
-			reasoningChunks = append(reasoningChunks, reasoning)
+			_ = b.sendThinkingDelta(ctx, reasoning)
 		}
 		if chunk.Message.Content != "" {
-			contentChunks = append(contentChunks, chunk.Message.Content)
+			// 工具调用，作为思考内容发送
+			if len(chunk.Message.ToolCalls) > 0 {
+				_ = b.sendThinkingDelta(ctx, chunk.Message.Content)
+				continue
+			}
+			_ = b.sendAssistantDelta(ctx, chunk.Message.Content)
 		}
-	}
-	for _, text := range reasoningChunks {
-		_ = b.sendThinkingDelta(ctx, text)
-	}
-	if hasToolCall {
-		for _, text := range contentChunks {
-			_ = b.sendThinkingDelta(ctx, text)
-		}
-		return ctx
-	}
-	for _, text := range contentChunks {
-		messageID := b.assistantMessageID()
-		// 汇总流式的 assistant chunk内容
-		b.appendAssistantDelta(text)
-		_ = b.send(ctx, domain.AgentEvent{
-			Type:           domain.EventAssistantDelta,
-			ConversationID: b.req.ConversationID,
-			MessageID:      messageID,
-			Content:        text,
-			Done:           false,
-		})
 	}
 	return ctx
 }
@@ -176,15 +154,9 @@ func (b *agentEventCallbackBridge) onToolStart(ctx context.Context, info *einoca
 		dataJSON = input.ArgumentsInJSON
 	}
 	messageID := b.startToolMessageID(toolName)
-	event := domain.AgentEvent{
-		Type:           domain.EventToolProgress,
-		ConversationID: b.req.ConversationID,
-		MessageID:      messageID,
-		Tool:           toolName,
-		Status:         "running",
-		Content:        toolProgressContent(toolName),
-		DataJSON:       ensureJSONObject(dataJSON),
-		Done:           false,
+	event, err := b.runState.OnToolProgress(messageID, toolName, toolProgressContent(toolName), ensureJSONObject(dataJSON))
+	if err != nil {
+		return ctx
 	}
 	if !b.markToolProgress(event) {
 		return ctx
@@ -210,18 +182,10 @@ func (b *agentEventCallbackBridge) onToolEnd(ctx context.Context, info *einocall
 			}
 		}
 	}
-	event := domain.AgentEvent{
-		Type:           domain.EventToolResult,
-		ConversationID: b.req.ConversationID,
-		MessageID:      b.finishToolMessageID(toolName),
-		Tool:           toolName,
-		Status:         "success",
-		Content:        wrappedToolSummary(toolName, response),
-		DataJSON:       ensureJSONObject(response),
-		Done:           true,
-	}
-	if isBusinessWriteTool(toolName) || (b.approvalManager != nil && b.approvalManager.RequiresConfirmation(toolName)) {
-		event.BusinessExecuted = true
+	businessExecuted := isBusinessWriteTool(toolName) || (b.approvalManager != nil && b.approvalManager.RequiresConfirmation(toolName))
+	event, stateErr := b.runState.OnToolResult(b.finishToolMessageID(toolName), toolName, "success", wrappedToolSummary(toolName, response), ensureJSONObject(response), businessExecuted)
+	if stateErr != nil {
+		return ctx
 	}
 	if event.BusinessExecuted {
 		b.mu.Lock()
@@ -240,16 +204,11 @@ func (b *agentEventCallbackBridge) onToolError(ctx context.Context, info *einoca
 	if toolName == "" || isAgentToolName(toolName) || err == nil {
 		return ctx
 	}
-	_ = b.send(ctx, domain.AgentEvent{
-		Type:           domain.EventToolResult,
-		ConversationID: b.req.ConversationID,
-		MessageID:      b.finishToolMessageID(toolName),
-		Tool:           toolName,
-		Status:         "failed",
-		Content:        "工具调用未完成，请稍后重试。",
-		DataJSON:       fmt.Sprintf(`{"error":%q}`, err.Error()),
-		Done:           true,
-	})
+	event, stateErr := b.runState.OnToolResult(b.finishToolMessageID(toolName), toolName, "failed", "工具调用未完成，请稍后重试。", fmt.Sprintf(`{"error":%q}`, err.Error()), false)
+	if stateErr != nil {
+		return ctx
+	}
+	_ = b.send(ctx, event)
 	return ctx
 }
 
@@ -285,80 +244,44 @@ func (b *agentEventCallbackBridge) hasAssistantEvent() bool {
 	return b.assistantEmitted
 }
 
-func (b *agentEventCallbackBridge) hasBufferedAssistantContent() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return strings.TrimSpace(b.assistantContent.String()) != "" && !b.assistantFinalEmitted
-}
-
 func (b *agentEventCallbackBridge) hasToolResult(event domain.AgentEvent) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.toolResultKeys[toolResultDedupeKey(event)]
 }
 
-func (b *agentEventCallbackBridge) appendAssistantDelta(text string) {
-	if text == "" {
-		return
-	}
-	b.mu.Lock()
-	b.assistantContent.WriteString(text)
-	b.mu.Unlock()
-}
-
-func (b *agentEventCallbackBridge) recordNonStreamingAssistantContent(content string) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return
-	}
-	b.mu.Lock()
-	if b.assistantContent.Len() == 0 {
-		b.assistantContent.WriteString(content)
-	}
-	b.assistantMessageIDLocked()
-	b.mu.Unlock()
-}
-
-func (b *agentEventCallbackBridge) finalAssistantEvent() (domain.AgentEvent, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	content := b.assistantContent.String()
-	if content == "" || b.assistantFinalEmitted {
-		return domain.AgentEvent{}, false
-	}
-	b.assistantFinalEmitted = true
-	return domain.AgentEvent{
-		Type:           domain.EventAssistantMessage,
-		ConversationID: b.req.ConversationID,
-		MessageID:      b.assistantMessageIDLocked(),
-		Content:        content,
-		Done:           true,
-	}, true
-}
-
-func (b *agentEventCallbackBridge) assistantMessageID() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.assistantMessageIDLocked()
-}
-
-func (b *agentEventCallbackBridge) assistantMessageIDLocked() string {
-	if b.visibleAssistantMessageID == "" {
-		b.visibleAssistantMessageID = newAgentMessageID()
-	}
-	return b.visibleAssistantMessageID
-}
-
 func (b *agentEventCallbackBridge) sendThinkingDelta(ctx context.Context, text string) error {
-	if strings.TrimSpace(text) == "" {
+	event, err := b.runState.OnThinkingDelta(text)
+	if err != nil || strings.TrimSpace(event.Content) == "" {
 		return nil
 	}
-	return b.send(ctx, domain.AgentEvent{
-		Type:           domain.EventAssistantThinkingDelta,
-		ConversationID: b.req.ConversationID,
-		Content:        text,
-		Done:           false,
-	})
+	return b.send(ctx, event)
+}
+
+func (b *agentEventCallbackBridge) sendAssistantDelta(ctx context.Context, text string) error {
+	event, err := b.runState.OnModelDelta(text)
+	if err != nil || event.Content == "" {
+		return nil
+	}
+	return b.send(ctx, event)
+}
+
+func (b *agentEventCallbackBridge) enterAwaitingConfirmation(event domain.AgentEvent) (domain.AgentEvent, bool) {
+	if b.runState.State() == agentRunStateRunning {
+		if _, err := b.runState.OnToolProgress(newAgentMessageID(), event.Tool, "", "{}"); err != nil {
+			return event, false
+		}
+	}
+	normalized, err := b.runState.OnConfirmationRequired(event.ConfirmationID, event.Tool, event.Summary, event.ExpiresAt)
+	if err != nil {
+		return event, false
+	}
+	normalized.MessageID = event.MessageID
+	normalized.Content = event.Content
+	normalized.Status = event.Status
+	normalized.DataJSON = event.DataJSON
+	normalized.Action = event.Action
+	return normalized, true
 }
 
 func (b *agentEventCallbackBridge) startToolMessageID(toolName string) string {
@@ -451,10 +374,10 @@ func reasoningContent(message *schema.Message) string {
 	if message == nil {
 		return ""
 	}
-	if strings.TrimSpace(message.ReasoningContent) != "" {
+	if message.ReasoningContent != "" {
 		return message.ReasoningContent
 	}
-	if value, ok := message.Extra["reasoning-content"].(string); ok && strings.TrimSpace(value) != "" {
+	if value, ok := message.Extra["reasoning-content"].(string); ok && value != "" {
 		return value
 	}
 	return ""
