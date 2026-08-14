@@ -219,12 +219,6 @@ func (b *agentEventCallbackBridge) hasBusinessExecuted() bool {
 	return b.businessExecuted
 }
 
-func (b *agentEventCallbackBridge) markBusinessExecuted() {
-	b.mu.Lock()
-	b.businessExecuted = true
-	b.mu.Unlock()
-}
-
 func (b *agentEventCallbackBridge) hasAnyEvent() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()

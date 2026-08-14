@@ -342,8 +342,6 @@ func (r *agent) checkpointStoreOrInit() adk.CheckPointStore {
 func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest, bridge *agentEventCallbackBridge, emit func(context.Context, domain.AgentEvent) error) {
 	// 是否收到assistant消息事件
 	hasAssistant := false
-	// 是否收到中断事件
-	hasInterrupt := false
 	// 是否收到任何事件
 	hasAny := false
 	for {
@@ -390,7 +388,6 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				return
 			}
 			if ok {
-				hasInterrupt = true
 				if bridge != nil {
 					if normalized, normalizedOK := bridge.enterAwaitingConfirmation(domainEvent); normalizedOK {
 						domainEvent = normalized
@@ -413,7 +410,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		hasAny = hasAny || bridge.hasAnyEvent()
 	}
 	// 如果没有任务事件发生，则发送空响应错误事件
-	if !hasAssistant && !hasInterrupt && !hasAny {
+	if !hasAssistant && !hasAny {
 		_ = emit(ctx, domain.AgentEvent{
 			Type:           domain.EventError,
 			ConversationID: req.ConversationID,
