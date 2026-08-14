@@ -203,7 +203,7 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 	// 消费run stream通道
 	for event := range eventStream {
 		events++
-		// 只处理需要持久化的事件
+		// 处理需要持久化的事件
 		if shouldPersistAgentEvent(event.Type) {
 			message, err := agentEventToMessage(uint64(in.UserId), prepared.ClientMessageID, event)
 			if err != nil {
@@ -211,6 +211,15 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 			}
 			if event.BusinessExecuted {
 				businessExecuted = true
+			}
+			// 保存消息到数据库
+			result, err := l.svcCtx.MessagesModel.Insert(l.ctx, message)
+			if err != nil {
+				_ = stream.Send(persistenceErrorEvent(prepared.ConversationID, businessExecuted))
+				return persistedMessages, err
+			}
+			if rows, err := result.RowsAffected(); err != nil || rows == 0 {
+				l.Errorw("insert message failed", logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
 			}
 			persistedMessages = append(persistedMessages, message)
 		}
@@ -226,11 +235,6 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 		if sendErr := stream.Send(&aiagent.AgentEvent{Type: domain.EventError, ConversationId: prepared.ConversationID, MessageId: newChatMessageID(), Content: "AI 服务暂时不可用，请稍后重试", Done: true}); sendErr != nil {
 			return persistedMessages, sendErr
 		}
-	}
-	// 批量保存消息到数据库
-	if err := l.svcCtx.MessagesModel.InsertBatch(l.ctx, persistedMessages); err != nil {
-		_ = stream.Send(persistenceErrorEvent(in.ConversationId, businessExecuted))
-		return persistedMessages, err
 	}
 	return persistedMessages, nil
 }

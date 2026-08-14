@@ -241,7 +241,7 @@ func TestAgentEventCallbackBridgeEmitsToolProgressAndWrappedResult(t *testing.T)
 	}
 }
 
-func TestAgentEventCallbackBridgeDeduplicatesSameToolProgressAndResult(t *testing.T) {
+func TestAgentEventCallbackBridgeKeepsRepeatedToolCalls(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
@@ -257,15 +257,24 @@ func TestAgentEventCallbackBridgeDeduplicatesSameToolProgressAndResult(t *testin
 	bridge.onToolEnd(ctx, info, result)
 	bridge.onToolEnd(ctx, info, result)
 
-	if len(events) != 2 {
-		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
+	if len(events) != 4 {
+		t.Fatalf("events len = %d, want two progress/result pairs; events=%+v", len(events), events)
 	}
-	if events[0].Type != domain.EventToolProgress || events[1].Type != domain.EventToolResult {
-		t.Fatalf("events=%+v, want progress then result", events)
+	wantTypes := []string{domain.EventToolProgress, domain.EventToolProgress, domain.EventToolResult, domain.EventToolResult}
+	for i, want := range wantTypes {
+		if events[i].Type != want {
+			t.Fatalf("event[%d] = %+v, want type %s; events=%+v", i, events[i], want, events)
+		}
+	}
+	if events[0].MessageID == events[1].MessageID {
+		t.Fatalf("progress message ids should be distinct for repeated tool calls: %q", events[0].MessageID)
+	}
+	if events[2].MessageID != events[0].MessageID || events[3].MessageID != events[1].MessageID {
+		t.Fatalf("result ids = %q,%q want matching progress ids %q,%q", events[2].MessageID, events[3].MessageID, events[0].MessageID, events[1].MessageID)
 	}
 }
 
-func TestAgentEventCallbackBridgeCoalescesSameToolProgressAndKeepsDistinctResults(t *testing.T) {
+func TestAgentEventCallbackBridgeKeepsDistinctToolProgressAndResults(t *testing.T) {
 	ctx := context.Background()
 	var events []domain.AgentEvent
 	bridge := newAgentEventCallbackBridge(RunRequest{ConversationID: "conv-1"}, nil, func(_ context.Context, event domain.AgentEvent) error {
@@ -279,47 +288,14 @@ func TestAgentEventCallbackBridgeCoalescesSameToolProgressAndKeepsDistinctResult
 	bridge.onToolEnd(ctx, info, &einotool.CallbackOutput{Response: `{"products":[],"total":0}`})
 	bridge.onToolEnd(ctx, info, &einotool.CallbackOutput{Response: `{"products":[{"id":1}],"total":1}`})
 
-	if len(events) != 3 {
-		t.Fatalf("events len = %d, want one progress and two distinct results; events=%+v", len(events), events)
+	if len(events) != 4 {
+		t.Fatalf("events len = %d, want two progress/result pairs; events=%+v", len(events), events)
 	}
-	if events[0].Type != domain.EventToolProgress {
-		t.Fatalf("first event = %+v, want single coalesced tool_progress", events[0])
-	}
-	if events[1].Type != domain.EventToolResult || events[2].Type != domain.EventToolResult {
-		t.Fatalf("events=%+v, want two distinct tool_result events", events)
-	}
-}
-
-func TestAgentEventCallbackBridgeOnEventSkipsTransientEvents(t *testing.T) {
-	ctx := context.Background()
-	var hookEvents []domain.AgentEvent
-	var emittedEvents []domain.AgentEvent
-	bridge := newAgentEventCallbackBridge(RunRequest{
-		ConversationID: "conv-1",
-		OnEvent: func(_ context.Context, event domain.AgentEvent) error {
-			hookEvents = append(hookEvents, event)
-			return nil
-		},
-	}, nil, func(_ context.Context, event domain.AgentEvent) error {
-		emittedEvents = append(emittedEvents, event)
-		return nil
-	})
-
-	reader, writer := schema.Pipe[*model.CallbackOutput](1)
-	writer.Send(&model.CallbackOutput{Message: &schema.Message{Role: schema.Assistant, Content: "你"}}, nil)
-	writer.Close()
-	bridge.onModelEndWithStreamOutput(ctx, &einocallbacks.RunInfo{Name: supervisorAgentName}, reader)
-	bridge.onToolStart(ctx, &einocallbacks.RunInfo{Name: domain.ToolProductSearch}, &einotool.CallbackInput{ArgumentsInJSON: `{"keyword":"键盘"}`})
-	bridge.onToolEnd(ctx, &einocallbacks.RunInfo{Name: domain.ToolProductSearch}, &einotool.CallbackOutput{Response: `{"products":[],"total":0}`})
-
-	if len(emittedEvents) != 3 {
-		t.Fatalf("emitted events len = %d, want delta, progress, and result; events=%+v", len(emittedEvents), emittedEvents)
-	}
-	if len(hookEvents) != 1 || hookEvents[0].Type != domain.EventToolResult {
-		t.Fatalf("hook events=%+v, want only persistent tool_result before final send", hookEvents)
-	}
-	if len(hookEvents) != 1 {
-		t.Fatalf("hook events=%+v, want only persistent tool_result from callbacks", hookEvents)
+	wantTypes := []string{domain.EventToolProgress, domain.EventToolProgress, domain.EventToolResult, domain.EventToolResult}
+	for i, want := range wantTypes {
+		if events[i].Type != want {
+			t.Fatalf("event[%d] = %+v, want type %s; events=%+v", i, events[i], want, events)
+		}
 	}
 }
 
@@ -385,5 +361,30 @@ func TestConsumeEventsEmitsIteratorAssistantAfterCallbackDelta(t *testing.T) {
 	}
 	if events[1].MessageID == events[0].MessageID {
 		t.Fatalf("iterator final message id = %q, want distinct from delta id %q", events[1].MessageID, events[0].MessageID)
+	}
+}
+
+func TestConsumeEventsIgnoresIteratorToolMessages(t *testing.T) {
+	ctx := context.Background()
+	var events []domain.AgentEvent
+	req := RunRequest{ConversationID: "conv-1"}
+	bridge := newAgentEventCallbackBridge(req, nil, func(_ context.Context, event domain.AgentEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
+	gen.Send(&adk.AgentEvent{
+		AgentName: "product_agent",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: schema.ToolMessage(`{"page":1,"page_size":10,"products":[],"total":0}`, "call-1", schema.WithToolName(domain.ToolProductSearch)),
+			Role:    schema.Tool,
+		}},
+	})
+	gen.Close()
+	(&agent{}).consumeEvents(ctx, iter, req, bridge, bridge.emit)
+
+	if len(events) != 0 {
+		t.Fatalf("events len = %d, want iterator tool message ignored; events=%+v", len(events), events)
 	}
 }

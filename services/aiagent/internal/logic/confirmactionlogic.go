@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
@@ -87,13 +86,29 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		}
 		return sendConfirmError(stream, decided.ConversationID, err)
 	}
-	persistedMessages := make([]*aimessages.AiMessages, 0, 2)
 	eventCount := 0
 	for event := range eventStream {
 		eventCount++
 		if event.BusinessExecuted || (event.Type == domain.EventToolResult && event.Status == "success" && event.Tool == decided.ToolName) {
 			businessExecuted = true
 		}
+		// 处理需要持久化的事件，先落库
+		if shouldPersistAgentEvent(event.Type) {
+			messages, msgErr := agentEventToMessage(uint64(in.UserId), "", event)
+			if msgErr != nil {
+				return msgErr
+			}
+			// 保存消息到数据库
+			result, err := l.svcCtx.MessagesModel.Insert(l.ctx, messages)
+			if err != nil {
+				_ = stream.Send(persistenceErrorEvent(decided.ConversationID, businessExecuted))
+				return err
+			}
+			if rows, err := result.RowsAffected(); err != nil || rows == 0 {
+				l.Errorw("insert message failed", logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
+			}
+		}
+		// 再更新确认状态
 		if in.Approved && businessExecuted && !markExecuted {
 			// 更新数据库
 			if _, markErr := l.svcCtx.ConfirmationManager.MarkExecuted(l.ctx, confirmation.CompletionRequest{
@@ -106,28 +121,10 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 			}
 			markExecuted = true
 		}
-		if shouldPersistAgentEvent(event.Type) {
-			messages, msgErr := agentEventToMessage(uint64(in.UserId), "", event)
-			if msgErr != nil {
-				return msgErr
-			}
-			persistedMessages = append(persistedMessages, messages)
-		}
 		if event.Type == domain.EventAssistantMessage {
 			continue
 		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
-			return err
-		}
-	}
-	// 批量保存消息到数据库
-	if l.svcCtx.MessagesModel != nil {
-		if err := l.svcCtx.MessagesModel.InsertBatch(l.ctx, persistedMessages); err != nil {
-			sendErr := stream.Send(persistenceErrorEvent(decided.ConversationID, businessExecuted))
-			if sendErr != nil {
-				l.Errorw("send persistence error event failed", logx.Field("err", sendErr))
-			}
-			l.Errorw("InsertBatch failed", logx.Field("err", err), logx.Field("user_id", in.UserId), logx.Field("conversation_id", decided.ConversationID))
 			return err
 		}
 	}

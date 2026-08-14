@@ -2,6 +2,7 @@ Name: ai-api
 Host: 0.0.0.0
 Port: 8007
 Mode: pro
+Timeout: 300000
 
 AuthsRpc:
   Target: consul://${CONSUL_HOST}/auths.rpc?wait=14s
@@ -10,7 +11,7 @@ AuthsRpc:
 AiAgentRpc:
   Target: consul://${CONSUL_HOST}/aiagent.rpc?wait=14s
   NonBlock: true
-  Timeout: 30000
+  Timeout: 300000
 
 Telemetry:
   Name: ai-api

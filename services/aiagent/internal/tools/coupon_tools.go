@@ -126,6 +126,7 @@ func couponListHandler(rpc CouponQueryRPC) HandlerFunc {
 	}
 }
 
+// 获取优惠券详情
 func couponDetailHandler(rpc CouponQueryRPC) HandlerFunc {
 	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
 		couponID, err := requiredStringArgument(req.Arguments, "coupon_id")
@@ -152,6 +153,7 @@ func couponDetailHandler(rpc CouponQueryRPC) HandlerFunc {
 	}
 }
 
+// 查看我的优惠券
 func couponMyListHandler(rpc CouponQueryRPC) HandlerFunc {
 	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
 		userID, err := authenticatedUserID32(req.UserID)
@@ -206,6 +208,7 @@ func couponMyListHandler(rpc CouponQueryRPC) HandlerFunc {
 	}
 }
 
+// 我的优惠券使用情况
 func couponUsageListHandler(rpc CouponQueryRPC) HandlerFunc {
 	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
 		userID, err := authenticatedUserID32(req.UserID)
@@ -242,6 +245,7 @@ func couponUsageListHandler(rpc CouponQueryRPC) HandlerFunc {
 	}
 }
 
+// 优惠券使用折扣后金额计算
 func couponCalculateHandler(rpc CouponQueryRPC) HandlerFunc {
 	return func(ctx context.Context, req HandlerRequest) (HandlerResult, error) {
 		userID, err := authenticatedUserID32(req.UserID)

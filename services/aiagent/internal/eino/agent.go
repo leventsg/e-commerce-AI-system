@@ -28,7 +28,6 @@ type RunRequest struct {
 	MessageID      string
 	ClientIP       string
 	Messages       []domain.ContextMessage
-	OnEvent        func(context.Context, domain.AgentEvent) error
 }
 
 type ResumeRequest struct {
@@ -40,7 +39,6 @@ type ResumeRequest struct {
 	InterruptID    string
 	Approved       bool
 	ClientIP       string
-	OnEvent        func(context.Context, domain.AgentEvent) error
 }
 
 type Runner interface {
@@ -314,7 +312,6 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 		ConversationID: req.ConversationID,
 		MessageID:      req.ConfirmationID,
 		ClientIP:       req.ClientIP,
-		OnEvent:        req.OnEvent,
 	}
 	// 桥接器，跟踪业务执行状态
 	bridge := newAgentEventCallbackBridge(runReq, r.approvalManager, emit)
@@ -399,59 +396,16 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 						domainEvent = normalized
 					}
 				}
-				// 如果req传了回调函数，则执行这个回调函数
-				if req.OnEvent != nil {
-					if err := req.OnEvent(ctx, domainEvent); err != nil {
-						return
-					}
-				}
 				_ = emit(ctx, domainEvent)
 			}
 			return
 		}
-		domainEvent, ok, err := adkEventToDomainEvent(event, req)
-		if err != nil {
-			_ = emit(ctx, domain.AgentEvent{
-				Type:           domain.EventError,
-				ConversationID: req.ConversationID,
-				MessageID:      newAgentMessageID(),
-				Content:        fmt.Sprintf("AI 事件解析失败：%v", err),
-				Status:         "failed",
-				Done:           true,
-			})
-			return
-		}
+		hasAny = true
+		domainEvent, ok := iteratorAssistantEventToDomainEvent(event, req)
 		if !ok {
 			continue
 		}
-		hasAny = true
-		if domainEvent.Type == domain.EventAssistantMessage {
-			hasAssistant = true
-		}
-		// 工具调用事件处理
-		if domainEvent.Type == domain.EventToolResult {
-			// 工具结果去重
-			if bridge != nil && bridge.hasToolResult(domainEvent) {
-				continue
-			}
-			// 高风险工具执行事件
-			if domainEvent.Status == "success" && (isBusinessWriteTool(domainEvent.Tool) || (r.approvalManager != nil && r.approvalManager.RequiresConfirmation(domainEvent.Tool))) {
-				// 表示这个工具调用已经产生了实际的业务影响。
-				domainEvent.BusinessExecuted = true
-				if bridge != nil {
-					bridge.markBusinessExecuted()
-				}
-			}
-			// 记录工具结果，用于去重
-			if bridge != nil && !bridge.markToolResult(domainEvent) {
-				continue
-			}
-		}
-		if req.OnEvent != nil {
-			if err := req.OnEvent(ctx, domainEvent); err != nil {
-				return
-			}
-		}
+		hasAssistant = true
 		_ = emit(ctx, domainEvent)
 	}
 	if bridge != nil {
@@ -469,6 +423,37 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			Done:           true,
 		})
 	}
+}
+
+// 从迭代器获取最终的assistant消息
+func iteratorAssistantEventToDomainEvent(event *adk.AgentEvent, req RunRequest) (domain.AgentEvent, bool) {
+	if event == nil || event.Output == nil || event.Output.MessageOutput == nil {
+		return domain.AgentEvent{}, false
+	}
+	message, _, err := adk.GetMessage(event)
+	if err != nil || message == nil || strings.TrimSpace(message.Content) == "" {
+		return domain.AgentEvent{}, false
+	}
+	output := event.Output.MessageOutput
+	// 过滤role
+	if output.Role != schema.Assistant {
+		return domain.AgentEvent{}, false
+	}
+	// 如果有工具调用，则说明不是最终消息
+	if len(message.ToolCalls) > 0 {
+		return domain.AgentEvent{}, false
+	}
+	// 过滤子 agent 的最终 assistant 消息
+	if event.AgentName != "" && event.AgentName != supervisorAgentName {
+		return domain.AgentEvent{}, false
+	}
+	return domain.AgentEvent{
+		Type:           domain.EventAssistantMessage,
+		ConversationID: req.ConversationID,
+		MessageID:      newAgentMessageID(),
+		Content:        message.Content,
+		Done:           true,
+	}, true
 }
 
 func collectStream(stream <-chan domain.AgentEvent) []domain.AgentEvent {
@@ -510,62 +495,6 @@ func stableCheckpointID(messageID, conversationID string) string {
 		checkpointID = strings.TrimSpace(conversationID)
 	}
 	return checkpointID
-}
-
-// 只返回tool_result和assistant_message事件
-func adkEventToDomainEvent(event *adk.AgentEvent, req RunRequest) (domain.AgentEvent, bool, error) {
-	if event == nil || event.Output == nil || event.Output.MessageOutput == nil {
-		return domain.AgentEvent{}, false, nil
-	}
-	message, _, err := adk.GetMessage(event)
-	if err != nil {
-		return domain.AgentEvent{}, false, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
-	}
-	if message == nil || strings.TrimSpace(message.Content) == "" {
-		return domain.AgentEvent{}, false, nil
-	}
-	output := event.Output.MessageOutput
-	switch output.Role {
-	case schema.Assistant:
-		if len(message.ToolCalls) > 0 {
-			return domain.AgentEvent{}, false, nil
-		}
-		if event.AgentName != "" && event.AgentName != supervisorAgentName {
-			return domain.AgentEvent{}, false, nil
-		}
-		return domain.AgentEvent{
-			Type:           domain.EventAssistantMessage,
-			ConversationID: req.ConversationID,
-			MessageID:      newAgentMessageID(),
-			Content:        message.Content,
-			Done:           true,
-		}, true, nil
-	case schema.Tool:
-		toolName := output.ToolName
-		if toolName == "" {
-			toolName = message.ToolName
-		}
-		if isAgentToolName(toolName) {
-			return domain.AgentEvent{}, false, nil
-		}
-		dataJSON := message.Content
-		if !jsonObjectLike(dataJSON) {
-			dataJSON = fmt.Sprintf(`{"result":%q}`, message.Content)
-		}
-		return domain.AgentEvent{
-			Type:           domain.EventToolResult,
-			ConversationID: req.ConversationID,
-			MessageID:      newAgentMessageID(),
-			ToolCallID:     message.ToolCallID,
-			Content:        message.Content,
-			Tool:           toolName,
-			Status:         "success",
-			DataJSON:       dataJSON,
-			Done:           true,
-		}, true, nil
-	default:
-		return domain.AgentEvent{}, false, nil
-	}
 }
 
 func isAgentToolName(toolName string) bool {

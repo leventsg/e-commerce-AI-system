@@ -313,13 +313,24 @@ type confirmActionFakeMessagesModel struct {
 	inserted []*aimessages.AiMessages
 }
 
+type fakeSQLResult int64
+
+func (r fakeSQLResult) LastInsertId() (int64, error) {
+	return 0, nil
+}
+
+func (r fakeSQLResult) RowsAffected() (int64, error) {
+	return int64(r), nil
+}
+
 func (m *confirmActionFakeMessagesModel) InsertBatch(_ context.Context, messages []*aimessages.AiMessages) error {
 	m.inserted = append(m.inserted, messages...)
 	return nil
 }
 
-func (m *confirmActionFakeMessagesModel) Insert(context.Context, *aimessages.AiMessages) (sql.Result, error) {
-	panic("not used")
+func (m *confirmActionFakeMessagesModel) Insert(_ context.Context, message *aimessages.AiMessages) (sql.Result, error) {
+	m.inserted = append(m.inserted, message)
+	return fakeSQLResult(1), nil
 }
 
 func (m *confirmActionFakeMessagesModel) FindOne(context.Context, uint64) (*aimessages.AiMessages, error) {

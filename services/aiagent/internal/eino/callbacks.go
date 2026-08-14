@@ -27,8 +27,6 @@ type agentEventCallbackBridge struct {
 	businessExecuted     bool
 	emittedAny           bool
 	assistantEmitted     bool
-	toolProgressKeys     map[string]bool
-	toolResultKeys       map[string]bool
 	activeToolMessageIDs map[string][]string
 	runState             *AgentRunStateMachine
 }
@@ -40,8 +38,6 @@ func newAgentEventCallbackBridge(req RunRequest, approvalManager *aitools.Approv
 		req:                  req,
 		approvalManager:      approvalManager,
 		emit:                 emit,
-		toolProgressKeys:     make(map[string]bool),
-		toolResultKeys:       make(map[string]bool),
 		activeToolMessageIDs: make(map[string][]string),
 		runState:             runState,
 	}
@@ -114,17 +110,20 @@ func (b *agentEventCallbackBridge) onModelEndWithStreamOutput(ctx context.Contex
 		if chunk == nil || chunk.Message == nil {
 			continue
 		}
+		// 这个思考过程是全英文的
 		if reasoning := reasoningContent(chunk.Message); reasoning != "" {
 			_ = b.sendThinkingDelta(ctx, reasoning)
 		}
-		if chunk.Message.Content != "" {
-			// 工具调用，作为思考内容发送
-			if len(chunk.Message.ToolCalls) > 0 {
-				_ = b.sendThinkingDelta(ctx, chunk.Message.Content)
-				continue
-			}
-			_ = b.sendAssistantDelta(ctx, chunk.Message.Content)
-		}
+		_ = b.sendAssistantDelta(ctx, chunk.Message.Content)
+		// if chunk.Message.Content != "" {
+		// 	// // 工具调用，作为思考内容发送
+		// 	// if len(chunk.Message.ToolCalls) > 0 {
+		// 	// 	_ = b.sendThinkingDelta(ctx, chunk.Message.Content)
+		// 	// 	continue
+		// 	// }
+		// 	// 最后assistant输出chunk
+		// 	_ = b.sendAssistantDelta(ctx, chunk.Message.Content)
+		// }
 	}
 	return ctx
 }
@@ -158,9 +157,6 @@ func (b *agentEventCallbackBridge) onToolStart(ctx context.Context, info *einoca
 	if err != nil {
 		return ctx
 	}
-	if !b.markToolProgress(event) {
-		return ctx
-	}
 	_ = b.send(ctx, event)
 	return ctx
 }
@@ -191,9 +187,6 @@ func (b *agentEventCallbackBridge) onToolEnd(ctx context.Context, info *einocall
 		b.mu.Lock()
 		b.businessExecuted = true
 		b.mu.Unlock()
-	}
-	if !b.markToolResult(event) {
-		return ctx
 	}
 	_ = b.send(ctx, event)
 	return ctx
@@ -244,12 +237,6 @@ func (b *agentEventCallbackBridge) hasAssistantEvent() bool {
 	return b.assistantEmitted
 }
 
-func (b *agentEventCallbackBridge) hasToolResult(event domain.AgentEvent) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.toolResultKeys[toolResultDedupeKey(event)]
-}
-
 func (b *agentEventCallbackBridge) sendThinkingDelta(ctx context.Context, text string) error {
 	event, err := b.runState.OnThinkingDelta(text)
 	if err != nil || strings.TrimSpace(event.Content) == "" {
@@ -266,6 +253,7 @@ func (b *agentEventCallbackBridge) sendAssistantDelta(ctx context.Context, text 
 	return b.send(ctx, event)
 }
 
+// 更新状态机，规范化中断事件
 func (b *agentEventCallbackBridge) enterAwaitingConfirmation(event domain.AgentEvent) (domain.AgentEvent, bool) {
 	if b.runState.State() == agentRunStateRunning {
 		if _, err := b.runState.OnToolProgress(newAgentMessageID(), event.Tool, "", "{}"); err != nil {
@@ -310,28 +298,6 @@ func (b *agentEventCallbackBridge) finishToolMessageID(toolName string) string {
 	return messageID
 }
 
-func (b *agentEventCallbackBridge) markToolProgress(event domain.AgentEvent) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	key := toolProgressDedupeKey(event)
-	if b.toolProgressKeys[key] {
-		return false
-	}
-	b.toolProgressKeys[key] = true
-	return true
-}
-
-func (b *agentEventCallbackBridge) markToolResult(event domain.AgentEvent) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	key := toolResultDedupeKey(event)
-	if b.toolResultKeys[key] {
-		return false
-	}
-	b.toolResultKeys[key] = true
-	return true
-}
-
 func (b *agentEventCallbackBridge) send(ctx context.Context, event domain.AgentEvent) error {
 	b.mu.Lock()
 	b.emittedAny = true
@@ -341,11 +307,6 @@ func (b *agentEventCallbackBridge) send(ctx context.Context, event domain.AgentE
 	b.mu.Unlock()
 	if b.emit == nil {
 		return nil
-	}
-	if b.req.OnEvent != nil && shouldEmitToOnEvent(event.Type) {
-		if err := b.req.OnEvent(ctx, event); err != nil {
-			return err
-		}
 	}
 	return b.emit(ctx, event)
 }
@@ -362,14 +323,6 @@ func isKnownAgentName(name string) bool {
 	return false
 }
 
-func toolProgressDedupeKey(event domain.AgentEvent) string {
-	return strings.TrimSpace(event.Tool)
-}
-
-func shouldEmitToOnEvent(eventType string) bool {
-	return eventType != domain.EventAssistantDelta && eventType != domain.EventAssistantThinkingDelta && eventType != domain.EventToolProgress
-}
-
 func reasoningContent(message *schema.Message) string {
 	if message == nil {
 		return ""
@@ -381,28 +334,6 @@ func reasoningContent(message *schema.Message) string {
 		return value
 	}
 	return ""
-}
-
-// 工具名称 + 状态 + 数据JSON + 内容 作为去重的key
-func toolResultDedupeKey(event domain.AgentEvent) string {
-	return strings.TrimSpace(event.Tool) + "|status:" + strings.TrimSpace(event.Status) +
-		"|data:" + canonicalJSON(event.DataJSON) + "|content:" + strings.TrimSpace(event.Content)
-}
-
-func canonicalJSON(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	var data any
-	if err := json.Unmarshal([]byte(value), &data); err != nil {
-		return value
-	}
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		return value
-	}
-	return string(encoded)
 }
 
 func toolProgressContent(toolName string) string {
