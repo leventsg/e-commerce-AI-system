@@ -199,30 +199,31 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 		return persistedMessages, nil
 	}
 	events := 0
-	forwardState := newEventForwardState()
+	businessExecuted := false
+	// 消费run stream通道
 	for event := range eventStream {
 		events++
-		normalizeAgentEvent(&event, prepared)
-		forward := forwardState.shouldForward(event)
-		if isTransientAgentEvent(event.Type) {
-			if !forward {
-				continue
-			}
-			if err := stream.Send(agentEventToProto(event)); err != nil {
+		// 处理需要持久化的事件
+		if shouldPersistAgentEvent(event.Type) {
+			message, err := agentEventToMessage(uint64(in.UserId), prepared.ClientMessageID, event)
+			if err != nil {
 				return persistedMessages, err
 			}
-			continue
+			if event.BusinessExecuted {
+				businessExecuted = true
+			}
+			// 保存消息到数据库
+			result, err := l.svcCtx.MessagesModel.Insert(l.ctx, message)
+			if err != nil {
+				_ = stream.Send(persistenceErrorEvent(prepared.ConversationID, businessExecuted))
+				return persistedMessages, err
+			}
+			if rows, err := result.RowsAffected(); err != nil || rows == 0 {
+				l.Errorw("insert message failed", logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
+			}
+			persistedMessages = append(persistedMessages, message)
 		}
-		message, err := agentEventToMessage(uint64(in.UserId), prepared.ClientMessageID, event)
-		if err != nil {
-			return persistedMessages, err
-		}
-		if err := l.svcCtx.MessagesModel.InsertBatch(l.ctx, []*aimessages.AiMessages{message}); err != nil {
-			_ = stream.Send(persistenceErrorEvent(prepared.ConversationID, event.BusinessExecuted))
-			return persistedMessages, err
-		}
-		persistedMessages = append(persistedMessages, message)
-		if !forward {
+		if event.Type == domain.EventAssistantMessage {
 			continue
 		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
@@ -236,18 +237,6 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 		}
 	}
 	return persistedMessages, nil
-}
-
-func normalizeAgentEvent(event *domain.AgentEvent, prepared *conversation.PreparedConversation) {
-	if event == nil || prepared == nil {
-		return
-	}
-	if strings.TrimSpace(event.ConversationID) == "" {
-		event.ConversationID = prepared.ConversationID
-	}
-	if strings.TrimSpace(event.MessageID) == "" || event.MessageID == prepared.UserMessageID {
-		event.MessageID = newChatMessageID()
-	}
 }
 
 // agentEventsToMessages 将事件转换为数据库消息记录格式
@@ -294,35 +283,12 @@ func agentEventToMessage(userID uint64, clientMessageID string, event domain.Age
 	}, nil
 }
 
-// 是否是增量事件或者工具调用进度事件，这类事件不需要持久化
-func isTransientAgentEvent(eventType string) bool {
-	return eventType == domain.EventAssistantDelta || eventType == domain.EventToolProgress
-}
-
 func shouldPersistAgentEvent(eventType string) bool {
-	return !isTransientAgentEvent(eventType)
-}
-
-type eventForwardState struct {
-	assistantDeltaSent bool
-}
-
-func newEventForwardState() *eventForwardState {
-	return &eventForwardState{}
-}
-
-func (s *eventForwardState) shouldForward(event domain.AgentEvent) bool {
-	if s == nil {
+	switch eventType {
+	case domain.EventAssistantMessage, domain.EventToolResult, domain.EventConfirmationRequired, domain.EventError:
 		return true
-	}
-	switch event.Type {
-	case domain.EventAssistantDelta:
-		s.assistantDeltaSent = true
-		return true
-	case domain.EventAssistantMessage:
-		return !s.assistantDeltaSent
 	default:
-		return true
+		return false
 	}
 }
 

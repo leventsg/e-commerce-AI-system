@@ -125,7 +125,7 @@ wscat \
 | --- | --- | --- |
 | `type` | string | 事件类型 |
 | `conversation_id` | string | 会话 ID；可能省略 |
-| `message_id` | string | 服务端消息 ID；可能省略 |
+| `message_id` | string | 服务端消息 ID；可能省略。`assistant_thinking_delta` 不携带该字段，`assistant_delta` 和最终 `assistant_message` 携带该字段 |
 | `content` | string | 用户可读文本；可能省略 |
 | `tool` | string | 工具名称；工具事件使用 |
 | `status` | string | 工具或确认状态 |

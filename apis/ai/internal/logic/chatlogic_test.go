@@ -154,6 +154,24 @@ func TestMapAgentEventAllowsStreamingDeltaAndToolProgress(t *testing.T) {
 	}
 }
 
+func TestMapAgentEventAllowsAssistantThinkingDelta(t *testing.T) {
+	event, err := mapAgentEvent(&aiagent.AgentEvent{
+		Type:           "assistant_thinking_delta",
+		ConversationId: "conv-1",
+		Content:        "我先分析一下",
+		Done:           false,
+	})
+	if err != nil {
+		t.Fatalf("map assistant_thinking_delta: %v", err)
+	}
+	if event.Type != "assistant_thinking_delta" || event.Content != "我先分析一下" || event.Done {
+		t.Fatalf("event=%+v, want thinking delta mapped", event)
+	}
+	if event.MessageID != "" {
+		t.Fatalf("event message_id = %q, want empty", event.MessageID)
+	}
+}
+
 func sseTestServer(rpc *fakeAiAgent) *httptest.Server {
 	ctx := &svc.ServiceContext{AiAgentRpc: rpc}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

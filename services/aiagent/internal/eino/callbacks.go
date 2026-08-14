@@ -23,26 +23,23 @@ type agentEventCallbackBridge struct {
 	approvalManager *aitools.ApprovalManager
 	emit            func(context.Context, domain.AgentEvent) error
 
-	mu                        sync.Mutex
-	businessExecuted          bool
-	emittedAny                bool
-	assistantEmitted          bool
-	visibleAssistantMessageID string
-	assistantContent          strings.Builder
-	assistantFinalEmitted     bool
-	toolProgressKeys          map[string]bool
-	toolResultKeys            map[string]bool
-	activeToolMessageIDs      map[string][]string
+	mu                   sync.Mutex
+	businessExecuted     bool
+	emittedAny           bool
+	assistantEmitted     bool
+	activeToolMessageIDs map[string][]string
+	runState             *AgentRunStateMachine
 }
 
 func newAgentEventCallbackBridge(req RunRequest, approvalManager *aitools.ApprovalManager, emit func(context.Context, domain.AgentEvent) error) *agentEventCallbackBridge {
+	runState := newAgentRunStateMachine(agentRunConfig{RunID: req.MessageID, ConversationID: req.ConversationID})
+	_ = runState.Start()
 	return &agentEventCallbackBridge{
 		req:                  req,
 		approvalManager:      approvalManager,
 		emit:                 emit,
-		toolProgressKeys:     make(map[string]bool),
-		toolResultKeys:       make(map[string]bool),
 		activeToolMessageIDs: make(map[string][]string),
+		runState:             runState,
 	}
 }
 
@@ -68,11 +65,17 @@ func (b *agentEventCallbackBridge) onModelEnd(ctx context.Context, info *einocal
 	if !b.shouldExposeModel(info) || output == nil || output.Message == nil {
 		return ctx
 	}
-	content := strings.TrimSpace(output.Message.Content)
-	if content == "" || len(output.Message.ToolCalls) > 0 {
+	if reasoning := reasoningContent(output.Message); reasoning != "" {
+		_ = b.sendThinkingDelta(ctx, reasoning)
+	}
+	content := output.Message.Content
+	if content == "" {
 		return ctx
 	}
-	b.recordNonStreamingAssistantContent(content)
+	if len(output.Message.ToolCalls) > 0 {
+		_ = b.sendThinkingDelta(ctx, content)
+		return ctx
+	}
 	return ctx
 }
 
@@ -104,23 +107,23 @@ func (b *agentEventCallbackBridge) onModelEndWithStreamOutput(ctx context.Contex
 			})
 			return ctx
 		}
-		if chunk == nil || chunk.Message == nil || len(chunk.Message.ToolCalls) > 0 {
+		if chunk == nil || chunk.Message == nil {
 			continue
 		}
-		text := chunk.Message.Content
-		if text == "" {
-			continue
+		// 这个思考过程是全英文的
+		if reasoning := reasoningContent(chunk.Message); reasoning != "" {
+			_ = b.sendThinkingDelta(ctx, reasoning)
 		}
-		messageID := b.assistantMessageID()
-		// 汇总流式的 assistant chunk内容
-		b.appendAssistantDelta(text)
-		_ = b.send(ctx, domain.AgentEvent{
-			Type:           domain.EventAssistantDelta,
-			ConversationID: b.req.ConversationID,
-			MessageID:      messageID,
-			Content:        text,
-			Done:           false,
-		})
+		_ = b.sendAssistantDelta(ctx, chunk.Message.Content)
+		// if chunk.Message.Content != "" {
+		// 	// // 工具调用，作为思考内容发送
+		// 	// if len(chunk.Message.ToolCalls) > 0 {
+		// 	// 	_ = b.sendThinkingDelta(ctx, chunk.Message.Content)
+		// 	// 	continue
+		// 	// }
+		// 	// 最后assistant输出chunk
+		// 	_ = b.sendAssistantDelta(ctx, chunk.Message.Content)
+		// }
 	}
 	return ctx
 }
@@ -150,17 +153,8 @@ func (b *agentEventCallbackBridge) onToolStart(ctx context.Context, info *einoca
 		dataJSON = input.ArgumentsInJSON
 	}
 	messageID := b.startToolMessageID(toolName)
-	event := domain.AgentEvent{
-		Type:           domain.EventToolProgress,
-		ConversationID: b.req.ConversationID,
-		MessageID:      messageID,
-		Tool:           toolName,
-		Status:         "running",
-		Content:        toolProgressContent(toolName),
-		DataJSON:       ensureJSONObject(dataJSON),
-		Done:           false,
-	}
-	if !b.markToolProgress(event) {
+	event, err := b.runState.OnToolProgress(messageID, toolName, toolProgressContent(toolName), ensureJSONObject(dataJSON))
+	if err != nil {
 		return ctx
 	}
 	_ = b.send(ctx, event)
@@ -184,26 +178,15 @@ func (b *agentEventCallbackBridge) onToolEnd(ctx context.Context, info *einocall
 			}
 		}
 	}
-	event := domain.AgentEvent{
-		Type:           domain.EventToolResult,
-		ConversationID: b.req.ConversationID,
-		MessageID:      b.finishToolMessageID(toolName),
-		Tool:           toolName,
-		Status:         "success",
-		Content:        wrappedToolSummary(toolName, response),
-		DataJSON:       ensureJSONObject(response),
-		Done:           true,
-	}
-	if isBusinessWriteTool(toolName) || (b.approvalManager != nil && b.approvalManager.RequiresConfirmation(toolName)) {
-		event.BusinessExecuted = true
+	businessExecuted := isBusinessWriteTool(toolName) || (b.approvalManager != nil && b.approvalManager.RequiresConfirmation(toolName))
+	event, stateErr := b.runState.OnToolResult(b.finishToolMessageID(toolName), toolName, "success", wrappedToolSummary(toolName, response), ensureJSONObject(response), businessExecuted)
+	if stateErr != nil {
+		return ctx
 	}
 	if event.BusinessExecuted {
 		b.mu.Lock()
 		b.businessExecuted = true
 		b.mu.Unlock()
-	}
-	if !b.markToolResult(event) {
-		return ctx
 	}
 	_ = b.send(ctx, event)
 	return ctx
@@ -214,16 +197,11 @@ func (b *agentEventCallbackBridge) onToolError(ctx context.Context, info *einoca
 	if toolName == "" || isAgentToolName(toolName) || err == nil {
 		return ctx
 	}
-	_ = b.send(ctx, domain.AgentEvent{
-		Type:           domain.EventToolResult,
-		ConversationID: b.req.ConversationID,
-		MessageID:      b.finishToolMessageID(toolName),
-		Tool:           toolName,
-		Status:         "failed",
-		Content:        "工具调用未完成，请稍后重试。",
-		DataJSON:       fmt.Sprintf(`{"error":%q}`, err.Error()),
-		Done:           true,
-	})
+	event, stateErr := b.runState.OnToolResult(b.finishToolMessageID(toolName), toolName, "failed", "工具调用未完成，请稍后重试。", fmt.Sprintf(`{"error":%q}`, err.Error()), false)
+	if stateErr != nil {
+		return ctx
+	}
+	_ = b.send(ctx, event)
 	return ctx
 }
 
@@ -241,12 +219,6 @@ func (b *agentEventCallbackBridge) hasBusinessExecuted() bool {
 	return b.businessExecuted
 }
 
-func (b *agentEventCallbackBridge) markBusinessExecuted() {
-	b.mu.Lock()
-	b.businessExecuted = true
-	b.mu.Unlock()
-}
-
 func (b *agentEventCallbackBridge) hasAnyEvent() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -259,68 +231,39 @@ func (b *agentEventCallbackBridge) hasAssistantEvent() bool {
 	return b.assistantEmitted
 }
 
-func (b *agentEventCallbackBridge) hasBufferedAssistantContent() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return strings.TrimSpace(b.assistantContent.String()) != "" && !b.assistantFinalEmitted
-}
-
-func (b *agentEventCallbackBridge) hasToolResult(event domain.AgentEvent) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.toolResultKeys[toolResultDedupeKey(event)]
-}
-
-func (b *agentEventCallbackBridge) appendAssistantDelta(text string) {
-	if text == "" {
-		return
+func (b *agentEventCallbackBridge) sendThinkingDelta(ctx context.Context, text string) error {
+	event, err := b.runState.OnThinkingDelta(text)
+	if err != nil || strings.TrimSpace(event.Content) == "" {
+		return nil
 	}
-	b.mu.Lock()
-	b.assistantContent.WriteString(text)
-	b.mu.Unlock()
+	return b.send(ctx, event)
 }
 
-func (b *agentEventCallbackBridge) recordNonStreamingAssistantContent(content string) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return
+func (b *agentEventCallbackBridge) sendAssistantDelta(ctx context.Context, text string) error {
+	event, err := b.runState.OnModelDelta(text)
+	if err != nil || event.Content == "" {
+		return nil
 	}
-	b.mu.Lock()
-	if b.assistantContent.Len() == 0 {
-		b.assistantContent.WriteString(content)
-	}
-	b.assistantMessageIDLocked()
-	b.mu.Unlock()
+	return b.send(ctx, event)
 }
 
-func (b *agentEventCallbackBridge) finalAssistantEvent() (domain.AgentEvent, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	content := b.assistantContent.String()
-	if content == "" || b.assistantFinalEmitted {
-		return domain.AgentEvent{}, false
+// 更新状态机，规范化中断事件
+func (b *agentEventCallbackBridge) enterAwaitingConfirmation(event domain.AgentEvent) (domain.AgentEvent, bool) {
+	if b.runState.State() == agentRunStateRunning {
+		if _, err := b.runState.OnToolProgress(newAgentMessageID(), event.Tool, "", "{}"); err != nil {
+			return event, false
+		}
 	}
-	b.assistantFinalEmitted = true
-	return domain.AgentEvent{
-		Type:           domain.EventAssistantMessage,
-		ConversationID: b.req.ConversationID,
-		MessageID:      b.assistantMessageIDLocked(),
-		Content:        content,
-		Done:           true,
-	}, true
-}
-
-func (b *agentEventCallbackBridge) assistantMessageID() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.assistantMessageIDLocked()
-}
-
-func (b *agentEventCallbackBridge) assistantMessageIDLocked() string {
-	if b.visibleAssistantMessageID == "" {
-		b.visibleAssistantMessageID = newAgentMessageID()
+	normalized, err := b.runState.OnConfirmationRequired(event.ConfirmationID, event.Tool, event.Summary, event.ExpiresAt)
+	if err != nil {
+		return event, false
 	}
-	return b.visibleAssistantMessageID
+	normalized.MessageID = event.MessageID
+	normalized.Content = event.Content
+	normalized.Status = event.Status
+	normalized.DataJSON = event.DataJSON
+	normalized.Action = event.Action
+	return normalized, true
 }
 
 func (b *agentEventCallbackBridge) startToolMessageID(toolName string) string {
@@ -349,28 +292,6 @@ func (b *agentEventCallbackBridge) finishToolMessageID(toolName string) string {
 	return messageID
 }
 
-func (b *agentEventCallbackBridge) markToolProgress(event domain.AgentEvent) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	key := toolProgressDedupeKey(event)
-	if b.toolProgressKeys[key] {
-		return false
-	}
-	b.toolProgressKeys[key] = true
-	return true
-}
-
-func (b *agentEventCallbackBridge) markToolResult(event domain.AgentEvent) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	key := toolResultDedupeKey(event)
-	if b.toolResultKeys[key] {
-		return false
-	}
-	b.toolResultKeys[key] = true
-	return true
-}
-
 func (b *agentEventCallbackBridge) send(ctx context.Context, event domain.AgentEvent) error {
 	b.mu.Lock()
 	b.emittedAny = true
@@ -380,11 +301,6 @@ func (b *agentEventCallbackBridge) send(ctx context.Context, event domain.AgentE
 	b.mu.Unlock()
 	if b.emit == nil {
 		return nil
-	}
-	if b.req.OnEvent != nil && shouldEmitToOnEvent(event.Type) {
-		if err := b.req.OnEvent(ctx, event); err != nil {
-			return err
-		}
 	}
 	return b.emit(ctx, event)
 }
@@ -401,34 +317,17 @@ func isKnownAgentName(name string) bool {
 	return false
 }
 
-func toolProgressDedupeKey(event domain.AgentEvent) string {
-	return strings.TrimSpace(event.Tool)
-}
-
-func shouldEmitToOnEvent(eventType string) bool {
-	return eventType != domain.EventAssistantDelta && eventType != domain.EventToolProgress
-}
-
-// 工具名称 + 状态 + 数据JSON + 内容 作为去重的key
-func toolResultDedupeKey(event domain.AgentEvent) string {
-	return strings.TrimSpace(event.Tool) + "|status:" + strings.TrimSpace(event.Status) +
-		"|data:" + canonicalJSON(event.DataJSON) + "|content:" + strings.TrimSpace(event.Content)
-}
-
-func canonicalJSON(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
+func reasoningContent(message *schema.Message) string {
+	if message == nil {
 		return ""
 	}
-	var data any
-	if err := json.Unmarshal([]byte(value), &data); err != nil {
+	if message.ReasoningContent != "" {
+		return message.ReasoningContent
+	}
+	if value, ok := message.Extra["reasoning-content"].(string); ok && value != "" {
 		return value
 	}
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		return value
-	}
-	return string(encoded)
+	return ""
 }
 
 func toolProgressContent(toolName string) string {

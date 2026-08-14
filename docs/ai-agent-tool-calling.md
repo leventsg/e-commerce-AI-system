@@ -30,7 +30,7 @@ POST /douyin/ai/chat SSE user_message
   -> AgentEvent -> AiAgent RPC stream -> SSE
 ```
 
-工具统一由 `tools.Tool` 定义，并通过 Registry 暴露为 Eino `InvokableTool` 和 `ToolInfo` schema。当前 `internal/eino/agent.go` 的 AgentRunner 使用 Eino ADK `ChatModelAgent + AgentTool`：Supervisor Agent 负责意图识别、任务拆解、Agent 路由和最终总结；领域 SubAgent 只绑定本领域工具，工具 schema 通过 ChatModel tool binding 给模型，可执行工具通过 `ToolsConfig.ToolsNodeConfig.Tools` 给 ADK ToolsNode。callback 产生的 `assistant_delta` / `tool_progress` 仅作为流式瞬时事件，完整 `assistant_message`、`tool_result`、`confirmation_required` 和 `error` 才写入 `ai_messages`。
+工具统一由 `tools.Tool` 定义，并通过 Registry 暴露为 Eino `InvokableTool` 和 `ToolInfo` schema。当前 `internal/eino/agent.go` 的 AgentRunner 使用 Eino ADK `ChatModelAgent + AgentTool`：Supervisor Agent 负责意图识别、任务拆解、Agent 路由和最终总结；领域 SubAgent 只绑定本领域工具，工具 schema 通过 ChatModel tool binding 给模型，可执行工具通过 `ToolsConfig.ToolsNodeConfig.Tools` 给 ADK ToolsNode。callback 产生的 `assistant_delta`、`assistant_thinking_delta` 和 `tool_progress` 仅作为流式瞬时事件，完整 `assistant_message`、`tool_result`、`confirmation_required` 和 `error` 才写入 `ai_messages`。
 
 ## 3. 核心组件
 
@@ -272,14 +272,15 @@ WrapperAuthMiddleware
 
 工具链最终统一转换为服务端事件：
 
-- `assistant_delta`：模型自然语言片段，瞬时事件，不写库；
+- `assistant_delta`：模型面向用户的最终自然语言片段，携带消息 ID，瞬时事件，不写库；
+- `assistant_thinking_delta`：模型 reasoning 或工具调用前中间过程，不携带消息 ID，瞬时事件，不写库，前端默认折叠展示；
 - `assistant_message`：普通回答、追问或工具结果摘要；
 - `tool_progress`：工具执行进度，瞬时事件，不写库；
 - `tool_result`：结构化工具状态和 `data`；
 - `confirmation_required`：确认 ID、action、摘要、过期时间和参数摘要；
 - `error`：模型、协议或持久化等错误。
 
-`apis/ai` 将 gRPC stream 中的 `AgentEvent` 映射为 `text/event-stream`，每个事件立即 flush；`assistant_delta` 与 `tool_progress` 不持久化，历史重放只返回完整落库消息。
+`apis/ai` 将 gRPC stream 中的 `AgentEvent` 映射为 `text/event-stream`，每个事件立即 flush；`assistant_delta`、`assistant_thinking_delta` 与 `tool_progress` 不持久化，历史重放只返回完整落库消息。
 
 ## 12. 新增工具时的实现清单
 
@@ -297,6 +298,6 @@ Eino 原生 tool-calling 已通过 ADK ChatModelAgent 接入在线主链路。`i
 
 ## 13. 当前边界
 
-当前主链路已经使用 SSE、aiagent server-streaming RPC 和 Eino ADK iterator；模型自然语言输出按 `assistant_delta` 流式下发，完整 `assistant_message` 只在 run 结束时生成并持久化。工具执行仍以 `AgentEvent` 粒度输出：调用前发送去重后的 `tool_progress`，调用后由 Executor/handler 结果生成 `tool_result`，必要时再由模型生成最终自然语言回复。
+当前主链路已经使用 SSE、aiagent server-streaming RPC 和 Eino ADK iterator；模型最终自然语言输出按 `assistant_delta` 流式下发，模型 reasoning 和工具调用前中间过程按 `assistant_thinking_delta` 下发，完整 `assistant_message` 只在 run 结束时生成并持久化。工具执行仍以 `AgentEvent` 粒度输出：调用前发送去重后的 `tool_progress`，调用后由 Executor/handler 结果生成 `tool_result`，必要时再由模型生成最终自然语言回复。
 
 结构化 Intent Planner 仍作为明确中文意图兜底；业务工具 schema 和可执行包装器由同一个 `tools.Tool` 生成，分别供模型识别和 ToolsNode 执行。

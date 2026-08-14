@@ -1,311 +1,167 @@
-# AI 智能客服 Agent 交接文档
+# 交接文档
 
-更新时间：2026-08-04
+## 我们在做什么任务
 
-当前分支：`feat/context_optimization`
+我们在做电商 AI 智能客服的前后端接入与 Agent 事件链路收敛。
 
-写给新会话：你不需要知道之前聊天历史。先读 `AGENTS.md`，再读本文档。当前工作区是脏的，里面有连续多轮 AI 客服改造成果；不要随手 `reset`、`checkout`、删除文件或回退未理解的改动。
+当前重点已经从“前端 API 接入”推进到“后端 Eino Agent run 生命周期、SSE 事件来源、最终回答归属 final ownership”的梳理与修正。核心目标是让一次用户消息或确认操作触发的 Agent run 有清晰边界：
 
-## 1. 我们在做什么任务
+- 工具进度、工具结果、确认卡片、思考过程分别作为状态事件给前端展示。
+- 最终 assistant_message 作为唯一事实消息，用于落库、摘要、画像和幂等重放。
+- 前端可见的最终回答不能混入 supervisor 中间推理、阶段性计划、工具前置判断。
+- callback、ADK iterator、logic 持久化层各自职责要清楚，避免一个事件被处理两次。
 
-我们在改造 `services/aiagent` 这套电商 AI 客服 Agent，让它真正基于 Eino/ADK 完成：
+相关主要目录：
 
-- 聊天上下文组装与滚动摘要。
-- 聊天来源用户画像抽取与注入。
-- `ai_messages` 幂等与 UUIDv7 消息 ID。
-- Eino Tool Calling 与 Execution Guard。
-- 多 Agent 编排：Supervisor 负责意图识别、任务拆解、领域 Agent 路由和最终总结。
-- 子 Agent 负责本领域工具选择、参数抽取、业务 RPC 调用和工具失败处理。
+- `services/aiagent/internal/eino/**`：Eino Agent、callback、iterator 消费、Agent run 状态机。
+- `services/aiagent/internal/logic/**`：Chat / ConfirmAction RPC 逻辑、消息落库、SSE/RPC 事件转发。
+- `apis/ai/**`：AI API/SSE 网关。
+- `frontend/**`：AI 客服前端页面、SSE 消费、三状态栏展示。
+- `frontend_docs/**`：前端 API 接入文档和实施方案。
 
-必读文档：
+## 已经完成了什么
 
-1. `AGENTS.md`
-2. `docs/ai-customer-service-prd.md`
-3. `docs/ai-customer-service-design.md`
-4. `docs/ai-customer-service-implementation-plan.md`
-5. `docs/ai-agent-context-optimization.md`
-6. `docs/ai-agent-tool-calling.md`
+前端方向已经完成过以下方案与实现：
 
-## 2. 已经完成了什么
+- 在 `frontend_docs/frontend-api-integration.md` 梳理了前端需要接入的认证、AI SSE、确认流程、商城 REST 接口。
+- 在 `frontend_docs/frontend-code-implementation-plan.md` 写过前端代码实施计划。
+- 修正过本地 Vite 多后端代理方案：前端继续请求 `/douyin/**`，开发代理按路径分流到不同服务端口，例如 user 到 `8001`，ai 到 `8007`，product 到 `8002` 等。
+- 前端曾接入真实登录、SSE AI 聊天、确认卡片、工具结果展示、三状态栏分组展示。
+- 前端新对话不应传 `conversation_id`；`conversation_id` 应以后端返回为准。
+- `client_message_id` 应使用 uuidv7，不应使用时间戳拼数字。
+- 确认操作里的 `conversation_id`、`confirmation_id` 必须使用后端事件返回值绑定，不能前端自行猜。
+- token 续期后应覆盖保存新的 access/refresh token。
+- SSE 收到 `done=true` 后，前端输出中的 streaming 光标应停止。
 
-### 2.1 Context Manager / 摘要 / 记忆
+后端方向已经完成或已改动的内容：
 
-当前在线聊天只构建 `AgentContext`，旧 `IntentContext` / `IntentPlanner` / `IntentModel` 已移除。
+- AI API 与 aiagent 超时已调整到 5 分钟以内：
+  - `apis/ai/etc/ai-api.yaml`
+  - `apis/ai/etc/ai-api.prod.yaml`
+  - `services/aiagent/etc/aiagent.yaml`
+  - `services/aiagent/etc/aiagent.prod.yaml`
+  - `apis/ai/internal/logic/chatlogic.go` 中 `sseRequestTimeout = 5 * time.Minute` 已存在。
+- Eino 事件来源已做过一次简化：
+  - callback 是工具实时事件唯一来源。
+  - `consumeEvents` 不再把 ADK iterator 里的 Tool message 转成 `tool_result`。
+  - 删除了 `adkEventToDomainEvent`，改为 `iteratorAssistantEventToDomainEvent`，只处理 supervisor 最终 assistant。
+  - 删除了工具结果/进度去重逻辑，允许模型真实连续调用同一个工具多次。
+  - 删除了 `RunRequest.OnEvent` / `ResumeRequest.OnEvent`，事件统一走 `out` channel。
+- logic 层事件处理已收敛：
+  - `EventAssistantMessage`、`EventToolResult`、`EventConfirmationRequired`、`EventError` 才持久化。
+  - transient 事件如 `assistant_delta`、`assistant_thinking_delta`、`tool_progress` 只发前端，不落库。
+  - `assistant_message` 当前只落库，不转发给前端。
+  - `ChatLogic.runSupervisor` 和 `ConfirmActionLogic` 都已改成持久化事件时单条 `Insert`，不再依赖 `InsertBatch`。
+- 之前跑过并通过：
+  - `go test ./services/aiagent/internal/eino`
+  - `go test ./services/aiagent/internal/logic`
+  - `go test ./services/aiagent/...`
 
-上下文构建入口：
+注意：当前工作树仍是 dirty 状态，主要改动文件包括：
 
+- `apis/ai/etc/ai-api.yaml`
+- `apis/ai/etc/ai-api.prod.yaml`
+- `services/aiagent/etc/aiagent.yaml`
+- `services/aiagent/etc/aiagent.prod.yaml`
+- `services/aiagent/internal/eino/agent.go`
+- `services/aiagent/internal/eino/callbacks.go`
+- `services/aiagent/internal/eino/callbacks_test.go`
 - `services/aiagent/internal/logic/chatlogic.go`
-  - 保存用户消息后调用 `ContextManager.Build(...)`。
-  - 然后调用 `runSupervisor(..., agentContext.Messages)`。
-- `services/aiagent/internal/contextmanager/manager.go`
-  - 组装 `[]domain.ContextMessage`。
-
-当前 `AgentContext` 组装顺序：
-
-1. system：`agentprompt.SystemPrompt`
-2. conversation summary
-3. 最近 user/assistant 消息，最多 20 条
-4. latest tool result
-5. historical tool refs
-6. active task state
-7. active user memories
-8. active user profile
-9. 当前用户输入
+- `services/aiagent/internal/logic/confirmactionlogic.go`
+- `services/aiagent/internal/logic/confirmactionlogic_test.go`
+- `services/aiagent/internal/tools/coupon_tools.go`
+- `docs/model-context.md`
+
+## 当前卡在哪
+
+当前最大问题是：Agent final ownership 没有定义清楚。
+
+现象：
+
+用户看到的最终客服回答里混入了 supervisor 的中间过程，例如：
+
+- 先根据工具结果做了一个“初步判断”。
+- 又说“还需要 product_id，请补充信息”。
+- 接着又自己继续调用试算工具。
+- 最后再输出真正结论。
+
+这些内容被拼成一个 assistant 输出，导致最终回答像是把“中间思考、阶段性计划、最终答案”全混在一起。
+
+当前后端原因：
+
+- `services/aiagent/internal/eino/callbacks.go` 的 `onModelEndWithStreamOutput` 会把 supervisor 暴露出来的 `chunk.Message.Content` 直接发成 `assistant_delta`。
+- 但 supervisor 的一次 Agent run 中，模型可能多次输出普通 content：路由说明、工具前判断、阶段性总结、最终总结。
+- callback 只知道“这一轮模型 stream 出了 content”，不知道这是不是整个顶层 run 的最终输出。
+- `iter.Next()` 中 supervisor 的 `tool_call=0` assistant message 更像 final fact，但目前 logic 层对 `assistant_message` 只落库、不转发前端。
+
+还有一个关联问题：
+
+- 子 agent 是作为 tool 执行的。
+- supervisor 调用子 agent 时，`chunk.Message.ToolCalls` 可能有值，但 `chunk.Message.Content` 为空。
+- 所以不能依赖 `ToolCalls + Content` 作为稳定思考过程来源。
+- 真正的 reasoning 来源是 `ReasoningContent` 或 `Extra["reasoning-content"]`，但这个内容目前可能是英文；中文那段更多来自普通 `Content`。
+
+另一个已排查过的问题：
+
+- trace `84200e07ce408b076851641f3615e0a2` 中，`aiagent.log` 显示 `ai supervisor returned no events`，不是工具失败。
+- 该请求约 26 秒后结束，API 层 HTTP 200。
+- `runSupervisor` 进入 `events == 0` 是因为它消费的是 Eino 包装后的 `out` channel，不是直接消费 `iter.Next()`。
+- 如果 `consumeEvents` 没有成功 emit 任何 `domain.AgentEvent`，`out` 关闭后外层 `events` 仍为 0。
+- 这不是单纯因为 `aiagent.rpc Timeout: 0`。`Timeout: 0` 更像 aiagent RPC server 层不主动设置总超时。
+
+## 下一步计划是什么
+
+优先不要继续零散改 callback。下一步应先确定 final ownership 方案，再写测试，再改代码。
+
+建议方案：
+
+1. 明确定义顶层 Agent run 的最终输出：
+   - `RunCompleted.FinalOutput` 或等价的 `iter.Next()` 中 supervisor `assistant_message tool_call=0`，应是 final assistant fact 的唯一来源。
+   - final assistant fact 必须落库。
+   - 是否发送前端，需要根据流式策略明确决定。
+
+2. 收敛 callback 职责：
+   - `reasoningContent` 只发 `assistant_thinking_delta`。
+   - tool callback 只发 `tool_progress` / `tool_result`。
+   - callback 不应无条件把 supervisor `chunk.Message.Content` 发成 `assistant_delta`。
+   - 如果要保留逐字最终输出，必须能确认当前 chunk 属于 final phase，否则宁可不发。
+
+3. 设计 final streaming 策略，二选一：
+   - 保守方案：前端不展示最终逐字流；只展示思考、工具、确认状态，等 `iter.Next()` final assistant 出来后再一次性发送最终回答。
+   - 进阶方案：增加明确状态机/turn buffer，只有判断该 supervisor model turn 不会再触发 tool call 且是最终回答时，才把 buffer 作为 final delta 释放给前端。
+
+4. 增加测试覆盖：
+   - supervisor 先输出普通 content，再 tool_call，再 final assistant：前端不应把前面的 content 当最终回答。
+   - 子 agent tool call 只有 `ToolCalls` 没有 `Content`：不能导致 thinking 丢失或误发 final。
+   - `ReasoningContent` 进入 thinking，不进入 assistant final。
+   - `iter.Next()` final assistant 进入落库。
+   - 若没有任何可 emit 事件，应明确发 error，并记录 why，避免只有外层 `events == 0`。
+
+5. 增强诊断日志：
+   - 在 `consumeEvents` 中记录 iterator 事件类型、agent name、role、tool_calls 数量、content 是否为空。
+   - 在 callback 中记录 exposed model name、是否有 reasoning、是否有 content、是否有 tool_calls。
+   - 对 `emit(ctx, event)` 的错误不要全部忽略，至少 debug/error 打出来，尤其是 ctx canceled。
+
+6. 再做一次真实模型对比测试：
+   - 使用之前放在 `tests/` 下的真实 Agent stream compare 测试。
+   - 观察 `output.Recv()` 和 `iter.Next()` 在多工具、多子 agent 场景下各自输出什么。
+
+## 有哪些踩过的坑，绝对不要再踩
+
+- 不要把 `output.Recv()` 的所有 `chunk.Message.Content` 都当最终 assistant 输出。它可能只是 supervisor 中间阶段内容。
+- 不要把 ADK iterator 中的 Tool message 和 callback 工具结果同时转成 `tool_result`，否则前端会显示两张工具卡片。
+- 不要做工具结果去重来掩盖重复。模型连续调用同一个工具两次可能是合法行为；重复的根因应该通过单一处理入口解决。
+- 不要在 Eino 层直接写数据库。Eino 层没有用户消息 dedupe、`prepared.ClientMessageID`、持久化失败 SSE 策略和会话幂等上下文。
+- 不要恢复 `RunRequest.OnEvent` / `ResumeRequest.OnEvent` 这种双路径事件 hook。事件统一走 `out` channel 更清楚。
+- 不要认为 `iter.Next()` 有事件就等于前端会有事件。只有被转换并 `emit` 成 `domain.AgentEvent` 的事件，`runSupervisor` 才能收到。
+- 不要忽略 `emit(ctx, event)` 错误。ctx canceled 时兜底错误可能发不出去，外层只看到 `events == 0`。
+- 不要依赖 `ToolCalls + Content` 作为思考过程来源。子 agent 作为 tool 调用时常常只有 `ToolCalls`，没有 `Content`。
+- 不要把英文 reasoning 直接展示给用户。要么 prompt/model 配置确保 reasoning 中文，要么前端/后端区分内部 reasoning 与用户可见状态。
+- 不要把“优惠券已被领取”视为工具系统失败。它是业务上的成功响应或可解释业务状态，应该传给 LLM，让模型告诉用户已经领过，而不是触发工具失败。
+- 不要把高风险操作落库放到发送之后，除非有明确批量保存和失败补偿策略。当前已经倾向于 durable 事件先落库再发送，避免前端看到成功但数据库没有事实。
+- 不要把 `aiagent.rpc Timeout: 0` 当成这次 26 秒 `events == 0` 的直接原因。真正要查的是 Eino iterator/callback 为什么没有成功产出 domain event。
+- 不要在声称完成前跳过测试。AI 客服相关至少跑：
+  - `go test ./services/aiagent/internal/eino`
+  - `go test ./services/aiagent/internal/logic`
+  - `go test ./services/aiagent/...`
 
-注意：`ContextManager` 只负责每轮用户请求进入 Supervisor 前的初始上下文快照。本轮运行中 Supervisor、AgentTool、子 Agent、ToolsNode 的内部消息由 ADK runSession/state 在内存里维护，不会回写到原来的 `agentContext.Messages` slice。
-
-跨轮上下文靠持久化实现：`ChatLogic.runSupervisor` 的 `OnEvent` 会边运行边把可转换的 assistant/tool event 写入 `ai_messages`，下一轮再由 `ContextManager` 从 DB 重新组装。
-
-### 2.2 Supervisor Agent + AgentTool
-
-最新完成：移除了 ADK `prebuilt/supervisor` / AgentTransfer，改为 `ChatModelAgent + AgentTool`。
-
-关键文件：
-
-- `services/aiagent/internal/eino/agent.go`
-- `services/aiagent/internal/eino/agent_test.go`
-- `services/aiagent/internal/prompts/agent/*.txt`
-- `services/aiagent/internal/svc/servicecontext.go`
-
-当前结构：
-
-- Root：`supervisor_agent`
-  - 普通 ADK `ChatModelAgent`
-  - 只绑定 5 个 AgentTool：
-    - `product_agent`
-    - `order_agent`
-    - `cart_checkout_agent`
-    - `coupon_agent`
-    - `general_agent`
-  - 不直接绑定业务 RPC 工具。
-  - `ToolsConfig.EmitInternalEvents = true`，用于把子 Agent 内部真实业务 tool event 暴露给外层 Runner。
-
-- 子 Agent：
-  - 都是普通 ADK `ChatModelAgent`
-  - 只绑定各自领域业务工具。
-  - 默认只接收 Supervisor 传入的紧凑 `request`，没有使用 `adk.WithFullChatHistoryAsInput()`，不会共享完整聊天历史。
-
-当前领域划分：
-
-- `product_agent`：`product_search`、`product_detail`、`product_recommend`、`inventory_get`
-- `order_agent`：`order_get`、`order_list`、`order_cancel`
-- `cart_checkout_agent`：`cart_list`、`cart_add`、`cart_sub`、`cart_delete`、`checkout_prepare`、`checkout_detail`、`order_create`
-- `coupon_agent`：`coupon_list`、`coupon_detail`、`coupon_claim`、`coupon_my_list`、`coupon_usage_list`、`coupon_calculate`
-- `general_agent`：无业务工具，用于普通客服解释、闲聊、无法归类问题
-
-ADK event 转换规则：
-
-- 跳过 assistant 中带 `ToolCalls` 的中间消息。
-- 跳过非 Supervisor 的 assistant 消息，避免子 Agent 内部回复直接展示给用户。
-- 跳过 AgentTool 包装层 tool event，例如 `product_agent` 返回。
-- 保留真实业务工具 event，例如 `product_search`、`order_get`，并写入 `ai_messages`。
-
-### 2.3 Eino Tool Calling / Execution Guard
-
-已完成：
-
-- 工具封装为 Eino `InvokableTool`。
-- `Registry.ToolsByNames(...)` 和 `Registry.ToolInfosByNames(...)` 可按领域取工具。
-- `ModelFactory.NewChatModel(ctx, cfg, tools...)` 支持 tools 参数。
-- tools 非空时使用 `ToolCallingChatModel.WithTools(tools)`，不用 deprecated `BindTools`。
-- 工具执行前由 Runner 注入可信 `ToolExecutionContext`：
-  - authenticated `user_id`
-  - `conversation_id`
-  - 当前 `message_id`
-  - `client_ip`
-- Eino tool arguments 里的 `user_id` 不可信，Execution Guard 必须覆盖或清理。
-
-关键文件：
-
-- `services/aiagent/internal/eino/model_factory.go`
-- `services/aiagent/internal/tools/registry.go`
-- `services/aiagent/internal/tools/query_tools.go`
-- `services/aiagent/internal/tools/write_tools.go`
-- `services/aiagent/internal/tools/high_risk_tools.go`
-- `services/aiagent/internal/tools/executor.go`
-
-### 2.4 UserProfile / UserMemory
-
-方向已确定：
-
-- 不再从 users RPC 获取账号资料当画像。
-- `ai_user_memories` 保存原子化长期记忆/证据。
-- `ai_user_profiles` 保存面向模型注入的聚合画像 JSON。
-- 每轮聊天消息持久化后投递 Kafka topic `ai-user-profile-updates`。
-- Profile Extractor 异步读取本轮消息、现有 profile、相关 active memories，调用 LLM 生成候选 patch。
-- 后端负责 JSON 校验、证据归属、敏感信息拒绝、用户隔离、删除/遗忘优先级和 upsert。
-
-结构化输出已改为 DeepSeek/OpenAI-compatible `json_object`：
-
-- 不再使用 `json_schema`。
-- `NewStructuredChatModel` 应设置 `response_format: {"type":"json_object"}`。
-- prompt 必须明确要求只输出 JSON 对象，并给示例。
-
-关键文件：
-
-- `services/aiagent/internal/eino/profile_model.go`
-- `services/aiagent/internal/profileextractor/**`
-- `services/aiagent/internal/consumer/profile_update/**`
-- `services/aiagent/internal/contextmanager/user_profile.go`
-- `dal/model/ai/user_profiles/**`
-
-### 2.5 ai_messages 幂等与 UUIDv7
-
-已按用户要求完成：
-
-- 前端聊天请求增加 `client_message_id`。
-- 同一轮 user/assistant/tool 消息保存同一个 `client_message_id`。
-- `msg_id` 使用 UUIDv7。
-- `id` 作为 DB 内部自增顺序 ID。
-- 重复提交按同一用户的 user 消息幂等判断。
-- 重放旧响应时只查同一会话、同一 `client_message_id` 的 assistant 消息，并按 `id asc` 返回。
-
-重要概念：
-
-- `client_message_id`：前端生成的一轮请求幂等 ID。
-- `dedupe_client_message_id`：MySQL 生成列，只用于 user 消息唯一索引。
-- 不能唯一约束 `(user_id, client_message_id)`，因为同一轮 assistant/tool 也要保存相同 `client_message_id`。
-
-## 3. 当前卡在哪儿
-
-当前没有明确代码阻塞，最近一轮任务“移除 ADK prebuilt Supervisor，改用 ChatModelAgent + AgentTool”已经完成并通过目标测试。
-
-需要注意的环境问题：
-
-- 系统 `/tmp` / 默认 Go build cache 所在卷曾满过，`go test` 报：
-  - `link: mapping output file failed: no space left on device`
-- workaround 是临时使用仓库所在卷：
-  - `GOCACHE=/Volumes/macOS/VSCodeProject/GoProject/project/go-mall/.cache/go-build`
-  - `GOTMPDIR=/Volumes/macOS/VSCodeProject/GoProject/project/go-mall/.cache/go-tmp`
-- 验证后 `.cache` 已被清理。
-- `apis/ai/...` 测试在 sandbox 下可能因为 `httptest` 绑定本地端口失败：
-  - `bind: operation not permitted`
-  - 需要按规则申请非 sandbox 运行同一 `go test` 命令。
-
-当前工作区仍有很多未提交改动，其中大部分来自前序任务，不要误判为本轮新增。
-
-最新 `git status --short` 只显示本轮直接相关改动为：
-
-- `services/aiagent/internal/eino/agent.go`
-- `services/aiagent/internal/eino/agent_test.go`
-
-但 docs 中关于 AgentTool 的更新也已经存在于工作区；请以实际 `git diff` 为准。
-
-## 4. 最近验证结果
-
-最近一次完成 AgentTool 替换后验证：
-
-```bash
-go test ./services/aiagent/internal/eino -count=1
-go test ./services/aiagent/internal/logic -count=1
-go test ./services/aiagent/... -count=1
-go test ./apis/ai/... -count=1
-git diff --check
-```
-
-结果：
-
-- `services/aiagent/internal/eino` 通过。
-- `services/aiagent/internal/logic` 通过。
-- `services/aiagent/...` 通过。
-- `apis/ai/...` sandbox 下因本地端口绑定失败，非 sandbox 重跑通过。
-- `git diff --check` 通过。
-
-残留检查：
-
-```bash
-rg -n "prebuilt/supervisor|supervisoragent|TransferToAgent|AgentTransfer|Successfully transferred" services docs
-```
-
-结果：
-
-- `services/**` 无旧 supervisor/transfer 代码残留。
-- `docs/**` 中只允许出现“当前不使用 `prebuilt/supervisor` / AgentTransfer”的说明。
-
-## 5. 下一步计划
-
-建议新会话接手后先做这几件事：
-
-1. 只读确认当前状态：
-
-```bash
-git status --short
-git rev-parse --abbrev-ref HEAD
-rg -n "prebuilt/supervisor|supervisoragent|TransferToAgent|AgentTransfer|Successfully transferred" services docs
-rg -n "NewSupervisorAgent|NewAgentTool|EmitInternalEvents|WithFullChatHistoryAsInput" services/aiagent/internal/eino
-```
-
-2. 确认文档和实现是否完全一致：
-
-- `docs/ai-agent-tool-calling.md`
-- `docs/ai-customer-service-design.md`
-- `docs/ai-customer-service-implementation-plan.md`
-- `docs/ai-agent-context-optimization.md`
-
-3. 如果继续优化上下文，要明确区分三层：
-
-- ContextManager：每轮开始前组装初始模型输入。
-- ADK runSession/state：本轮内部 supervisor/subagent/tool 消息传递。
-- DB：跨轮持久化上下文来源，下一轮再被 ContextManager 读取。
-
-4. 如果继续优化事件持久化，重点检查：
-
-- 是否需要持久化更多子 Agent 内部 assistant 消息。
-- AgentTool wrapper event 是否仍应跳过。
-- 真实业务 tool event 是否都能通过 `EmitInternalEvents` 暴露并写入 `ai_messages`。
-
-5. 如果继续查 DeepSeek JSON Output，必须写真实 HTTP 请求体测试：
-
-- 不要只测本地 config struct。
-- 用 `httptest.Server` 捕获请求 body。
-- 断言真实请求包含：
-
-```json
-"response_format": {"type":"json_object"}
-```
-
-## 6. 踩过的坑，绝对不要再踩
-
-1. 不要再用 ADK `prebuilt/supervisor` / AgentTransfer。
-
-   已确认不适合当前客服场景：全量上下文共享、注意力稀释、transfer 成功消息污染上下文、强制注入 Transfer Tool。当前采用 `ChatModelAgent + AgentTool`。
-
-2. 不要给子 Agent 使用 `WithFullChatHistoryAsInput()`。
-
-   当前设计要求子 Agent 默认只收到 Supervisor 传入的紧凑 `request`，避免全量历史共享和上下文污染。
-
-3. 不要让 Supervisor 直接绑定业务 RPC 工具。
-
-   Supervisor 只绑定 AgentTool。业务工具只给领域子 Agent，才能保持领域边界和工具列表可控。
-
-4. 不要把 AgentTool wrapper event 当业务工具结果落库。
-
-   `product_agent`、`order_agent` 等 wrapper event 只是协调层返回。应跳过。真正要落库的是 `product_search`、`order_get` 等业务工具 event。
-
-5. 不要再恢复 IntentPlanner / IntentContext。
-
-   用户已经明确：Intent agent 改为 Supervisor Agent，具备意图识别、路由、任务拆解能力；旧 planner 职责过大，已经移除。
-
-6. 不要信任模型、客户端、metadata 或 tool arguments 里的 `user_id`。
-
-   登录态用户 ID 是唯一可信来源；工具执行前必须由后端注入/覆盖。
-
-7. 不要再用 `json_schema` 结构化输出。
-
-   DeepSeek 报过：`This response_format type is unavailable now`。当前统一使用 `json_object`。
-
-8. 不要把 prompt 约束当成 `response_format`。
-
-   DeepSeek JSON Output 需要两者都满足：请求体带 `response_format: {"type":"json_object"}`，prompt 明确要求输出 JSON 并给示例。
-
-9. 不要只测本地配置对象。
-
-   如果用户质疑真实请求参数，必须用 `httptest.Server` 捕获真实 HTTP body。
-
-10. 不要直接唯一约束 `(user_id, client_message_id)`。
-
-    同一轮 assistant/tool 也要保存相同 `client_message_id`。幂等唯一约束要只作用在 user 消息。
-
-11. 不要把 `ContextManager` 理解成本轮运行时动态上下文容器。
-
-    它只负责每轮开始前组装初始上下文；本轮内部消息由 ADK 管，跨轮靠 `ai_messages` / summary / memory / profile 再组装。

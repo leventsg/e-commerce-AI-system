@@ -421,7 +421,7 @@ type ModelFactory interface {
 
 - [x] **Step 5: 实现 Agent Runner**
 
-Agent Runner 输入当前用户消息、会话历史和工具集合，主链路输出 `AgentEvent` channel。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。主链路使用 `adk.WithCallbacks` 捕获模型和工具生命周期：模型 callback 只绑定 `supervisor_agent`，自然语言流式输出转为 `assistant_delta` 并在 bridge 中累计；ADK iterator 结束后统一生成一条完整 `assistant_message` 用于持久化，已有 delta 时不重复下发。工具 callback 全局捕获，工具开始转为按 `tool + arguments` 去重的 `tool_progress`，工具完成转为按 `tool + status + data/content` 去重的 `tool_result`。ADK iterator 继续负责 interrupt、最终错误和生命周期收尾。`Run` / `Resume` 只作为收集型兼容适配器，不再作为流式主路径。
+Agent Runner 输入当前用户消息、会话历史和工具集合，主链路输出 `AgentEvent` channel。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。主链路使用 `adk.WithCallbacks` 捕获模型和工具生命周期：模型 callback 只绑定 `supervisor_agent`，面向用户的最终自然语言流式输出转为带消息 ID 的 `assistant_delta` 并在 bridge 中累计，模型 reasoning 和工具调用前中间过程转为无消息 ID 的 `assistant_thinking_delta`；ADK iterator 结束后统一生成一条完整 `assistant_message` 用于持久化，已有 assistant delta 时不重复下发，只有 thinking delta 时仍转发最终消息。工具 callback 全局捕获，工具开始转为按 `tool + arguments` 去重的 `tool_progress`，工具完成转为按 `tool + status + data/content` 去重的 `tool_result`。ADK iterator 继续负责 interrupt、最终错误和生命周期收尾。`Run` / `Resume` 只作为收集型兼容适配器，不再作为流式主路径。
 
 ```go
 type Runner interface {

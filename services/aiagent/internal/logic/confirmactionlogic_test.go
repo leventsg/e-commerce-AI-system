@@ -52,8 +52,8 @@ func TestConfirmActionRejectsWithoutResumingAgent(t *testing.T) {
 	if manager.markExecutedCalls != 0 || manager.markFailedCalls != 0 {
 		t.Fatalf("completion calls executed=%d failed=%d, want 0", manager.markExecutedCalls, manager.markFailedCalls)
 	}
-	if len(stream.events) != 2 {
-		t.Fatalf("stream events len = %d, want 2; events=%+v", len(stream.events), stream.events)
+	if len(stream.events) != 1 {
+		t.Fatalf("stream events len = %d, want only tool_result; events=%+v", len(stream.events), stream.events)
 	}
 	if stream.events[0].Type != domain.EventToolResult || stream.events[0].Tool != domain.ToolCartDelete || stream.events[0].Status != confirmation.StatusRejected {
 		t.Fatalf("first event = %+v, want rejected tool_result", stream.events[0])
@@ -64,9 +64,6 @@ func TestConfirmActionRejectsWithoutResumingAgent(t *testing.T) {
 	}
 	if data["tool_name"] != domain.ToolCartDelete || data["status"] != confirmation.StatusRejected || data["summary"] != "操作已取消。" {
 		t.Fatalf("tool_result data_json = %+v, want rejected cancellation payload", data)
-	}
-	if stream.events[1].Type != domain.EventAssistantMessage || stream.events[1].Content == "" {
-		t.Fatalf("second event = %+v, want assistant_message cancellation summary", stream.events[1])
 	}
 	if len(messages.inserted) != 2 {
 		t.Fatalf("inserted messages len = %d, want 2", len(messages.inserted))
@@ -103,8 +100,134 @@ func TestConfirmActionRejectDoesNotRequireAgentRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfirmAction returned error: %v", err)
 	}
-	if len(stream.events) != 2 {
-		t.Fatalf("stream events len = %d, want 2; events=%+v", len(stream.events), stream.events)
+	if len(stream.events) != 1 {
+		t.Fatalf("stream events len = %d, want only tool_result; events=%+v", len(stream.events), stream.events)
+	}
+}
+
+func TestConfirmActionApprovePersistsDurableEventsAndDoesNotForwardAssistantMessage(t *testing.T) {
+	ctx := context.Background()
+	manager := &confirmActionFakeConfirmationManager{
+		decided: &domain.Confirmation{
+			ID:             "confirm-1",
+			ConversationID: "conv-1",
+			UserID:         42,
+			ToolName:       domain.ToolOrderCancel,
+			Status:         confirmation.StatusApproved,
+			RunID:          "run-1",
+			CheckpointID:   "checkpoint-1",
+			InterruptID:    "interrupt-1",
+		},
+	}
+	runner := &confirmActionFakeRunner{resumeEvents: []domain.AgentEvent{
+		{Type: domain.EventAssistantDelta, ConversationID: "conv-1", MessageID: "msg-delta", Content: "已"},
+		{Type: domain.EventAssistantMessage, ConversationID: "conv-1", MessageID: "msg-final", Content: "已取消订单。", Done: true},
+		{Type: domain.EventToolProgress, ConversationID: "conv-1", MessageID: "msg-progress", Tool: domain.ToolOrderCancel, Status: "running", Content: "正在处理订单..."},
+		{Type: domain.EventToolResult, ConversationID: "conv-1", MessageID: "msg-tool", Tool: domain.ToolOrderCancel, Status: "success", Content: "订单已取消。", DataJSON: `{}`, BusinessExecuted: true},
+		{Type: domain.EventError, ConversationID: "conv-1", MessageID: "msg-error", Status: "failed", Content: "后续总结失败"},
+	}}
+	messages := &confirmActionFakeMessagesModel{}
+	logic := NewConfirmActionLogic(ctx, &svc.ServiceContext{
+		ConfirmationManager: manager,
+		AgentRunner:         runner,
+		MessagesModel:       messages,
+	})
+	stream := &confirmActionFakeStream{ctx: ctx}
+
+	err := logic.ConfirmAction(&aiagent.ConfirmActionRequest{
+		UserId:         42,
+		ConversationId: "conv-1",
+		ConfirmationId: "confirm-1",
+		Approved:       true,
+	}, stream)
+	if err != nil {
+		t.Fatalf("ConfirmAction returned error: %v", err)
+	}
+	if runner.resumeStreamCalls != 1 {
+		t.Fatalf("ResumeStream calls = %d, want 1", runner.resumeStreamCalls)
+	}
+	if manager.markExecutedCalls != 1 || manager.markFailedCalls != 0 {
+		t.Fatalf("completion calls executed=%d failed=%d, want executed=1 failed=0", manager.markExecutedCalls, manager.markFailedCalls)
+	}
+	if len(messages.inserted) != 3 {
+		t.Fatalf("inserted messages len = %d, want 3", len(messages.inserted))
+	}
+	insertedIDs := []string{messages.inserted[0].MsgId, messages.inserted[1].MsgId, messages.inserted[2].MsgId}
+	wantInsertedIDs := []string{"msg-final", "msg-tool", "msg-error"}
+	for i := range wantInsertedIDs {
+		if insertedIDs[i] != wantInsertedIDs[i] {
+			t.Fatalf("inserted ids = %+v, want %+v", insertedIDs, wantInsertedIDs)
+		}
+	}
+	sentTypes := make([]string, 0, len(stream.events))
+	for _, event := range stream.events {
+		sentTypes = append(sentTypes, event.Type)
+		if event.Type == domain.EventAssistantMessage {
+			t.Fatalf("assistant_message should not be forwarded, sent events=%+v", stream.events)
+		}
+	}
+	wantSentTypes := []string{
+		domain.EventAssistantDelta,
+		domain.EventToolProgress,
+		domain.EventToolResult,
+		domain.EventError,
+	}
+	if len(sentTypes) != len(wantSentTypes) {
+		t.Fatalf("sent types = %+v, want %+v", sentTypes, wantSentTypes)
+	}
+	for i := range wantSentTypes {
+		if sentTypes[i] != wantSentTypes[i] {
+			t.Fatalf("sent types = %+v, want %+v", sentTypes, wantSentTypes)
+		}
+	}
+}
+
+func TestConfirmActionApproveDoesNotForwardAssistantMessageWithoutDelta(t *testing.T) {
+	ctx := context.Background()
+	manager := &confirmActionFakeConfirmationManager{
+		decided: &domain.Confirmation{
+			ID:             "confirm-1",
+			ConversationID: "conv-1",
+			UserID:         42,
+			ToolName:       domain.ToolOrderCancel,
+			Status:         confirmation.StatusApproved,
+			RunID:          "run-1",
+			CheckpointID:   "checkpoint-1",
+			InterruptID:    "interrupt-1",
+		},
+	}
+	runner := &confirmActionFakeRunner{resumeEvents: []domain.AgentEvent{
+		{Type: domain.EventAssistantMessage, ConversationID: "conv-1", MessageID: "msg-final", Content: "已取消订单。", Done: true},
+		{Type: domain.EventToolResult, ConversationID: "conv-1", MessageID: "msg-tool", Tool: domain.ToolOrderCancel, Status: "success", Content: "订单已取消。", DataJSON: `{}`, BusinessExecuted: true},
+	}}
+	messages := &confirmActionFakeMessagesModel{}
+	logic := NewConfirmActionLogic(ctx, &svc.ServiceContext{
+		ConfirmationManager: manager,
+		AgentRunner:         runner,
+		MessagesModel:       messages,
+	})
+	stream := &confirmActionFakeStream{ctx: ctx}
+
+	err := logic.ConfirmAction(&aiagent.ConfirmActionRequest{
+		UserId:         42,
+		ConversationId: "conv-1",
+		ConfirmationId: "confirm-1",
+		Approved:       true,
+	}, stream)
+	if err != nil {
+		t.Fatalf("ConfirmAction returned error: %v", err)
+	}
+	if len(messages.inserted) != 2 {
+		t.Fatalf("inserted messages len = %d, want 2", len(messages.inserted))
+	}
+	if messages.inserted[0].MsgId != "msg-final" || messages.inserted[1].MsgId != "msg-tool" {
+		t.Fatalf("inserted ids = %q, %q; want msg-final, msg-tool", messages.inserted[0].MsgId, messages.inserted[1].MsgId)
+	}
+	if len(stream.events) != 1 {
+		t.Fatalf("stream events len = %d, want only tool_result; events=%+v", len(stream.events), stream.events)
+	}
+	if stream.events[0].Type != domain.EventToolResult {
+		t.Fatalf("stream event = %+v, want only tool_result", stream.events[0])
 	}
 }
 
@@ -158,6 +281,7 @@ func (m *confirmActionFakeConfirmationManager) BindResumeTarget(_ context.Contex
 
 type confirmActionFakeRunner struct {
 	resumeStreamCalls int
+	resumeEvents      []domain.AgentEvent
 }
 
 func (r *confirmActionFakeRunner) Run(context.Context, eino.RunRequest) ([]domain.AgentEvent, error) {
@@ -174,11 +298,29 @@ func (r *confirmActionFakeRunner) Stream(context.Context, eino.RunRequest) (<-ch
 
 func (r *confirmActionFakeRunner) ResumeStream(context.Context, eino.ResumeRequest) (<-chan domain.AgentEvent, error) {
 	r.resumeStreamCalls++
-	return nil, errors.New("ResumeStream should not be called")
+	if r.resumeEvents == nil {
+		return nil, errors.New("ResumeStream should not be called")
+	}
+	ch := make(chan domain.AgentEvent, len(r.resumeEvents))
+	for _, event := range r.resumeEvents {
+		ch <- event
+	}
+	close(ch)
+	return ch, nil
 }
 
 type confirmActionFakeMessagesModel struct {
 	inserted []*aimessages.AiMessages
+}
+
+type fakeSQLResult int64
+
+func (r fakeSQLResult) LastInsertId() (int64, error) {
+	return 0, nil
+}
+
+func (r fakeSQLResult) RowsAffected() (int64, error) {
+	return int64(r), nil
 }
 
 func (m *confirmActionFakeMessagesModel) InsertBatch(_ context.Context, messages []*aimessages.AiMessages) error {
@@ -186,8 +328,9 @@ func (m *confirmActionFakeMessagesModel) InsertBatch(_ context.Context, messages
 	return nil
 }
 
-func (m *confirmActionFakeMessagesModel) Insert(context.Context, *aimessages.AiMessages) (sql.Result, error) {
-	panic("not used")
+func (m *confirmActionFakeMessagesModel) Insert(_ context.Context, message *aimessages.AiMessages) (sql.Result, error) {
+	m.inserted = append(m.inserted, message)
+	return fakeSQLResult(1), nil
 }
 
 func (m *confirmActionFakeMessagesModel) FindOne(context.Context, uint64) (*aimessages.AiMessages, error) {
