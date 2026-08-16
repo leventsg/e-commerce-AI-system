@@ -48,7 +48,6 @@ var sensitiveArgumentKeys = []string{
 	"token",
 	"access_token",
 	"refresh_token",
-	"session_id",
 	"auth",
 	"authorization",
 	"cookie",

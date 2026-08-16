@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	aiagentruns "github.com/leventsg/e-commerce-AI-system/dal/model/ai/agent_runs"
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
@@ -12,7 +13,6 @@ import (
 	aiconversations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversations"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
-	aiusermemories "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_memories"
 	aiuserprofiles "github.com/leventsg/e-commerce-AI-system/dal/model/ai/user_profiles"
 	aiaudit "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/audit"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
@@ -20,6 +20,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/contextmanager"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
+	aimemory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
@@ -45,7 +46,6 @@ type ServiceContext struct {
 	ToolCallsModel         aitoolcalls.AiToolCallsModel
 	ConfirmationsModel     aiconfirmations.AiConfirmationsModel
 	AgentRunsModel         aiagentruns.AiAgentRunsModel
-	UserMemoriesModel      aiusermemories.AiUserMemoriesModel
 	UserProfilesModel      aiuserprofiles.AiUserProfilesModel
 	SummariesModel         aiconversationsummaries.AiConversationSummariesModel
 	ProductRpc             productcatalogservice.ProductCatalogService
@@ -60,8 +60,8 @@ type ServiceContext struct {
 	ConfirmationManager    aiconfirmation.ConfirmationManager
 	ConversationManager    conversation.Manager
 	ContextManager         contextmanager.Manager
+	MemoryProvider         aimemory.MemoryProvider
 	SummaryManager         *contextmanager.SummaryManager
-	MemoryPolicy           *contextmanager.MemoryPolicy
 	UserProfileStore       *contextmanager.UserProfileModelStore
 	ProfileUpdatePublisher profileextractor.Publisher
 	ProfileExtractor       *profileextractor.Extractor
@@ -82,7 +82,41 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	confirmationsModel := aiconfirmations.NewAiConfirmationsModel(mysql, c.Cache)
 	agentRunsModel := aiagentruns.NewAiAgentRunsModel(mysql, c.Cache)
 	toolRecorder := aiaudit.NewRecorder(toolCallsModel, auditRPC)
-	defaultTools := aitools.DefaultTools(aitools.DefaultToolClients{
+	conversationsModel := aiconversations.NewAiConversationsModel(mysql, c.Cache)
+	messagesModel := aimessages.NewAiMessagesModel(mysql, c.Cache)
+	summariesModel := aiconversationsummaries.NewAiConversationSummariesModel(mysql, c.Cache)
+	userProfilesModel := aiuserprofiles.NewAiUserProfilesModel(mysql, c.Cache)
+	summaryStore := contextmanager.NewSummaryStore(summariesModel)
+	toolCallStore := contextmanager.NewToolCallStore(toolCallsModel)
+	userProfileStore := contextmanager.NewUserProfileStore(userProfilesModel)
+	conversationManager := conversation.NewManager(
+		conversationsModel,
+		messagesModel,
+	)
+	contextManager := contextmanager.NewManager(
+		contextmanager.NewMessageStore(messagesModel),
+		toolCallStore,
+		contextmanager.WithSummaryStore(summaryStore),
+		contextmanager.WithUserProfileStore(userProfileStore),
+	)
+	modelFactory := eino.NewModelFactory()
+	summaryManager := contextmanager.NewSummaryManager(
+		summaryStore,
+		contextmanager.NewSummaryMessageStore(messagesModel),
+		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.Eino)),
+	)
+	profileUpdatePublisher := newProfileUpdatePublisher(c)
+	memoryProvider := aimemory.NewCustomerServiceProvider(aimemory.CustomerServiceProviderConfig{
+		Messages:         contextmanager.NewMessageStore(messagesModel),
+		Summaries:        summaryStore,
+		Tools:            toolCallStore,
+		Profiles:         userProfileStore,
+		Events:           aimemory.NewSQLEventStore(mysql),
+		SummaryRefresher: summaryRefreshAdapter{manager: summaryManager},
+		ProfilePublisher: profilePublisherAdapter{publisher: profileUpdatePublisher},
+	})
+	// 业务工具实例集合
+	businessTools := aitools.DefaultBusinessTools(aitools.DefaultToolClients{
 		Product:   productRPC,
 		Inventory: inventoryRPC,
 		Order:     orderRPC,
@@ -90,7 +124,15 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Coupon:    couponRPC,
 		Checkout:  checkoutRPC,
 	}, c.ToolTimeout)
-	toolRegistry := aitools.NewRegistry(defaultTools)
+	// 非业务工具实例集合
+	capabilityTools := aitools.DefaultCapabilityTools(aitools.CapabilityDeps{
+		MemoryProvider: memoryProvider,
+		ToolCallStore:  toolCallStore,
+	})
+	allTools := append(businessTools, capabilityTools...)
+	// 工具注册
+	toolRegistry := aitools.NewRegistry(allTools)
+	// 工具执行器
 	toolExecutor := aitools.NewExecutor(toolRegistry, aitools.WithToolCallRecorder(toolRecorder))
 	// 数据层，工具执行数据管理器
 	confirmationManager := aiconfirmation.NewManager(
@@ -102,37 +144,9 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	)
 	// 编排层，工具管理器负责高风险操作的确认请求和恢复点绑定
 	approvalManager := aitools.NewApprovalManager(toolRegistry, toolExecutor, confirmationManager)
-	conversationsModel := aiconversations.NewAiConversationsModel(mysql, c.Cache)
-	messagesModel := aimessages.NewAiMessagesModel(mysql, c.Cache)
-	summariesModel := aiconversationsummaries.NewAiConversationSummariesModel(mysql, c.Cache)
-	userMemoriesModel := aiusermemories.NewAiUserMemoriesModel(mysql, c.Cache)
-	userProfilesModel := aiuserprofiles.NewAiUserProfilesModel(mysql, c.Cache)
-	summaryStore := contextmanager.NewSummaryStore(summariesModel)
-	memoryStore := contextmanager.NewMemoryStore(userMemoriesModel)
-	userProfileStore := contextmanager.NewUserProfileStore(userProfilesModel)
-	conversationManager := conversation.NewManager(
-		conversationsModel,
-		messagesModel,
-	)
-	contextManager := contextmanager.NewManager(
-		contextmanager.NewMessageStore(messagesModel),
-		contextmanager.NewToolResultStore(messagesModel),
-		contextmanager.WithSummaryStore(summaryStore),
-		contextmanager.WithMemoryStore(memoryStore),
-		contextmanager.WithUserProfileStore(userProfileStore),
-	)
-	modelFactory := eino.NewModelFactory()
-	summaryManager := contextmanager.NewSummaryManager(
-		summaryStore,
-		contextmanager.NewSummaryMessageStore(messagesModel),
-		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.Eino)),
-	)
-	memoryPolicy := contextmanager.NewMemoryPolicy(memoryStore)
-	profileUpdatePublisher := newProfileUpdatePublisher(c)
 	profileExtractor := profileextractor.NewExtractor(
 		messagesModel,
 		userProfileStore,
-		memoryStore,
 		eino.NewProfileExtractorModel(modelFactory, selectProfileModelConfig(c.ProfileModel, c.SummaryModel, c.Eino)),
 	)
 	var agentRunner eino.Runner
@@ -140,6 +154,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry,
 		eino.WithApprovalManager(approvalManager),
 		eino.WithCheckpointStore(eino.NewPersistentCheckpointStore(redisClient, agentRunsModel, checkpointTTL)),
+		eino.WithMemoryProvider(memoryProvider),
 	); err == nil {
 		agentRunner = runner
 	} else {
@@ -155,7 +170,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ToolCallsModel:         toolCallsModel,
 		ConfirmationsModel:     confirmationsModel,
 		AgentRunsModel:         agentRunsModel,
-		UserMemoriesModel:      userMemoriesModel,
 		UserProfilesModel:      userProfilesModel,
 		SummariesModel:         summariesModel,
 		ProductRpc:             productRPC,
@@ -170,8 +184,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ConfirmationManager:    confirmationManager,
 		ConversationManager:    conversationManager,
 		ContextManager:         contextManager,
+		MemoryProvider:         memoryProvider,
 		SummaryManager:         summaryManager,
-		MemoryPolicy:           memoryPolicy,
 		UserProfileStore:       userProfileStore,
 		ProfileUpdatePublisher: profileUpdatePublisher,
 		ProfileExtractor:       profileExtractor,
@@ -223,6 +237,38 @@ func newProfileUpdatePublisher(c config.Config) profileextractor.Publisher {
 		return nil
 	}
 	return profileextractor.NewKafkaPublisher(producer, kafkaConf.Topic)
+}
+
+type summaryRefreshAdapter struct {
+	manager *contextmanager.SummaryManager
+}
+
+func (a summaryRefreshAdapter) RefreshMemorySummary(ctx context.Context, userID uint64, conversationID string) error {
+	if a.manager == nil {
+		return nil
+	}
+	_, err := a.manager.MaybeRefresh(ctx, contextmanager.SummaryRefreshRequest{
+		UserID:         userID,
+		ConversationID: conversationID,
+	})
+	return err
+}
+
+type profilePublisherAdapter struct {
+	publisher profileextractor.Publisher
+}
+
+func (a profilePublisherAdapter) PublishMemoryUpdate(ctx context.Context, userID uint64, conversationID string, messageIDs []string) error {
+	if a.publisher == nil || len(messageIDs) == 0 {
+		return nil
+	}
+	return a.publisher.PublishProfileUpdate(ctx, profileextractor.UpdateEvent{
+		EventID:        "profile_evt_" + uuid.NewString(),
+		UserID:         userID,
+		ConversationID: conversationID,
+		MessageIDs:     messageIDs,
+		CreatedAt:      time.Now(),
+	})
 }
 
 func modelBaseURLHost(raw string) string {

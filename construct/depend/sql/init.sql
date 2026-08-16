@@ -65,18 +65,20 @@ CREATE TABLE `ai_messages` (
 -- ----------------------------
 DROP TABLE IF EXISTS `ai_tool_calls`;
 CREATE TABLE `ai_tool_calls` (
-  `id` varchar(64) NOT NULL COMMENT '调用ID',
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
+  `tool_call_id` varchar(128) NOT NULL DEFAULT '' COMMENT '模型工具调用ID',
   `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
   `tool_name` varchar(64) NOT NULL COMMENT '工具名称',
   `arguments` json NOT NULL COMMENT '工具参数',
-  `result_summary` text COMMENT '结果摘要',
+  `result` json NOT NULL COMMENT '真实工具返回JSON',
   `status` varchar(16) NOT NULL COMMENT 'success/failed',
   `error_message` varchar(512) NOT NULL DEFAULT '',
   `latency_ms` bigint NOT NULL DEFAULT 0,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_conversation_tool_call` (`conversation_id`, `tool_call_id`),
   KEY `idx_user_tool_created` (`user_id`, `tool_name`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -128,27 +130,22 @@ CREATE TABLE `ai_agent_runs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------
--- Table structure for ai_user_memories
+-- Table structure for ai_user_memory_events
 -- ----------------------------
-DROP TABLE IF EXISTS `ai_user_memories`;
-CREATE TABLE `ai_user_memories` (
-  `id` varchar(64) NOT NULL COMMENT '记忆ID',
+DROP TABLE IF EXISTS `ai_user_memory_events`;
+CREATE TABLE `ai_user_memory_events` (
+  `id` varchar(64) NOT NULL COMMENT '事件ID',
   `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
-  `memory_key` varchar(128) NOT NULL COMMENT '用户内稳定记忆键',
-  `memory_type` varchar(32) NOT NULL COMMENT 'instruction/preference/price/profile_fact',
-  `content` text NOT NULL COMMENT '记忆内容',
-  `confidence` decimal(5,4) NOT NULL DEFAULT 0.0000 COMMENT '置信度',
-  `source` varchar(32) NOT NULL DEFAULT 'explicit' COMMENT 'explicit/inferred',
-  `source_message_id` varchar(64) NOT NULL DEFAULT '' COMMENT '来源消息ID',
-  `status` varchar(16) NOT NULL DEFAULT 'active' COMMENT 'active/superseded/deleted/expired',
-  `expires_at` datetime DEFAULT NULL COMMENT '过期时间',
-  `last_confirmed_at` datetime DEFAULT NULL COMMENT '最近确认时间',
+  `type` varchar(32) NOT NULL COMMENT 'milestone/event',
+  `event_date` datetime NOT NULL COMMENT '事件日期',
+  `summary` varchar(512) NOT NULL COMMENT '事件摘要',
+  `keywords` json NOT NULL COMMENT '关键词',
+  `status` varchar(16) NOT NULL DEFAULT 'active' COMMENT 'active/deleted',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_user_memory_key` (`user_id`, `memory_key`),
-  KEY `idx_user_type_updated` (`user_id`, `memory_type`, `updated_at`),
-  KEY `idx_user_status_expires` (`user_id`, `status`, `expires_at`)
+  KEY `idx_user_status_date` (`user_id`, `status`, `event_date`),
+  KEY `idx_user_type_date` (`user_id`, `type`, `event_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------

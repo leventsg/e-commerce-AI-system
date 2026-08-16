@@ -20,7 +20,7 @@ func TestExtractorSavesExplicitPreferencePatch(t *testing.T) {
 		EvidenceMessageIDs: []string{"msg-1"},
 		Confidence:         0.95,
 	}}
-	extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, nil, model)
+	extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, model)
 
 	err := extractor.Handle(context.Background(), UpdateEvent{EventID: "evt-1", UserID: 42, ConversationID: "conv-1", MessageIDs: []string{"msg-1"}, CreatedAt: time.Now()})
 	if err != nil {
@@ -33,7 +33,7 @@ func TestExtractorSavesExplicitPreferencePatch(t *testing.T) {
 
 func TestExtractorRejectsLowConfidenceStablePattern(t *testing.T) {
 	store := &fakeProfileStore{}
-	extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, nil, &fakeProfileModel{candidate: Candidate{
+	extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, &fakeProfileModel{candidate: Candidate{
 		ShouldUpdate:       true,
 		UpdateType:         UpdateTypeStablePattern,
 		ProfilePatch:       json.RawMessage(`{"stable_patterns":["经常看手机"]}`),
@@ -72,7 +72,7 @@ func TestExtractorAppliesCorrectionAndDeletePatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeProfileStore{profile: &domain.UserProfile{ProfileJSON: json.RawMessage(`{"preferences":{"categories":["手机"],"brands":["黑色"]}}`)}}
-			extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, nil, &fakeProfileModel{candidate: Candidate{
+			extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, &fakeProfileModel{candidate: Candidate{
 				ShouldUpdate:       true,
 				UpdateType:         tc.update,
 				ProfilePatch:       tc.patch,
@@ -92,7 +92,7 @@ func TestExtractorAppliesCorrectionAndDeletePatch(t *testing.T) {
 
 func TestExtractorRejectsSensitiveProfilePatch(t *testing.T) {
 	store := &fakeProfileStore{}
-	extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, nil, &fakeProfileModel{candidate: Candidate{
+	extractor := NewExtractor(&fakeProfileMessageStore{messages: profileMessages()}, store, &fakeProfileModel{candidate: Candidate{
 		ShouldUpdate:       true,
 		UpdateType:         UpdateTypeExplicitPreference,
 		ProfilePatch:       json.RawMessage(`{"preferences":{"payment":["银行卡 6222000000000000"]}}`),

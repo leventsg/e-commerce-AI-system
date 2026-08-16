@@ -39,16 +39,17 @@ POST /douyin/ai/chat SSE user_message
 | SSE 网关 | `apis/ai/internal/logic/chatlogic.go` | 鉴权用户透传、协议校验、调用 Chat/ConfirmAction RPC stream、事件 flush |
 | 会话管理 | `services/aiagent/internal/conversation/manager.go` | 创建/校验会话、保存用户消息、加载有界历史 |
 | Supervisor Runner | `services/aiagent/internal/eino/agent.go` | 使用 Eino ADK ChatModelAgent + AgentTool 编排领域 SubAgent，负责意图识别、任务拆解、路由和总结 |
-| Tool Catalog | `services/aiagent/internal/tools/catalog.go` | 通过 `DefaultTools` 组装 `[]tools.Tool`，统一承载 schema、metadata、Handler 和确认摘要 |
+| Tool Catalog | `services/aiagent/internal/tools/catalog.go` / `tools/capability` | 通过 `DefaultBusinessTools` 和 `DefaultCapabilityTools` 组装统一 `[]tools.Tool` |
 | Tool Registry | `services/aiagent/internal/tools/registry.go` | 保存 `map[string]Tool`，返回 metadata、ToolInfo、InvokableTool adapter 和确认摘要 |
 | 领域 Handler | `services/aiagent/internal/tools/*_tools.go` | 转换参数、调用既有业务 RPC、压缩返回结果 |
 | Executor | `services/aiagent/internal/tools/executor.go` | 工具白名单检查、敏感参数剔除、可信用户注入、超时、统一事件和记录 |
 | Approval Manager | `services/aiagent/internal/tools/approval_manager.go` | 创建高风险确认并绑定 resume target；批准后由同一 adapter 进入 Executor |
 | Confirmation Manager | `services/aiagent/internal/confirmation/manager.go` | 确认状态机、用户/会话归属校验、过期和幂等控制 |
 | 审计 Recorder | `services/aiagent/internal/audit/recorder.go` | 所有调用写 `ai_tool_calls`，写操作额外调用 audit RPC |
+| Capability Tool | `services/aiagent/internal/tools/capability` | `search_user_memory` 和 `get_tool_call_result` 读取长期事件或历史工具结果，统一进入 Registry 和 Executor |
 | 领域 SubAgent | `services/aiagent/internal/eino/agent.go` | Product/Order/CartCheckout/Coupon/General Agent，各自只暴露本领域工具 |
 
-`services/aiagent/internal/svc/servicecontext.go` 在服务启动时创建并连接上述对象。注册顺序为：创建业务 RPC clients 和 recorder，调用 `tools.DefaultTools(...)` 得到完整工具 catalog，创建 Registry 和 Executor，创建 Approval Manager，最后创建 Eino Supervisor。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再存在 schema-only 占位工具或二次绑定。
+`services/aiagent/internal/svc/servicecontext.go` 在服务启动时创建并连接上述对象。注册顺序为：创建业务 RPC clients、store 和 recorder，调用 `tools.DefaultBusinessTools(...)` 与 `tools.DefaultCapabilityTools(...)` 得到统一工具 catalog，创建 Registry 和 Executor，创建 Approval Manager，最后创建 Eino Supervisor。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再存在 schema-only 占位工具或二次绑定。
 
 ## 4. 工具注册机制
 
@@ -98,7 +99,7 @@ InvokableRun(JSON arguments)
   -> 返回结构化 data_json
 ```
 
-调用 Eino 包装器前，编排器必须通过 `tools.WithToolExecutionContext` 注入可信 `UserID`，并尽量携带 `ConversationID`、`MessageID` 和 `ClientIP` 供审计。当前在线 `ChatLogic` 通过 ADK Runner 注入该上下文；SubAgent 工具调用进入 Eino 包装器后再由 Execution Guard 执行业务 RPC。
+调用 Eino 包装器前，编排器必须通过 `tools.WithToolExecutionContext` 注入可信 `UserID`，并尽量携带 `ConversationID`、`MessageID` 和 `ClientIP` 供审计。工具真正执行时，Eino middleware 会从 `ToolContext.CallID` 补入真实模型 `tool_call_id`，该值不从模型参数或客户端读取。当前在线 `ChatLogic` 通过 ADK Runner 注入该上下文；SubAgent 工具调用进入 Eino 包装器后再由 Execution Guard 执行业务 RPC。
 
 ## 5. Supervisor 与工具选择
 
@@ -232,7 +233,9 @@ WrapperAuthMiddleware
 
 ## 9. 记录、审计与失败语义
 
-所有进入 Executor 的工具调用都会尝试写入 `ai_tool_calls`，记录 conversation ID、user ID、脱敏参数、工具名、状态、结果摘要、错误和耗时。写操作还会调用 audit 服务写审计日志。
+所有进入 Executor 的工具调用都会尝试写入 `ai_tool_calls`，记录 conversation ID、真实模型 tool call ID、user ID、脱敏参数、工具名、状态、真实工具返回 JSON、错误和耗时。写操作还会调用 audit 服务写审计日志。
+
+Capability Tool 也经过同一个 Executor，并写入 `ai_tool_calls`。`get_tool_call_result` 按可信 user ID + conversation ID + `tool_call_id` 读取已有 `ai_tool_calls.result`，本次读取调用本身也会生成新的工具调用记录。
 
 失败处理遵守以下语义：
 
@@ -287,9 +290,9 @@ WrapperAuthMiddleware
 新增工具应按以下顺序完成：
 
 1. 在 `internal/domain/tool.go` 定义稳定工具名。
-2. 在 `DefaultTools` 的默认 `[]Tool` catalog 中声明 schema、风险、确认、超时、读写分类和 RPC 映射；schema 不得包含 `user_id`。
+2. 在 `DefaultBusinessTools` 的默认 `[]Tool` catalog 中声明 schema、风险、确认、超时、读写分类和 RPC 映射；schema 不得包含 `user_id`。
 3. 在对应 `*_tools.go` 增加 Handler，所有用户数据 RPC 使用 `HandlerRequest.UserID`。
-4. 将 Handler 合并到 `DefaultTools` 的 handler map；高风险工具同时提供 `ConfirmationSummaryFunc`。
+4. 将 Handler 合并到 `DefaultBusinessTools` 的 handler map；高风险工具同时提供 `ConfirmationSummaryFunc`。
 5. 确保结果结构紧凑，RPC 失败返回 error 而不是成功摘要。
 6. 为 schema、参数转换、用户 ID 覆盖、超时、审计和确认策略补充测试。
 7. 若工具需要被当前在线聊天链路选择，同步更新 intent prompt；明确中文意图还应按需要扩展规则 Planner。

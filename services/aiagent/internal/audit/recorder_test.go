@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -22,6 +23,7 @@ func TestRecorderPersistsToolCallAndAuditsWrite(t *testing.T) {
 
 	err := recorder.RecordToolCall(context.Background(), tools.ToolCallRecord{
 		ConversationID: "conv-1",
+		ToolCallID:     "call-model-1",
 		UserID:         42,
 		ToolName:       domain.ToolCartAdd,
 		Arguments: map[string]any{
@@ -32,24 +34,33 @@ func TestRecorderPersistsToolCallAndAuditsWrite(t *testing.T) {
 				"token": "secret",
 			},
 		},
-		Status:        "success",
-		ResultSummary: "已加入购物车。",
-		ResultData:    map[string]any{"cart_item_id": 8, "product_id": 12},
-		Latency:       1500 * time.Millisecond,
-		Metadata:      domain.Metadata{WriteOperation: true},
+		Status:     "success",
+		ResultData: map[string]any{"cart_item_id": 8, "product_id": 12},
+		Latency:    1500 * time.Millisecond,
+		Metadata:   domain.Metadata{WriteOperation: true},
 	})
 	if err != nil {
 		t.Fatalf("RecordToolCall: %v", err)
 	}
 
-	if model.row == nil || model.row.Id == "" {
-		t.Fatalf("tool call row = %#v, want generated ID", model.row)
+	if model.row == nil {
+		t.Fatal("tool call row was not inserted")
 	}
-	if model.row.ConversationId != "conv-1" || model.row.UserId != 42 || model.row.ToolName != domain.ToolCartAdd {
+	if model.row.Id != 0 {
+		t.Fatalf("tool call row id = %d, want database auto increment", model.row.Id)
+	}
+	if model.row.ConversationId != "conv-1" || model.row.ToolCallId != "call-model-1" || model.row.UserId != 42 || model.row.ToolName != domain.ToolCartAdd {
 		t.Fatalf("tool call row identity = %#v", model.row)
 	}
-	if model.row.LatencyMs != 1500 || !model.row.ResultSummary.Valid {
+	if model.row.LatencyMs != 1500 {
 		t.Fatalf("tool call row result = %#v", model.row)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(model.row.Result), &result); err != nil {
+		t.Fatalf("tool call result is not JSON: %q err=%v", model.row.Result, err)
+	}
+	if result["cart_item_id"] != float64(8) || result["product_id"] != float64(12) {
+		t.Fatalf("tool call result = %#v", result)
 	}
 	if strings.Contains(model.row.Arguments, "user_id") || strings.Contains(model.row.Arguments, "token") {
 		t.Fatalf("sensitive arguments persisted: %s", model.row.Arguments)
@@ -64,7 +75,8 @@ func TestRecorderPersistsToolCallAndAuditsWrite(t *testing.T) {
 	if auditRPC.req.ClientIp != "0.0.0.0" || auditRPC.req.ServiceName != "aiagent" {
 		t.Fatalf("audit request source = %#v", auditRPC.req)
 	}
-	if strings.Contains(auditRPC.req.NewData, "user_id") || !strings.Contains(auditRPC.req.NewData, `"status":"success"`) {
+	if strings.Contains(auditRPC.req.NewData, "user_id") || strings.Contains(auditRPC.req.NewData, "result_"+"summary") ||
+		!strings.Contains(auditRPC.req.NewData, `"status":"success"`) || !strings.Contains(auditRPC.req.NewData, `"result":{"cart_item_id":8,"product_id":12}`) {
 		t.Fatalf("audit new_data = %s", auditRPC.req.NewData)
 	}
 }
@@ -76,6 +88,7 @@ func TestRecorderUsesExecutionIPAndCouponUserTarget(t *testing.T) {
 
 	err := recorder.RecordToolCall(context.Background(), tools.ToolCallRecord{
 		ConversationID: "conv-2",
+		ToolCallID:     "call-model-2",
 		UserID:         42,
 		ToolName:       domain.ToolCouponClaim,
 		Arguments:      map[string]any{"coupon_id": "coupon-1"},
@@ -116,6 +129,27 @@ func TestRecorderDoesNotAuditReadOperation(t *testing.T) {
 	}
 	if auditRPC.req != nil {
 		t.Fatalf("read operation unexpectedly called audit RPC: %#v", auditRPC.req)
+	}
+}
+
+func TestRecorderPersistsRawJSONToolResult(t *testing.T) {
+	model := &fakeToolCallModel{}
+	recorder := NewRecorder(model, nil)
+
+	err := recorder.RecordToolCall(context.Background(), tools.ToolCallRecord{
+		ConversationID: "conv-4",
+		ToolCallID:     "call-json",
+		UserID:         42,
+		ToolName:       domain.ToolOrderCancel,
+		Arguments:      map[string]any{"order_id": "order-1"},
+		Status:         "success",
+		ResultData:     `{"confirmation_id":"confirm-1","type":"confirmation_required"}`,
+	})
+	if err != nil {
+		t.Fatalf("RecordToolCall: %v", err)
+	}
+	if model.row.Result != `{"confirmation_id":"confirm-1","type":"confirmation_required"}` {
+		t.Fatalf("result = %s", model.row.Result)
 	}
 }
 

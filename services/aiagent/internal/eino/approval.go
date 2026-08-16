@@ -11,6 +11,8 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
+	core "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
+	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
 )
 
 type ApprovalInfo struct {
@@ -52,6 +54,7 @@ func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, en
 		return endpoint, nil
 	}
 	return func(ctx context.Context, argumentsInJSON string, opts ...einotool.Option) (string, error) {
+		ctx = withToolCallID(ctx, tCtx.CallID)
 		// 检查是否已经中断过
 		wasInterrupted, _, storedArgs := einotool.GetInterruptState[string](ctx)
 		if !wasInterrupted {
@@ -87,21 +90,22 @@ func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, en
 
 // createApprovalInfo 创建确认请求并返回确认信息
 func (m *highRiskApprovalMiddleware) createApprovalInfo(ctx context.Context, toolName, argumentsInJSON string) (*ApprovalInfo, error) {
-	execution, ok := aitools.ToolExecutionFromContext(ctx)
+	execution, ok := helper.ToolExecutionFromContext(ctx)
 	if !ok || execution.UserID == 0 {
-		return nil, aitools.ErrToolExecutionContext
+		return nil, helper.ErrToolExecutionContext
 	}
 	args := make(map[string]any)
 	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
-		return nil, fmt.Errorf("%w: invalid JSON arguments: %v", aitools.ErrInvalidToolArguments, err)
+		return nil, fmt.Errorf("%w: invalid JSON arguments: %v", helper.ErrInvalidToolArguments, err)
 	}
-	event := m.approvalManager.RequestConfirmation(ctx, aitools.ExecuteRequest{
+	event := m.approvalManager.RequestConfirmation(ctx, core.ExecuteRequest{
 		UserID:         execution.UserID,
 		ConversationID: execution.ConversationID,
 		MessageID:      execution.MessageID,
 		ClientIP:       execution.ClientIP,
 		RunID:          execution.RunID,
 		CheckpointID:   execution.CheckpointID,
+		ToolCallID:     execution.ToolCallID,
 		ToolName:       toolName,
 		Arguments:      args,
 	})

@@ -121,9 +121,6 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 			}
 			markExecuted = true
 		}
-		if event.Type == domain.EventAssistantMessage {
-			continue
-		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
 			return err
 		}
@@ -159,9 +156,6 @@ func (l *ConfirmActionLogic) rejectConfirmation(decided *domain.Confirmation, us
 		}
 	}
 	for _, event := range events {
-		if event.Type == domain.EventAssistantMessage {
-			continue
-		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
 			return err
 		}

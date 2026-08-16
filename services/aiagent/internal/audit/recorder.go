@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
@@ -27,7 +26,7 @@ const (
 	maxErrorMessageRunes   = 512
 )
 
-var sensitiveArgumentKeys = []string{"user_id", "token", "session_id", "auth"}
+var sensitiveArgumentKeys = []string{"user_id", "token", "auth"}
 
 type ToolCallModel interface {
 	Insert(ctx context.Context, data *aitoolcalls.AiToolCalls) (sql.Result, error)
@@ -62,28 +61,23 @@ func (r *Recorder) RecordToolCall(ctx context.Context, record tools.ToolCallReco
 	if r.model == nil {
 		recordErrors = append(recordErrors, errors.New("ai tool call model is required"))
 	} else {
-		// 生成记录ID
-		id, idErr := newRecordID()
-		if idErr != nil {
-			recordErrors = append(recordErrors, idErr)
-		} else {
-			modelCtx, cancel := context.WithTimeout(recordBaseCtx, recordOperationTimeout)
-			// 插入工具调用记录
-			_, insertErr := r.model.Insert(modelCtx, &aitoolcalls.AiToolCalls{
-				Id:             id,
-				ConversationId: record.ConversationID,
-				UserId:         record.UserID,
-				ToolName:       record.ToolName,
-				Arguments:      string(argumentsJSON),
-				ResultSummary:  nullableString(record.ResultSummary),
-				Status:         record.Status,
-				ErrorMessage:   record.ErrorMessage,
-				LatencyMs:      record.Latency.Milliseconds(),
-			})
-			cancel()
-			if insertErr != nil {
-				recordErrors = append(recordErrors, fmt.Errorf("insert ai tool call: %w", insertErr))
-			}
+		resultJSON := toolResultJSON(record)
+		modelCtx, cancel := context.WithTimeout(recordBaseCtx, recordOperationTimeout)
+		// 插入工具调用记录，id 由 ai_tool_calls 自增主键生成。
+		_, insertErr := r.model.Insert(modelCtx, &aitoolcalls.AiToolCalls{
+			ConversationId: record.ConversationID,
+			ToolCallId:     record.ToolCallID,
+			UserId:         record.UserID,
+			ToolName:       record.ToolName,
+			Arguments:      string(argumentsJSON),
+			Result:         resultJSON,
+			Status:         record.Status,
+			ErrorMessage:   record.ErrorMessage,
+			LatencyMs:      record.Latency.Milliseconds(),
+		})
+		cancel()
+		if insertErr != nil {
+			recordErrors = append(recordErrors, fmt.Errorf("insert ai tool call: %w", insertErr))
 		}
 	}
 
@@ -105,12 +99,13 @@ func (r *Recorder) recordWriteAudit(ctx context.Context, record tools.ToolCallRe
 		return errors.New("audit rpc is required for write operation")
 	}
 	actionType, targetTable, targetID := auditTarget(record)
+	result := json.RawMessage(toolResultJSON(record))
 	newData, err := json.Marshal(map[string]any{
-		"arguments":      arguments,
-		"status":         record.Status,
-		"result_summary": record.ResultSummary,
-		"error_message":  record.ErrorMessage,
-		"latency_ms":     record.Latency.Milliseconds(),
+		"arguments":     arguments,
+		"status":        record.Status,
+		"result":        result,
+		"error_message": record.ErrorMessage,
+		"latency_ms":    record.Latency.Milliseconds(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal write audit data: %w", err)
@@ -186,11 +181,6 @@ func mapInt64(value any, key string) int64 {
 	return 0
 }
 
-func nullableString(value string) sql.NullString {
-	value = strings.TrimSpace(value)
-	return sql.NullString{String: value, Valid: value != ""}
-}
-
 // 压缩字符数
 func truncateRunes(value string, limit int) string {
 	if limit <= 0 {
@@ -211,10 +201,30 @@ func auditClientIP(value string) string {
 	return value
 }
 
-func newRecordID() (string, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return "", fmt.Errorf("generate ai tool call id: %w", err)
+func toolResultJSON(record tools.ToolCallRecord) string {
+	data := record.ResultData
+	if data == nil {
+		if strings.TrimSpace(record.ErrorMessage) != "" {
+			data = map[string]any{"error": record.ErrorMessage}
+		} else {
+			data = map[string]any{}
+		}
 	}
-	return id.String(), nil
+	switch typed := data.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if json.Valid([]byte(text)) {
+			return text
+		}
+	case []byte:
+		text := strings.TrimSpace(string(typed))
+		if json.Valid([]byte(text)) {
+			return text
+		}
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		raw, _ = json.Marshal(map[string]any{"error": fmt.Sprintf("marshal tool result: %v", err)})
+	}
+	return string(raw)
 }

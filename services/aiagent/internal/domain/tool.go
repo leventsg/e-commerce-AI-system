@@ -30,6 +30,9 @@ const (
 	ToolCouponMyList    = "coupon_my_list"
 	ToolCouponUsageList = "coupon_usage_list"
 	ToolCouponCalculate = "coupon_calculate"
+
+	ToolSearchUserMemory  = "search_user_memory"
+	ToolGetToolCallResult = "get_tool_call_result"
 )
 
 type Metadata struct {

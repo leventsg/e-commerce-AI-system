@@ -16,6 +16,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
+	memory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 
@@ -51,7 +52,7 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 	if err := l.validateRequest(in); err != nil {
 		return sendErrorEvent(stream, "", err)
 	}
-	if l.svcCtx == nil || l.svcCtx.ConversationManager == nil || l.svcCtx.ContextManager == nil || l.svcCtx.AgentRunner == nil || l.svcCtx.MessagesModel == nil {
+	if l.svcCtx == nil || l.svcCtx.ConversationManager == nil || l.svcCtx.AgentRunner == nil || l.svcCtx.MessagesModel == nil {
 		return sendErrorEvent(stream, in.ConversationId, errors.New("AI 服务暂时不可用，请稍后重试"))
 	}
 	source := in.Source
@@ -74,26 +75,55 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 		return l.replayDuplicateResponse(stream, prepared, uint64(in.UserId))
 	}
 	currentInput := strings.TrimSpace(in.Content)
-	agentContext, err := l.svcCtx.ContextManager.Build(l.ctx, domain.BuildContextRequest{
-		UserID:           uint64(in.UserId),
-		ConversationID:   prepared.ConversationID,
-		Mode:             domain.AgentContextMode,
-		CurrentMessageID: prepared.UserMessageID,
-		CurrentInput:     currentInput,
-	})
-	if err != nil || agentContext == nil {
-		if err == nil {
-			err = errors.New("对话上下文构建失败")
-		}
-		return sendErrorEvent(stream, prepared.ConversationID, err)
-	}
-
-	persistedMessages, err := l.runSupervisor(in, prepared, agentContext.Messages, stream)
+	persistedMessages, err := l.runSupervisor(in, prepared, []domain.ContextMessage{
+		{Role: domain.ContextRoleUser, Content: currentInput},
+	}, stream)
 	if err != nil {
 		return err
 	}
-	go l.publishProfileUpdate(prepared, persistedMessages, uint64(in.UserId))
-	go l.refreshConversationSummary(prepared.ConversationID, uint64(in.UserId))
+	go l.memorizeTurn(prepared, currentInput, persistedMessages, uint64(in.UserId))
+	return nil
+}
+
+func (l *ChatLogic) memorizeTurn(prepared *conversation.PreparedConversation, currentInput string, messages []*aimessages.AiMessages, userID uint64) {
+	if prepared == nil {
+		return
+	}
+	finalAssistant := latestAssistantMessage(messages)
+	if finalAssistant == nil {
+		return
+	}
+	messageIDs := []string{prepared.UserMessageID, finalAssistant.MsgId}
+	if l.svcCtx != nil && l.svcCtx.MemoryProvider != nil {
+		if err := l.svcCtx.MemoryProvider.Memorize(l.ctx, &memory.MemorizeRequest{
+			UserID:          userID,
+			ConversationID:  prepared.ConversationID,
+			ClientMessageID: prepared.ClientMessageID,
+			Messages: []domain.ContextMessage{
+				{Role: domain.ContextRoleUser, Content: currentInput},
+				{Role: domain.ContextRoleAssistant, Content: finalAssistant.Content},
+			},
+			MessageIDs: messageIDs,
+		}); err != nil {
+			l.Errorw("memorize ai turn failed",
+				logx.Field("component", "memory_provider"),
+				logx.Field("stage", "memorize"),
+				logx.Field("conversation_id", prepared.ConversationID),
+				logx.Field("user_id", userID),
+				logx.Field("err", err))
+		}
+		return
+	}
+	go l.publishProfileUpdate(prepared, messages, userID)
+	go l.refreshConversationSummary(prepared.ConversationID, userID)
+}
+
+func latestAssistantMessage(messages []*aimessages.AiMessages) *aimessages.AiMessages {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i] != nil && messages[i].Role == conversation.RoleAssistant && strings.TrimSpace(messages[i].Content) != "" {
+			return messages[i]
+		}
+	}
 	return nil
 }
 
@@ -185,11 +215,13 @@ func persistenceErrorEvent(conversationID string, businessExecuted bool) *aiagen
 func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversation.PreparedConversation, agentMessages []domain.ContextMessage, stream agentEventSender) ([]*aimessages.AiMessages, error) {
 	persistedMessages := make([]*aimessages.AiMessages, 0, 2)
 	eventStream, err := l.svcCtx.AgentRunner.Stream(l.ctx, eino.RunRequest{
-		UserID:         uint64(in.UserId),
-		ConversationID: prepared.ConversationID,
-		MessageID:      newChatMessageID(),
-		ClientIP:       clientIPFromContext(l.ctx),
-		Messages:       agentMessages,
+		UserID:           uint64(in.UserId),
+		ConversationID:   prepared.ConversationID,
+		MessageID:        newChatMessageID(),
+		ClientIP:         clientIPFromContext(l.ctx),
+		Messages:         agentMessages,
+		CurrentMessageID: prepared.UserMessageID,
+		ClientMessageID:  prepared.ClientMessageID,
 	})
 	if err != nil {
 		l.Errorw("ai supervisor execution failed", logx.Field("component", "supervisor_agent"), logx.Field("stage", "execute"), logx.Field("reason", eino.ErrorReason(err)), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
@@ -222,9 +254,6 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 				l.Errorw("insert message failed", logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
 			}
 			persistedMessages = append(persistedMessages, message)
-		}
-		if event.Type == domain.EventAssistantMessage {
-			continue
 		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
 			return persistedMessages, err

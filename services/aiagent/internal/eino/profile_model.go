@@ -11,7 +11,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	profileprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/profile"
 )
@@ -61,16 +60,7 @@ func profileStructuredOutputConfig() StructuredOutputConfig {
 type profilePromptPayload struct {
 	Event           profileextractor.UpdateEvent `json:"event"`
 	ExistingProfile json.RawMessage              `json:"existing_profile,omitempty"`
-	Memories        []profileMemoryPrompt        `json:"memories,omitempty"`
 	Messages        []profileMessagePrompt       `json:"messages"`
-}
-
-type profileMemoryPrompt struct {
-	Key        string  `json:"key"`
-	Type       string  `json:"type,omitempty"`
-	Content    string  `json:"content"`
-	Confidence float64 `json:"confidence,omitempty"`
-	Source     string  `json:"source,omitempty"`
 }
 
 type profileMessagePrompt struct {
@@ -83,7 +73,6 @@ type profileMessagePrompt struct {
 func buildProfileUserPrompt(req profileextractor.ExtractRequest) (string, error) {
 	payload := profilePromptPayload{
 		Event:    req.Event,
-		Memories: buildProfileMemoryPrompts(req.Memories),
 		Messages: buildProfileMessagePrompts(req.Messages),
 	}
 	if req.Profile != nil && len(req.Profile.ProfileJSON) > 0 {
@@ -94,20 +83,6 @@ func buildProfileUserPrompt(req profileextractor.ExtractRequest) (string, error)
 		return "", err
 	}
 	return string(raw), nil
-}
-
-func buildProfileMemoryPrompts(memories []domain.UserMemory) []profileMemoryPrompt {
-	result := make([]profileMemoryPrompt, 0, len(memories))
-	for _, memory := range memories {
-		result = append(result, profileMemoryPrompt{
-			Key:        memory.Key,
-			Type:       memory.Type,
-			Content:    redactProfileSensitiveContext(memory.Content),
-			Confidence: memory.Confidence,
-			Source:     memory.Source,
-		})
-	}
-	return result
 }
 
 func buildProfileMessagePrompts(messages []*aimessages.AiMessages) []profileMessagePrompt {
@@ -134,8 +109,8 @@ func formatProfileTime(t time.Time) string {
 }
 
 var (
-	profileSensitiveAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*=\s*[^\s,，;；]+`)
-	profileSensitiveColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*[:：]\s*[^\s,，;；]+`)
+	profileSensitiveAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|auth)\b\s*=\s*[^\s,，;；]+`)
+	profileSensitiveColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|auth)\b\s*[:：]\s*[^\s,，;；]+`)
 )
 
 func redactProfileSensitiveContext(content string) string {

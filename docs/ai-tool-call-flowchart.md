@@ -48,7 +48,7 @@ flowchart TB
     subgraph EXECUTOR["🛡️ 阶段4：Executor 核心执行"]
         direction TB
         E1["Executor.Execute()"] -->|"1. registry.Metadata(name)"| E2["获取 Risk / Timeout / WriteOperation"]
-        E2 -->|"2. argx.SanitizeMapKeys()"| E3["清除 user_id/token/session_id"]
+        E2 -->|"2. argx.SanitizeMapKeys()"| E3["清除 user_id/token/auth"]
         E3 -->|"3. context.WithTimeout()"| E4["查询 3s / 写操作 5s"]
         E4 -->|"4. runHandlerWithTimeout()"| E5["执行 HandlerFunc(ctx, HandlerRequest)"]
     end

@@ -52,11 +52,14 @@ func TestConfirmActionRejectsWithoutResumingAgent(t *testing.T) {
 	if manager.markExecutedCalls != 0 || manager.markFailedCalls != 0 {
 		t.Fatalf("completion calls executed=%d failed=%d, want 0", manager.markExecutedCalls, manager.markFailedCalls)
 	}
-	if len(stream.events) != 1 {
-		t.Fatalf("stream events len = %d, want only tool_result; events=%+v", len(stream.events), stream.events)
+	if len(stream.events) != 2 {
+		t.Fatalf("stream events len = %d, want tool_result and assistant_message; events=%+v", len(stream.events), stream.events)
 	}
 	if stream.events[0].Type != domain.EventToolResult || stream.events[0].Tool != domain.ToolCartDelete || stream.events[0].Status != confirmation.StatusRejected {
 		t.Fatalf("first event = %+v, want rejected tool_result", stream.events[0])
+	}
+	if stream.events[1].Type != domain.EventAssistantMessage || stream.events[1].Content == "" {
+		t.Fatalf("second event = %+v, want cancellation assistant_message", stream.events[1])
 	}
 	var data map[string]string
 	if err := json.Unmarshal([]byte(stream.events[0].DataJson), &data); err != nil {
@@ -105,7 +108,7 @@ func TestConfirmActionRejectDoesNotRequireAgentRunner(t *testing.T) {
 	}
 }
 
-func TestConfirmActionApprovePersistsDurableEventsAndDoesNotForwardAssistantMessage(t *testing.T) {
+func TestConfirmActionApprovePersistsDurableEventsAndForwardsAssistantMessage(t *testing.T) {
 	ctx := context.Background()
 	manager := &confirmActionFakeConfirmationManager{
 		decided: &domain.Confirmation{
@@ -162,12 +165,10 @@ func TestConfirmActionApprovePersistsDurableEventsAndDoesNotForwardAssistantMess
 	sentTypes := make([]string, 0, len(stream.events))
 	for _, event := range stream.events {
 		sentTypes = append(sentTypes, event.Type)
-		if event.Type == domain.EventAssistantMessage {
-			t.Fatalf("assistant_message should not be forwarded, sent events=%+v", stream.events)
-		}
 	}
 	wantSentTypes := []string{
 		domain.EventAssistantDelta,
+		domain.EventAssistantMessage,
 		domain.EventToolProgress,
 		domain.EventToolResult,
 		domain.EventError,
@@ -182,7 +183,7 @@ func TestConfirmActionApprovePersistsDurableEventsAndDoesNotForwardAssistantMess
 	}
 }
 
-func TestConfirmActionApproveDoesNotForwardAssistantMessageWithoutDelta(t *testing.T) {
+func TestConfirmActionApproveForwardsAssistantMessageWithoutDelta(t *testing.T) {
 	ctx := context.Background()
 	manager := &confirmActionFakeConfirmationManager{
 		decided: &domain.Confirmation{
@@ -223,11 +224,18 @@ func TestConfirmActionApproveDoesNotForwardAssistantMessageWithoutDelta(t *testi
 	if messages.inserted[0].MsgId != "msg-final" || messages.inserted[1].MsgId != "msg-tool" {
 		t.Fatalf("inserted ids = %q, %q; want msg-final, msg-tool", messages.inserted[0].MsgId, messages.inserted[1].MsgId)
 	}
-	if len(stream.events) != 1 {
-		t.Fatalf("stream events len = %d, want only tool_result; events=%+v", len(stream.events), stream.events)
+	sentTypes := make([]string, 0, len(stream.events))
+	for _, event := range stream.events {
+		sentTypes = append(sentTypes, event.Type)
 	}
-	if stream.events[0].Type != domain.EventToolResult {
-		t.Fatalf("stream event = %+v, want only tool_result", stream.events[0])
+	wantSentTypes := []string{domain.EventAssistantMessage, domain.EventToolResult}
+	if len(sentTypes) != len(wantSentTypes) {
+		t.Fatalf("sent types = %+v, want %+v", sentTypes, wantSentTypes)
+	}
+	for i := range wantSentTypes {
+		if sentTypes[i] != wantSentTypes[i] {
+			t.Fatalf("sent types = %+v, want %+v", sentTypes, wantSentTypes)
+		}
 	}
 }
 
@@ -370,14 +378,6 @@ func (m *confirmActionFakeMessagesModel) FindUnsummarizedContextMessages(context
 }
 
 func (m *confirmActionFakeMessagesModel) FindRecentUnsummarizedContextMessages(context.Context, uint64, string, string, string, int) ([]*aimessages.AiMessages, error) {
-	panic("not used")
-}
-
-func (m *confirmActionFakeMessagesModel) FindRecentToolMessages(context.Context, uint64, string, int) ([]*aimessages.AiMessages, error) {
-	panic("not used")
-}
-
-func (m *confirmActionFakeMessagesModel) FindToolMessageByID(context.Context, uint64, string, string) (*aimessages.AiMessages, error) {
 	panic("not used")
 }
 

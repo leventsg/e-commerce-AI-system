@@ -9,6 +9,7 @@ import (
 	"time"
 
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
+	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
 
@@ -29,21 +30,19 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 		Summary: "更早的会话摘要", CoveredUntilMessageID: "summary-10", CoveredUntilCreatedAt: baseTime(),
 	}}
 	taskStates := &fakeTaskStateStore{state: &domain.TaskState{Goal: "完成购物选择", PendingConfirmationID: "confirm-1"}}
-	memories := &fakeMemoryStore{active: []domain.UserMemory{{Key: "budget", Content: "预算 3000 元"}}}
 	profiles := &fakeUserProfileStore{profile: &domain.UserProfile{ProfileJSON: json.RawMessage(`{"preferences":{"categories":["手机"],"brands":["品牌A"]},"evidence":["m2"]}`), Version: 3, LastEventID: "evt-1"}}
 	tools := &fakeToolContextStore{
-		latest: &domain.ToolResultEnvelope{
-			ToolCallID: "call-latest", ToolName: domain.ToolCartList, Status: "success",
-			Data: []byte(`{"items":[{"cart_item_id":7}]}`), Summary: "购物车有一项",
+		latest: &aitoolcalls.AiToolCalls{
+			ToolCallId: "call-latest", ToolName: domain.ToolCartList, Status: "success",
+			Result: `{"items":[{"cart_item_id":7}]}`,
 		},
-		refs: []domain.ToolCallRef{
-			{ToolCallID: "call-latest", ToolName: domain.ToolCartList, Status: "success"},
-			{ToolCallID: "call-old", ToolName: domain.ToolProductRecommend, Status: "success", Summary: "推荐过商品 12"},
+		recent: []*aitoolcalls.AiToolCalls{
+			{ToolCallId: "call-latest", ToolName: domain.ToolCartList, Status: "success", Result: `{"items":[{"cart_item_id":7}]}`},
+			{ToolCallId: "call-old", ToolName: domain.ToolProductRecommend, Status: "success", Result: `{"products":[{"product_id":12}]}`},
 		},
 	}
 	manager := NewManager(messages, tools,
 		WithSummaryStore(summaries),
-		WithMemoryStore(memories),
 		WithTaskStateStore(taskStates),
 		WithUserProfileStore(profiles),
 	)
@@ -57,10 +56,13 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 	}
 
 	joined := joinContextContents(result.Messages)
-	for _, want := range []string{"更早的会话摘要", "recent-m3", "recent-m22", "call-latest", "cart_item_id", "call-old", "完成购物选择", "预算 3000 元", `"categories":["手机"]`, `"brands":["品牌A"]`} {
+	for _, want := range []string{"更早的会话摘要", "recent-m3", "recent-m22", "call-latest", "cart_item_id", "call-old", "完成购物选择", `"categories":["手机"]`, `"brands":["品牌A"]`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("AgentContext missing %q", want)
 		}
+	}
+	if strings.Contains(joined, "预算 3000 元") {
+		t.Fatalf("AgentContext should not include removed user memories: %s", joined)
 	}
 	for _, forbidden := range []string{"recent-m1", "recent-m2"} {
 		if countContextContent(result.Messages, forbidden) != 0 {
@@ -72,7 +74,7 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 		result.RecentMessageStartID != "m3" ||
 		result.RecentMessageEndID != "m22" ||
 		result.LatestToolCallID != "call-latest" ||
-		result.ToolCallRefCount != 1 {
+		result.RecentToolCallCount != 1 {
 		t.Fatalf("build metadata = %+v", result)
 	}
 	if result.EstimatedInputTokens <= 0 {
@@ -118,7 +120,7 @@ func TestManagerFailsWithoutRequiredMessageSourceAndRejectsInvalidRequests(t *te
 func TestManagerRedactsSensitiveValuesFromRecentMessagesWithoutCropping(t *testing.T) {
 	longHistory := strings.Repeat("商品 12 的完整说明", 100)
 	manager := NewManager(&fakeContextMessageStore{messages: []*aimessages.AiMessages{
-		contextMessage("m1", "user", "token=secret-token user_id:999 session_id=abc auth:bearer "+longHistory, baseTime()),
+		contextMessage("m1", "user", "token=secret-token user_id:999 auth:bearer "+longHistory, baseTime()),
 	}}, nil)
 
 	result, err := manager.Build(context.Background(), domain.BuildContextRequest{
@@ -128,7 +130,7 @@ func TestManagerRedactsSensitiveValuesFromRecentMessagesWithoutCropping(t *testi
 		t.Fatalf("Build() error = %v", err)
 	}
 	joined := joinContextContents(result.Messages)
-	for _, leaked := range []string{"secret-token", "user_id:999", "session_id=abc", "auth:bearer"} {
+	for _, leaked := range []string{"secret-token", "user_id:999", "auth:bearer"} {
 		if strings.Contains(joined, leaked) {
 			t.Fatalf("context leaked %q: %s", leaked, joined)
 		}
@@ -206,17 +208,6 @@ func (f *fakeSummaryStore) FindLatest(context.Context, uint64, string) (*domain.
 	return f.summary, f.err
 }
 
-type fakeMemoryStore struct {
-	active      []domain.UserMemory
-	err         error
-	activeCalls int
-}
-
-func (f *fakeMemoryStore) ListActive(context.Context, uint64, int) ([]domain.UserMemory, error) {
-	f.activeCalls++
-	return f.active, f.err
-}
-
 type fakeTaskStateStore struct {
 	state *domain.TaskState
 	err   error
@@ -240,27 +231,27 @@ func (f *fakeUserProfileStore) LoadActive(_ context.Context, userID uint64) (*do
 }
 
 type fakeToolContextStore struct {
-	latest         *domain.ToolResultEnvelope
-	refs           []domain.ToolCallRef
+	latest         *aitoolcalls.AiToolCalls
+	recent         []*aitoolcalls.AiToolCalls
 	err            error
 	latestCalls    int
-	refsCalls      int
+	recentCalls    int
 	userID         uint64
 	conversationID string
 }
 
-func (f *fakeToolContextStore) FindLatestResult(_ context.Context, userID uint64, conversationID string) (*domain.ToolResultEnvelope, error) {
+func (f *fakeToolContextStore) FindLatestToolResult(_ context.Context, userID uint64, conversationID string) (*aitoolcalls.AiToolCalls, error) {
 	f.latestCalls++
 	f.userID = userID
 	f.conversationID = conversationID
 	return f.latest, f.err
 }
 
-func (f *fakeToolContextStore) FindRecentRefs(_ context.Context, userID uint64, conversationID string, _ int) ([]domain.ToolCallRef, error) {
-	f.refsCalls++
+func (f *fakeToolContextStore) FindRecentToolCall(_ context.Context, userID uint64, conversationID string, _ int) ([]*aitoolcalls.AiToolCalls, error) {
+	f.recentCalls++
 	f.userID = userID
 	f.conversationID = conversationID
-	return f.refs, f.err
+	return f.recent, f.err
 }
 
 func contextMessage(id, role, content string, createdAt time.Time) *aimessages.AiMessages {

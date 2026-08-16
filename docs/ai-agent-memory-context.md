@@ -1,5 +1,7 @@
 # AI Agent 记忆与上下文机制技术说明
 
+> 迁移说明：本文记录的是早期记忆与上下文状态说明。当前 AI 客服上下文主链路已迁移到 `MemoryProvider + MemoryMiddleware + SessionValues`，最新架构以 `docs/context/customer-service-memory-architecture.md` 和 `docs/context/customer-service-memory-implementation-plan.md` 为准。
+
 本文档描述 AI 客服当前代码已经实现的记忆、上下文持久化和裁剪行为。文中将“当前实现”与“设计目标”明确区分，避免把尚未接入的长期记忆、会话摘要或结构化 Tool 上下文误认为可用能力。
 
 ## 1. 总体架构

@@ -25,8 +25,6 @@ type (
 		CountUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string) (int64, error)
 		FindUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
 		FindRecentUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
-		FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
-		FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error)
 		FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error)
 		FindUserMessageByClientMessageID(ctx context.Context, userID uint64, clientMessageID string) (*AiMessages, error)
 		FindAssistantMessagesByClientMessageID(ctx context.Context, userID uint64, conversationID, clientMessageID string) ([]*AiMessages, error)
@@ -213,28 +211,6 @@ func (m *customAiMessagesModel) FindRecentUnsummarizedContextMessages(ctx contex
 		rows[left], rows[right] = rows[right], rows[left]
 	}
 	return rows, nil
-}
-
-// FindRecentToolMessages 查询最近的工具消息记录
-func (m *customAiMessagesModel) FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-
-	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` = ? order by `id` desc limit ?"
-	err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "tool", limit)
-	return rows, err
-}
-
-// FindToolMessageByID 根据ID查询工具消息
-func (m *customAiMessagesModel) FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error) {
-	var row AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? and `role` = ? limit 1"
-	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &row, query, messageID, userID, conversationID, "tool"); err != nil {
-		return nil, err
-	}
-	return &row, nil
 }
 
 func (m *customAiMessagesModel) FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -23,35 +24,10 @@ var (
 	ErrToolExecution       = errors.New("tool execution failed")
 )
 
-var sensitiveToolArgumentKeys = []string{"user_id", "token", "session_id", "auth"}
-
-type ExecuteRequest struct {
-	UserID         uint64
-	ConversationID string
-	MessageID      string
-	ClientIP       string
-	RunID          string
-	CheckpointID   string
-	ToolName       string
-	Arguments      map[string]any
-}
-
-type HandlerRequest struct {
-	UserID    uint64
-	ToolName  string
-	Arguments map[string]any
-	Metadata  domain.Metadata
-}
-
-type HandlerResult struct {
-	Data    any
-	Summary string
-}
-
-type HandlerFunc func(context.Context, HandlerRequest) (HandlerResult, error)
+var sensitiveToolArgumentKeys = []string{"user_id", "token", "auth"}
 
 // 注册工具处理函数到destination中
-func mergeHandlers(destination, source map[string]HandlerFunc) {
+func mergeHandlers(destination, source map[string]core.HandlerFunc) {
 	for name, handler := range source {
 		destination[name] = handler
 	}
@@ -59,11 +35,11 @@ func mergeHandlers(destination, source map[string]HandlerFunc) {
 
 type ToolCallRecord struct {
 	ConversationID string
+	ToolCallID     string
 	UserID         uint64
 	ToolName       string
 	Arguments      map[string]any
 	Status         string
-	ResultSummary  string
 	ErrorMessage   string
 	Latency        time.Duration
 	ResultData     any
@@ -101,13 +77,13 @@ func NewExecutor(registry *Registry, opts ...ExecutorOption) *Executor {
 }
 
 // Execute 执行指定的工具，并返回执行结果事件
-func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler HandlerFunc) domain.AgentEvent {
+func (e *Executor) Execute(ctx context.Context, req core.ExecuteRequest, handler core.HandlerFunc) domain.AgentEvent {
 	startedAt := time.Now()
 	// 获取工具元数据
 	metadata, err := e.registry.Metadata(req.ToolName)
 	if err != nil {
 		event := failedToolEvent(req, req.ToolName, "工具未注册，无法执行。", err)
-		_ = e.record(ctx, req, domain.Metadata{}, map[string]any{}, toolStatusFailed, "", err.Error(), nil, time.Since(startedAt))
+		_ = e.record(ctx, req, domain.Metadata{}, map[string]any{}, toolStatusFailed, err.Error(), nil, time.Since(startedAt))
 		return event
 	}
 
@@ -115,7 +91,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	args := argx.SanitizeMapKeys(req.Arguments, sensitiveToolArgumentKeys)
 	if handler == nil {
 		event := failedToolEvent(req, metadata.Name, "工具暂不可用，请稍后重试。", ErrToolHandlerRequired)
-		_ = e.record(ctx, req, metadata, args, toolStatusFailed, "", ErrToolHandlerRequired.Error(), nil, time.Since(startedAt))
+		_ = e.record(ctx, req, metadata, args, toolStatusFailed, ErrToolHandlerRequired.Error(), nil, time.Since(startedAt))
 		return event
 	}
 
@@ -128,11 +104,12 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	defer cancel()
 
 	// 执行工具处理函数
-	result, err := runHandlerWithTimeout(handlerCtx, handler, HandlerRequest{
-		UserID:    req.UserID,
-		ToolName:  metadata.Name,
-		Arguments: args,
-		Metadata:  metadata,
+	result, err := runHandlerWithTimeout(handlerCtx, handler, core.HandlerRequest{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		ToolName:       metadata.Name,
+		Arguments:      args,
+		Metadata:       metadata,
 	})
 	latency := time.Since(startedAt)
 	if err != nil {
@@ -141,7 +118,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 			content = "工具调用超时，未完成操作，请稍后重试。"
 		}
 		event := failedToolEvent(req, metadata.Name, content, err)
-		_ = e.record(ctx, req, metadata, args, toolStatusFailed, "", err.Error(), nil, latency)
+		_ = e.record(ctx, req, metadata, args, toolStatusFailed, err.Error(), nil, latency)
 		return event
 	}
 
@@ -158,7 +135,7 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 		Done:             true,
 		BusinessExecuted: metadata.WriteOperation,
 	}
-	if recordErr := e.record(ctx, req, metadata, args, toolStatusSuccess, event.Content, "", result.Data, latency); recordErr != nil && metadata.WriteOperation {
+	if recordErr := e.record(ctx, req, metadata, args, toolStatusSuccess, "", result.Data, latency); recordErr != nil && metadata.WriteOperation {
 		event.Status = toolStatusFailed
 		event.Content = "操作已完成，但审计记录失败，请联系支持。"
 		event.DataJSON = marshalToolData(map[string]any{
@@ -170,18 +147,18 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest, handler Hand
 	return event
 }
 
-func (e *Executor) Reject(ctx context.Context, req ExecuteRequest, cause error) domain.AgentEvent {
-	return e.Execute(ctx, req, func(context.Context, HandlerRequest) (HandlerResult, error) {
-		return HandlerResult{}, cause
+func (e *Executor) Reject(ctx context.Context, req core.ExecuteRequest, cause error) domain.AgentEvent {
+	return e.Execute(ctx, req, func(context.Context, core.HandlerRequest) (core.HandlerResult, error) {
+		return core.HandlerResult{}, cause
 	})
 }
 
 type handlerResponse struct {
-	result HandlerResult
+	result core.HandlerResult
 	err    error
 }
 
-func runHandlerWithTimeout(ctx context.Context, handler HandlerFunc, req HandlerRequest) (HandlerResult, error) {
+func runHandlerWithTimeout(ctx context.Context, handler core.HandlerFunc, req core.HandlerRequest) (core.HandlerResult, error) {
 	done := make(chan handlerResponse, 1)
 	go func() {
 		result, err := handler(ctx, req)
@@ -191,19 +168,19 @@ func runHandlerWithTimeout(ctx context.Context, handler HandlerFunc, req Handler
 	// 超时控制，一般优雅关闭吧，handler内部应该监听ctx.Done()，避免goroutine泄漏
 	select {
 	case <-ctx.Done():
-		return HandlerResult{}, ctx.Err()
+		return core.HandlerResult{}, ctx.Err()
 	case response := <-done:
 		if response.err != nil {
-			return HandlerResult{}, response.err
+			return core.HandlerResult{}, response.err
 		}
 		if err := ctx.Err(); err != nil {
-			return HandlerResult{}, err
+			return core.HandlerResult{}, err
 		}
 		return response.result, nil
 	}
 }
 
-func failedToolEvent(req ExecuteRequest, toolName, content string, cause error) domain.AgentEvent {
+func failedToolEvent(req core.ExecuteRequest, toolName, content string, cause error) domain.AgentEvent {
 	return domain.AgentEvent{
 		Type:           domain.EventToolResult,
 		ConversationID: req.ConversationID,
@@ -217,17 +194,17 @@ func failedToolEvent(req ExecuteRequest, toolName, content string, cause error) 
 }
 
 // 记录工具调用的相关信息
-func (e *Executor) record(ctx context.Context, req ExecuteRequest, metadata domain.Metadata, args map[string]any, status, summary, errMsg string, resultData any, latency time.Duration) error {
+func (e *Executor) record(ctx context.Context, req core.ExecuteRequest, metadata domain.Metadata, args map[string]any, status, errMsg string, resultData any, latency time.Duration) error {
 	if e.recorder == nil {
 		return nil
 	}
 	record := ToolCallRecord{
 		ConversationID: req.ConversationID,
+		ToolCallID:     req.ToolCallID,
 		UserID:         req.UserID,
 		ToolName:       req.ToolName,
 		Arguments:      argx.SanitizeMapKeys(args, sensitiveToolArgumentKeys),
 		Status:         status,
-		ResultSummary:  summary,
 		ErrorMessage:   errMsg,
 		Latency:        latency,
 		ResultData:     resultData,

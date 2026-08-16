@@ -13,8 +13,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	aimemory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
 	agentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/agent"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
+	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
 )
 
 const (
@@ -23,11 +25,13 @@ const (
 )
 
 type RunRequest struct {
-	UserID         uint64
-	ConversationID string
-	MessageID      string
-	ClientIP       string
-	Messages       []domain.ContextMessage
+	UserID           uint64
+	ConversationID   string
+	MessageID        string
+	CurrentMessageID string
+	ClientMessageID  string
+	ClientIP         string
+	Messages         []domain.ContextMessage
 }
 
 type ResumeRequest struct {
@@ -57,6 +61,8 @@ type agent struct {
 type supervisorOptions struct {
 	approvalManager *aitools.ApprovalManager
 	checkpointStore adk.CheckPointStore
+	// memoryProvider 提供会话记忆功能
+	memoryProvider aimemory.MemoryProvider
 }
 
 type SupervisorOption func(*supervisorOptions)
@@ -73,6 +79,12 @@ func WithCheckpointStore(store adk.CheckPointStore) SupervisorOption {
 	}
 }
 
+func WithMemoryProvider(provider aimemory.MemoryProvider) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.memoryProvider = provider
+	}
+}
+
 type agentSpec struct {
 	name        string
 	description string
@@ -83,19 +95,19 @@ type agentSpec struct {
 var supervisorSubAgentSpecs = []agentSpec{
 	{
 		name:        "product_agent",
-		description: "Handles product search, product detail, product recommendation, and inventory lookup.",
+		description: agentprompt.ProductAgentDesc,
 		instruction: agentprompt.ProductAgentSystemPrompt,
 		tools:       []string{domain.ToolProductSearch, domain.ToolProductDetail, domain.ToolProductRecommend, domain.ToolInventoryGet},
 	},
 	{
 		name:        "order_agent",
-		description: "Handles order lookup, order list, and cancel-order confirmation requests.",
+		description: agentprompt.OrderAgentDesc,
 		instruction: agentprompt.OrderAgentSystemPrompt,
 		tools:       []string{domain.ToolOrderGet, domain.ToolOrderList, domain.ToolOrderCancel},
 	},
 	{
 		name:        "cart_checkout_agent",
-		description: "Handles cart operations, checkout preparation/detail, and create-order confirmation requests.",
+		description: agentprompt.CartCheckoutAgentDesc,
 		instruction: agentprompt.CartCheckoutAgentSystemPrompt,
 		tools: []string{
 			domain.ToolCartList, domain.ToolCartAdd, domain.ToolCartSub, domain.ToolCartDelete,
@@ -104,7 +116,7 @@ var supervisorSubAgentSpecs = []agentSpec{
 	},
 	{
 		name:        "coupon_agent",
-		description: "Handles coupon discovery, coupon detail, claim, owned coupons, usage records, and discount calculation.",
+		description: agentprompt.CouponAgentDesc,
 		instruction: agentprompt.CouponAgentSystemPrompt,
 		tools: []string{
 			domain.ToolCouponList, domain.ToolCouponDetail, domain.ToolCouponClaim,
@@ -113,7 +125,7 @@ var supervisorSubAgentSpecs = []agentSpec{
 	},
 	{
 		name:        "general_agent",
-		description: "Handles general customer-service explanations, small talk, and unclassified requests.",
+		description: agentprompt.GeneralAgentDesc,
 		instruction: agentprompt.GeneralAgentSystemPrompt,
 	},
 }
@@ -130,6 +142,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	}
 	_ = adk.SetLanguage(adk.LanguageChinese)
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
+	// 创建子agent
 	for _, spec := range supervisorSubAgentSpecs {
 		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.approvalManager, spec)
 		if err != nil {
@@ -137,25 +150,36 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 		}
 		agentTools = append(agentTools, adk.NewAgentTool(ctx, subAgent))
 	}
+	agentTools = append(agentTools, invokableToolsToBaseTools(registry.RootAgentTools())...)
+	agentTools = append(agentTools, invokableToolsToBaseTools(registry.AllAgentTools())...)
+	// 获取子agent的元信息
 	agentToolInfos, err := baseToolInfos(ctx, agentTools)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
+	// 创建supervisor llm model
 	supervisorModel, err := newAgentChatModel(ctx, factory, cfg, agentToolInfos)
 	if err != nil {
 		return nil, err
 	}
+	// 加入上下文记忆组装中间件
+	rootHandlers := []adk.ChatModelAgentMiddleware{adk.NewEventSenderModelWrapper(), newToolCallContextMiddleware()}
+	if opts.memoryProvider != nil {
+		rootHandlers = append(rootHandlers, NewMemoryMiddleware(opts.memoryProvider))
+	}
+	// 创建supervisor agent
 	root, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        supervisorAgentName,
-		Description: "Coordinates e-commerce customer service sub-agents, decomposes tasks, routes work, and summarizes final answers.",
+		Description: agentprompt.SupervisorAgentDesc,
 		Instruction: agentprompt.SupervisorSystemPrompt,
 		Model:       supervisorModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: agentTools,
 			},
-			EmitInternalEvents: true,
+			EmitInternalEvents: true, // 透传子agent内部事件
 		},
+		Handlers:      rootHandlers,
 		MaxIterations: defaultAgentMaxIterations,
 	})
 	if err != nil {
@@ -166,7 +190,8 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 
 // newDomainAgent 创建子agent
 func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, spec agentSpec) (adk.Agent, error) {
-	infos, err := registry.ToolInfosByNames(ctx, spec.tools...)
+	// 这里获取的是子 agent 内部可调用的业务工具 schema；子 agent 自身作为 root 工具的 ToolInfo 由 adk.NewAgentTool 根据 Name/Description 生成。
+	infos, err := registry.SubAgentToolInfos(ctx, spec.tools...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
@@ -174,11 +199,11 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 	if err != nil {
 		return nil, err
 	}
-	tools, err := registry.ToolsByNames(spec.tools...)
+	tools, err := registry.SubAgentTools(spec.tools...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
-	handlers := []adk.ChatModelAgentMiddleware{}
+	handlers := []adk.ChatModelAgentMiddleware{adk.NewEventSenderModelWrapper(), newToolCallContextMiddleware()}
 	if approvalManager != nil {
 		handlers = append(handlers, newHighRiskApprovalMiddleware(approvalManager))
 	}
@@ -243,7 +268,7 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 	}
 	checkpointID := stableCheckpointID(req.MessageID, req.ConversationID)
 	runID := checkpointID
-	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
+	ctx = helper.WithToolExecutionContext(ctx, helper.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		MessageID:      req.MessageID,
@@ -262,15 +287,19 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 			return eventCtx.Err()
 		}
 	}
-	// callback handler manager
-	bridge := newAgentEventCallbackBridge(req, r.approvalManager, emit)
 	iter := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).Run(ctx, input,
 		adk.WithCheckPointID(checkpointID),
-		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
-		adk.WithCallbacks(bridge.toolHandler()))
+		// adk.WithSessionValues is the fixed Eino API; this project only stores trusted conversationID metadata in it.
+		adk.WithSessionValues(aimemory.NewConversationValues(aimemory.ConversationMetadata{
+			UserID:           req.UserID,
+			ConversationID:   req.ConversationID,
+			RunID:            runID,
+			CurrentMessageID: req.CurrentMessageID,
+			ClientMessageID:  req.ClientMessageID,
+		})))
 	go func() {
 		defer close(out)
-		r.consumeEvents(ctx, iter, req, bridge, emit)
+		r.consumeEvents(ctx, iter, req, emit)
 	}()
 	return out, nil
 }
@@ -288,7 +317,7 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 	if runID == "" {
 		runID = checkpointID
 	}
-	ctx = aitools.WithToolExecutionContext(ctx, aitools.ToolExecutionContext{
+	ctx = helper.WithToolExecutionContext(ctx, helper.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		ClientIP:       req.ClientIP,
@@ -313,21 +342,23 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 		MessageID:      req.ConfirmationID,
 		ClientIP:       req.ClientIP,
 	}
-	// 桥接器，跟踪业务执行状态
-	bridge := newAgentEventCallbackBridge(runReq, r.approvalManager, emit)
 	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
 		Targets: map[string]any{
 			interruptID: &ApprovalResult{Approved: req.Approved},
 		},
 	},
-		adk.WithCallbacks(bridge.modelHandler()).DesignateAgent(supervisorAgentName),
-		adk.WithCallbacks(bridge.toolHandler()))
+		// WithSessionValues is the fixed Eino API; this project only stores trusted conversationID metadata in it.
+		adk.WithSessionValues(aimemory.NewConversationValues(aimemory.ConversationMetadata{
+			UserID:         req.UserID,
+			ConversationID: req.ConversationID,
+			RunID:          runID,
+		})))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
 	go func() {
 		defer close(out)
-		r.consumeEvents(ctx, iter, runReq, bridge, emit)
+		r.consumeEvents(ctx, iter, runReq, emit)
 	}()
 	return out, nil
 }
@@ -339,11 +370,45 @@ func (r *agent) checkpointStoreOrInit() adk.CheckPointStore {
 	return r.checkpointStore
 }
 
-func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest, bridge *agentEventCallbackBridge, emit func(context.Context, domain.AgentEvent) error) {
-	// 是否收到assistant消息事件
+func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], req RunRequest, emit func(context.Context, domain.AgentEvent) error) {
 	hasAssistant := false
-	// 是否收到任何事件
 	hasAny := false
+	businessExecuted := false
+	toolMessageIDs := make(map[string]string)
+	send := func(event domain.AgentEvent) error {
+		hasAny = true
+		if event.Type == domain.EventAssistantMessage || event.Type == domain.EventAssistantDelta {
+			hasAssistant = true
+		}
+		if emit == nil {
+			return nil
+		}
+		return emit(ctx, event)
+	}
+	startToolCall := func(toolCallID, toolName string) (string, bool) {
+		key := toolCallKey(toolCallID, toolName)
+		if key == "" {
+			return newAgentMessageID(), true
+		}
+		if existing := toolMessageIDs[key]; existing != "" {
+			return existing, false
+		}
+		messageID := newAgentMessageID()
+		toolMessageIDs[key] = messageID
+		return messageID, true
+	}
+	finishToolCall := func(toolCallID, toolName string) (string, bool) {
+		key := toolCallKey(toolCallID, toolName)
+		if key == "" {
+			return newAgentMessageID(), false
+		}
+		messageID := toolMessageIDs[key]
+		if messageID == "" {
+			return newAgentMessageID(), false
+		}
+		delete(toolMessageIDs, key)
+		return messageID, true
+	}
 	for {
 		event, ok := iter.Next()
 		if !ok {
@@ -353,14 +418,13 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			continue
 		}
 		if event.Err != nil {
-			businessExecuted := bridge != nil && bridge.hasBusinessExecuted()
 			content := fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", event.Err)
 			dataJSON := ""
 			if businessExecuted {
 				content = fmt.Sprintf("业务结果已产生，但模型总结失败，请勿重复操作：%v", event.Err)
 				dataJSON = `{"business_executed":true}`
 			}
-			_ = emit(ctx, domain.AgentEvent{
+			_ = send(domain.AgentEvent{
 				Type:             domain.EventError,
 				ConversationID:   req.ConversationID,
 				MessageID:        newAgentMessageID(),
@@ -377,7 +441,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			// 将中断事件转换为自定义AgentEvent事件
 			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.approvalManager)
 			if err != nil {
-				_ = emit(ctx, domain.AgentEvent{
+				_ = send(domain.AgentEvent{
 					Type:           domain.EventError,
 					ConversationID: req.ConversationID,
 					MessageID:      newAgentMessageID(),
@@ -388,30 +452,21 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				return
 			}
 			if ok {
-				if bridge != nil {
-					if normalized, normalizedOK := bridge.enterAwaitingConfirmation(domainEvent); normalizedOK {
-						domainEvent = normalized
-					}
-				}
-				_ = emit(ctx, domainEvent)
+				_ = send(domainEvent)
 			}
 			return
 		}
 		hasAny = true
-		domainEvent, ok := iteratorAssistantEventToDomainEvent(event, req)
-		if !ok {
-			continue
+		_, stop := r.handleIteratorAgentEvent(event, req, send, startToolCall, finishToolCall, func() {
+			businessExecuted = true
+		})
+		if stop {
+			return
 		}
-		hasAssistant = true
-		_ = emit(ctx, domainEvent)
-	}
-	if bridge != nil {
-		hasAssistant = hasAssistant || bridge.hasAssistantEvent()
-		hasAny = hasAny || bridge.hasAnyEvent()
 	}
 	// 如果没有任务事件发生，则发送空响应错误事件
 	if !hasAssistant && !hasAny {
-		_ = emit(ctx, domain.AgentEvent{
+		_ = send(domain.AgentEvent{
 			Type:           domain.EventError,
 			ConversationID: req.ConversationID,
 			MessageID:      newAgentMessageID(),
@@ -422,35 +477,130 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 	}
 }
 
-// 从迭代器获取最终的assistant消息
-func iteratorAssistantEventToDomainEvent(event *adk.AgentEvent, req RunRequest) (domain.AgentEvent, bool) {
+func (r *agent) handleIteratorAgentEvent(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), finishToolCall func(string, string) (string, bool), markBusinessExecuted func()) (handled bool, stop bool) {
 	if event == nil || event.Output == nil || event.Output.MessageOutput == nil {
-		return domain.AgentEvent{}, false
+		return false, false
 	}
 	message, _, err := adk.GetMessage(event)
-	if err != nil || message == nil || strings.TrimSpace(message.Content) == "" {
-		return domain.AgentEvent{}, false
+	if err != nil {
+		_ = send(domain.AgentEvent{
+			Type:           domain.EventError,
+			ConversationID: req.ConversationID,
+			MessageID:      newAgentMessageID(),
+			Content:        fmt.Sprintf("模型/工具事件读取失败：%v", err),
+			Status:         "failed",
+			Done:           true,
+		})
+		return true, true
+	}
+	if message == nil {
+		return false, false
 	}
 	output := event.Output.MessageOutput
-	// 过滤role
-	if output.Role != schema.Assistant {
-		return domain.AgentEvent{}, false
+	role := output.Role
+	if role == "" {
+		role = message.Role
 	}
-	// 如果有工具调用，则说明不是最终消息
+	switch role {
+	case schema.Assistant:
+		return r.handleIteratorAssistantMessage(event, req, send, startToolCall, message)
+	case schema.Tool:
+		return r.handleIteratorToolMessage(event, req, send, finishToolCall, markBusinessExecuted, message)
+	default:
+		return false, false
+	}
+}
+
+func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), message *schema.Message) (handled bool, stop bool) {
+	if message == nil {
+		return false, false
+	}
+	if shouldExposeIteratorReasoning(event.AgentName) {
+		if reasoning := reasoningContent(message); reasoning != "" {
+			_ = send(domain.AgentEvent{
+				Type:           domain.EventAssistantThinkingDelta,
+				ConversationID: req.ConversationID,
+				Content:        reasoning,
+				Done:           false,
+			})
+			handled = true
+		}
+	}
 	if len(message.ToolCalls) > 0 {
-		return domain.AgentEvent{}, false
+		for _, toolCall := range message.ToolCalls {
+			toolName := strings.TrimSpace(toolCall.Function.Name)
+			if toolName == "" || isAgentToolName(toolName) {
+				continue
+			}
+			messageID, started := startToolCall(toolCall.ID, toolName)
+			if !started {
+				continue
+			}
+			_ = send(domain.AgentEvent{
+				Type:           domain.EventToolProgress,
+				ConversationID: req.ConversationID,
+				MessageID:      messageID,
+				Tool:           toolName,
+				Status:         "running",
+				Content:        toolProgressContent(toolName),
+				DataJSON:       ensureJSONObject(toolCall.Function.Arguments),
+				Done:           false,
+			})
+			handled = true
+		}
+		return handled, false
 	}
-	// 过滤子 agent 的最终 assistant 消息
+	content := strings.TrimSpace(message.Content)
+	if content == "" {
+		return handled, false
+	}
 	if event.AgentName != "" && event.AgentName != supervisorAgentName {
-		return domain.AgentEvent{}, false
+		return handled, false
 	}
-	return domain.AgentEvent{
+	_ = send(domain.AgentEvent{
 		Type:           domain.EventAssistantMessage,
 		ConversationID: req.ConversationID,
 		MessageID:      newAgentMessageID(),
-		Content:        message.Content,
+		Content:        content,
 		Done:           true,
-	}, true
+	})
+	return true, false
+}
+
+func (r *agent) handleIteratorToolMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, finishToolCall func(string, string) (string, bool), markBusinessExecuted func(), message *schema.Message) (handled bool, stop bool) {
+	if message == nil {
+		return false, false
+	}
+	toolName := strings.TrimSpace(event.Output.MessageOutput.ToolName)
+	if toolName == "" {
+		toolName = strings.TrimSpace(message.ToolName)
+	}
+	if toolName == "" || isAgentToolName(toolName) {
+		return false, false
+	}
+	content := message.Content
+	businessExecuted := isBusinessWriteTool(toolName) || (r.approvalManager != nil && r.approvalManager.RequiresConfirmation(toolName))
+	messageID, _ := finishToolCall(message.ToolCallID, toolName)
+	if businessExecuted {
+		markBusinessExecuted()
+	}
+	_ = send(domain.AgentEvent{
+		Type:             domain.EventToolResult,
+		ConversationID:   req.ConversationID,
+		MessageID:        messageID,
+		Tool:             toolName,
+		Status:           "success",
+		Content:          wrappedToolSummary(toolName, content),
+		DataJSON:         ensureJSONObject(content),
+		Done:             true,
+		BusinessExecuted: businessExecuted,
+	})
+	return true, false
+}
+
+func shouldExposeIteratorReasoning(agentName string) bool {
+	agentName = strings.TrimSpace(agentName)
+	return agentName == "" || agentName == supervisorAgentName || !isKnownAgentName(agentName)
 }
 
 func collectStream(stream <-chan domain.AgentEvent) []domain.AgentEvent {
@@ -469,6 +619,10 @@ func invokableToolsToBaseTools(tools []einotool.InvokableTool) []einotool.BaseTo
 		}
 	}
 	return result
+}
+
+func invokableToolInfos(ctx context.Context, tools []einotool.InvokableTool) ([]*schema.ToolInfo, error) {
+	return baseToolInfos(ctx, invokableToolsToBaseTools(tools))
 }
 
 func baseToolInfos(ctx context.Context, tools []einotool.BaseTool) ([]*schema.ToolInfo, error) {

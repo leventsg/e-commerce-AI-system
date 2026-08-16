@@ -8,6 +8,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 )
 
 var ErrConfirmationCreatorRequired = errors.New("confirmation creator required")
@@ -36,7 +37,7 @@ func (m *ApprovalManager) RequiresConfirmation(toolName string) bool {
 }
 
 // 用于创建高风险操作的确认请求
-func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req ExecuteRequest) (event domain.AgentEvent) {
+func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req core.ExecuteRequest) (event domain.AgentEvent) {
 	startedAt := time.Now()
 	// 前置检查
 	if m == nil || m.registry == nil {
@@ -69,7 +70,7 @@ func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req ExecuteRe
 		} else if status == toolStatusFailed {
 			errMessage = event.Content
 		}
-		_ = m.executor.record(ctx, req, recordMetadata, args, status, event.Content, errMessage, event.DataJSON, time.Since(startedAt))
+		_ = m.executor.record(ctx, req, recordMetadata, args, status, errMessage, event.DataJSON, time.Since(startedAt))
 	}()
 	// 确认摘要
 	summary, err := m.registry.ConfirmationSummary(ctx, req)
