@@ -9,7 +9,7 @@
 - 旧简历：教育、联系方式、实习经历、既有项目描述、技能和证件照。
 - 仓库文档：AI 客服 PRD、技术方案、实施计划及上下文记忆设计。
 - 仓库实现：Eino ADK 多 Agent 编排、工具注册与执行、SSE、分层记忆、高风险确认、Checkpoint、审计和电商微服务底座。
-- 用户明确给定的项目设定：Redis 短期记忆热缓存与限流、Agent Skill、MCP 集成和 Agent 评估能力已实现。
+- 用户明确给定的项目设定：Redis 缓存记忆、Agent Skill、MCP 集成和 Agent 评估能力已实现。
 
 不新增未经材料支持的公司、职位、教育经历、用户规模、性能比例、准确率或业务收益。用户给定的 Skill、MCP 和评估能力可以作为已实现能力描述，但不为其编造量化结果。
 
@@ -40,30 +40,11 @@
 
 1. 基于 Eino ADK 构建 Supervisor 与 5 个领域 Agent，通过 AgentTool、ToolsNode 和领域工具白名单完成任务拆解与协作。
 2. 设计统一能力链路，管理核心 20 个业务 Tool 与 2 个记忆能力 Tool；将本地 Tool、Skill 和 MCP 外部能力纳入统一权限、超时、参数校验和审计策略。
-3. 参考 `docs/model-context.md` 的 AGGO 思路实现 `MemoryProvider + MemoryMiddleware` 四层上下文：稳定 System Prompt、摘要水位后的近期历史、追加到当前 User Message 的动态上下文，以及 `search_user_memory/get_tool_call_result` 按需检索工具；避免动态信息破坏 Prompt Cache，也避免摘要与原文重复注入。
-4. 将 Redis 定位为 AI 在线链路的临时状态与流量治理层：承担用户/工具限流、短期记忆热缓存、Checkpoint 和确认短锁；结合 StatefulInterrupt、MySQL CAS 与认证身份注入完成高风险操作恢复和幂等防护，缓存故障时回源 MySQL 持久事实。
+3. 实现 `MemoryProvider + MemoryMiddleware` 分层上下文，组合近期消息、滚动摘要、长期事件、用户画像和工具事实；通过 Kafka 异步更新画像与长期记忆，组件异常时降级而不阻塞聊天。
+4. 对创建订单、取消订单等高风险操作接入 StatefulInterrupt、Redis 短锁、MySQL CAS 和 Checkpoint 恢复；从认证上下文注入用户身份，拒绝越权、过期和重复执行。
 5. 建立覆盖路由、工具选择与参数、安全规则、记忆召回和回答质量的评估集与回归流程；以 Redis Lua、DTM Saga、Kafka、Elasticsearch/Gorse 等电商底座提供可执行业务场景。
 
 措辞使用“构建、设计、实现、接入”，不使用未经确认的“主导、负责人、Owner”。
-
-## 分层上下文与 Redis 职责
-
-简历中的上下文工程描述需要体现以下企业级设计取舍：
-
-1. 稳定 System Prompt 只承载安全规则和工具协议，保持稳定前缀，利于模型侧 Prompt Cache。
-2. `HistoryMessages` 只注入摘要水位后的近期 user/assistant 原文；已进入摘要的消息不再重复注入。
-3. 当前时间、会话摘要、用户画像、最近事件、任务状态和工具事实属于动态运行上下文，追加到当前 User Message，不污染 System Prompt，也不写回原始消息。
-4. 更早的长期事件和历史工具结果不全量塞入上下文，分别通过 `search_user_memory` 和 `get_tool_call_result` 按用户、会话和工具调用 ID 检索。
-5. 记忆更新不挂在 ReAct 每次模型调用之后，而是在最终回答持久化后异步执行滚动摘要；只有摘要创建时才通过 Kafka 驱动画像与长期事件抽取，降低在线延迟并避免重复写回。
-
-Redis 不承担长期事实存储，而承担低延迟、可失效、可降级的在线职责：
-
-- 流量治理：用户级聊天限流、工具级写操作限流，防止模型和下游 RPC 被突发请求放大。
-- 短期记忆热缓存：缓存当前会话的近期消息和短期运行上下文，使用用户与会话复合键隔离并设置 TTL；未命中时从 MySQL 恢复。
-- Agent 运行态：缓存 Eino Checkpoint，使高风险确认可跨请求、跨实例恢复；MySQL `ai_agent_runs` 保存持久回退。
-- 并发控制：确认 ID 使用 Redis 短锁合并并发请求，最终幂等由 MySQL CAS 保证，Redis 故障时仍可降级执行安全校验。
-
-这组描述需要体现“Redis 是热数据与控制层，MySQL 是持久事实源”，避免写成笼统的“使用 Redis 提升性能”。
 
 ## 实习经历取舍
 
