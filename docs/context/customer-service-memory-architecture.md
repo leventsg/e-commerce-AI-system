@@ -2,13 +2,13 @@
 
 ## 目标
 
-本项目的 AI 客服上下文工程已从手动 `ContextManager.Build()` 组装，重构为 AGGO 风格的 `MemoryProvider + MemoryMiddleware + ADK session values + Memorize` 分层。
+本项目的 AI 客服上下文工程已从手动 `ContextManager.Build()` 组装，重构为 AGGO 风格的 `MemoryProvider + MemoryMiddleware + ADK session values` 分层，并由 `ChatLogic` 统一触发异步长期上下文更新。
 
 新的边界是：
 
-- `ChatLogic` 只负责会话准备、用户原文落库、幂等重放、durable 事件落库和 SSE 转发。
+- `ChatLogic` 负责会话准备、用户原文落库、幂等重放、durable 事件落库、SSE 转发和 agent 成功结束后的 memory update 触发。
 - `services/aiagent/internal/memory` 定义领域级上下文 provider，不依赖 Eino 类型。
-- `services/aiagent/internal/eino/memory_middleware.go` 是 Eino ADK middleware 适配层，负责模型调用前注入和调用后识别 final assistant。
+- `services/aiagent/internal/eino/memory_middleware.go` 是 Eino ADK middleware 适配层，只负责模型调用前注入上下文。
 - `contextmanager` 中已有的 message、summary、tool result、profile store 继续复用，`ai_user_memory_events` 作为长期事件来源。
 
 ## 模型消息顺序
@@ -41,7 +41,7 @@ assistant/tool: ADK ReAct 中间消息
 
 - `memory.MemoryProvider`
   - `Retrieve` 返回 `SystemMessages`、`HistoryMessages`、`ContextMessages` 三类槽位。
-  - `Memorize` 在 durable final assistant 已落库后触发摘要和画像后处理。
+  - `Memorize` 不参与在线主链路；长期上下文更新由 `ChatLogic.updateConversationMemory` 统一触发。
   - `Close` 为后续外部 provider 预留生命周期。
 - `memory.ConversationMetadata`
   - 统一表达 `userID`、`conversationID`、`runID`、`currentMessageID`、`clientMessageID`。
@@ -49,7 +49,6 @@ assistant/tool: ADK ReAct 中间消息
 - `eino.MemoryMiddleware`
   - 从 Eino 固定 API `adk.WithSessionValues` 注入的 values 中读取可信身份。
   - 同一 run 只注入一次，避免 ReAct 多次调用重复追加上下文。
-  - 写回时只接受最终自然语言 assistant，跳过 tool-call assistant、空消息和工具消息。
 - `Capability Tool: search_user_memory`
   - supervisor root 可用的长期事件检索工具。
   - 模型参数里的 `user_id` 会被忽略，真实 user ID 只来自 ToolExecutionContext。
@@ -84,14 +83,14 @@ assistant/tool: ADK ReAct 中间消息
 
 ## 写回策略
 
-Eino middleware 能识别 final assistant，但本项目的 durable 落库发生在 logic 层消费 `AgentEvent` 时。因此真实摘要/画像后处理由 `ChatLogic.memorizeTurn` 在 final assistant 插入后调用 `MemoryProvider.Memorize`。
+记忆更新入口统一在 `ChatLogic.updateConversationMemory`。`runSupervisor` 正常返回后说明前面的 durable 消息落库没有返回错误，ChatLogic 直接异步执行：
 
-`CustomerServiceProvider.Memorize` 只有在同时拿到原始 user 和 final assistant 以及对应 message IDs 时才触发：
+1. 调用 `SummaryManager.MaybeRefresh(userID, conversationID)`。
+2. 如果未创建新摘要，直接结束，不发布 Kafka。
+3. 如果创建了新摘要，使用 `SummaryRefreshResult.CompressedMessageIDs` 发布一个 `memoryupdate.UpdateEvent` 到 `AiMemoryUpdates` topic。
+4. Profile consumer 和 Memory Event consumer 订阅同一个 topic，各自基于同一批 compressed message IDs 调用独立结构化模型，分别更新 `ai_user_profiles` 和 `ai_user_memory_events`。
 
-- `SummaryManager.MaybeRefresh`
-- Profile update publisher
-
-这样避免摘要任务早于 final assistant 落库运行，也避免重复插入 `ai_messages`。
+这样避免 ReAct 多次模型调用重复更新记忆，也保证画像和长期事件来自同一批被摘要压缩的消息。
 
 ## 长期事件检索
 

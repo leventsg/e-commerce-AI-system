@@ -2,7 +2,9 @@ package memory
 
 import (
 	"context"
+	"database/sql/driver"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +58,28 @@ func TestSQLEventStoreSearchesByTrustedUserAndKeyword(t *testing.T) {
 	}
 }
 
+func TestSQLEventStoreSavesUserMemoryEvents(t *testing.T) {
+	store, mock, cleanup := newEventStoreTest(t)
+	defer cleanup()
+	query := "insert into `ai_user_memory_events` (`id`, `user_id`, `type`, `event_date`, `summary`, `keywords`, `status`) values (?, ?, ?, ?, ?, ?, ?)"
+	mock.ExpectExec(regexp.QuoteMeta(query)).
+		WithArgs(sqlmock.AnyArg(), uint64(42), "event", "2026-08-14", "用户偏好轻薄手机", jsonArrayArg(`["手机","轻薄"]`), "active").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := store.SaveUserMemoryEvents(context.Background(), 42, []Event{{
+		Type:      "event",
+		EventDate: "2026-08-14",
+		Summary:   "用户偏好轻薄手机",
+		Keywords:  []string{"手机", "轻薄"},
+	}})
+	if err != nil {
+		t.Fatalf("SaveUserMemoryEvents() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func newEventStoreTest(t *testing.T) (*SQLEventStore, sqlmock.Sqlmock, func()) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
@@ -63,4 +87,11 @@ func newEventStoreTest(t *testing.T) (*SQLEventStore, sqlmock.Sqlmock, func()) {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	return NewSQLEventStore(sqlx.NewSqlConnFromDB(db)), mock, func() { _ = db.Close() }
+}
+
+type jsonArrayArg string
+
+func (j jsonArrayArg) Match(value driver.Value) bool {
+	raw, ok := value.(string)
+	return ok && strings.TrimSpace(raw) == string(j)
 }

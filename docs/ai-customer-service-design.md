@@ -143,8 +143,10 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 
 - `MemoryProvider.Retrieve` 组合当前任务状态、待确认动作、近期消息、会话摘要、长期事件、最小用户画像和必要工具上下文。
 - `MemoryMiddleware.BeforeModelRewriteState` 将 `HistoryMessages` 插在 system prompt 后，将动态 `ContextMessages` 追加到当前 user message 末尾。
-- `MemoryMiddleware.AfterModelRewriteState` 只识别最终自然语言 assistant，并保留原始 user message 边界。
+- `MemoryMiddleware` 只做模型调用前上下文注入；记忆更新不放在 `AfterModelRewriteState`，避免 ReAct 多次模型调用重复触发。
 - 通过滚动摘要和固定近期窗口从源头节省 token：默认保留最近 20 条未压缩消息；未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
+- `ChatLogic` 在 `runSupervisor` 正常返回后异步调用 `updateConversationMemory`；只有 `SummaryManager.MaybeRefresh` 创建新摘要时，才发布一个 `AiMemoryUpdates` Kafka 事件。
+- Profile consumer 和 Memory Event consumer 订阅同一个 topic，分别使用独立结构化模型基于同一批 compressed message IDs 更新 `ai_user_profiles` 和 `ai_user_memory_events`。
 - 每条消息只进入摘要或近期原文之一，不重复注入。
 - 工具上下文直接来自 `ai_tool_calls`：`<latest_tool_result>` 注入最近一次完整工具调用；`<recent_tool_calls>` 只注入工具名、参数和 `tool_call_id`，需要历史 result 时调用 `get_tool_call_result`。
 - 记录上下文来源、摘要覆盖水位、近期消息范围、最近工具调用数量、Token 估算和构建耗时。
@@ -426,13 +428,13 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 ### 5.5 上下文构建流程
 
 1. Conversation Manager 校验会话归属并保存当前用户原始消息。
-2. Context Manager 构建 `AgentContext`。
-3. 加载最新会话摘要、水位后的近期原文、长期事件、活跃 TaskState、pending confirmation、最近一次完整工具调用和最近工具调用最小列表。
-4. 如果未压缩消息达到 30 条，异步将最早 10 条与旧摘要合并成新摘要，之后仍保留最近 20 条原文。
-5. AgentContext 包含当前用户输入、摘要、近期 20 条原文、最近一次完整工具调用、最近工具调用最小列表、TaskState、最近 UserMemoryEvent 和可选 UserProfile。
-6. Supervisor Runner 在 `internal/eino` 边界转换消息后调用 ADK Supervisor。
-7. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 负责本领域工具选择与执行。
-8. 工具和 assistant 结果持久化后更新 TaskState，并异步评估是否需要生成新摘要或画像更新。
+2. ChatLogic 将当前用户输入作为最小 user message 交给 Supervisor Runner。
+3. MemoryMiddleware 在 root model 调用前加载最新会话摘要、水位后的近期原文、长期事件、活跃 TaskState、pending confirmation、最近一次完整工具调用和最近工具调用最小列表。
+4. MemoryProvider 返回 history 和 runtime context；runtime context 追加到当前 user message，不写入原始历史。
+5. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 负责本领域工具选择与执行。
+6. 工具和 assistant 结果持久化后，ChatLogic 在 `runSupervisor` 正常返回后异步调用 `updateConversationMemory`。
+7. 如果未压缩消息达到 30 条，`SummaryManager` 将最早 10 条与旧摘要合并成新摘要，返回本次 compressed message IDs；否则结束。
+8. 摘要创建时只发布一个 `AiMemoryUpdates` 事件；Profile consumer 和 Memory Event consumer 用同一批消息分别更新画像和长期事件。
 9. 摘要、长期事件或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
 
 工具结果事实来源是 `ai_tool_calls.result`，保存真实工具返回 JSON，并通过 `tool_call_id` 与模型工具调用关联。`get_tool_call_result` 可按 `tool_call_id` 读取当前用户当前 conversation 的历史工具结果；`ai_messages` 仍可保存 role=tool 消息和展示 metadata，但 Context Manager / MemoryProvider 不再从 `ai_messages.metadata` 读取工具结果。

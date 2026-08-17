@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蓝松松｜AI 应用工程师｜2027 届</title>
+  <style>
+    :root {
+      --ink: #17212d;
+      --muted: #596979;
+      --blue: #075d9b;
+      --blue-dark: #0a426c;
+      --blue-pale: #edf5fa;
+      --line: #c9d7e2;
+      --paper: #ffffff;
+      --screen: #e9edf1;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--ink);
+      background: var(--screen);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
+
+    body { padding: 22px 0 44px; }
+
+    .toolbar {
+      position: sticky;
+      top: 12px;
+      z-index: 10;
+      width: min(210mm, calc(100vw - 24px));
+      margin: 0 auto 14px;
+      padding: 9px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid rgba(20, 44, 65, 0.12);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 10px 28px rgba(23, 33, 45, 0.1);
+      backdrop-filter: blur(12px);
+      font-size: 13px;
+    }
+
+    .toolbar-note { color: var(--muted); }
+
+    .toolbar-actions { display: flex; gap: 8px; }
+
+    .toolbar button {
+      appearance: none;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 7px 12px;
+      color: var(--blue-dark);
+      background: #fff;
+      font: 600 12px/1 "Avenir Next", "PingFang SC", sans-serif;
+      cursor: pointer;
+    }
+
+    .toolbar button.primary {
+      color: #fff;
+      border-color: var(--blue);
+      background: var(--blue);
+    }
+
+    .sheet {
+      position: relative;
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      padding: 12mm 14mm 10.5mm;
+      overflow: hidden;
+      background: var(--paper);
+      box-shadow: 0 20px 55px rgba(17, 31, 44, 0.17);
+      outline: none;
+    }
+
+    .sheet::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 2.2mm;
+      background: linear-gradient(180deg, var(--blue-dark), var(--blue) 46%, #6aa5c8 100%);
+    }
+
+    .masthead {
+      display: grid;
+      grid-template-columns: 1fr 27mm;
+      gap: 6.5mm;
+      align-items: start;
+      padding-bottom: 4mm;
+      border-bottom: 0.55mm solid var(--blue);
+    }
+
+    .identity { min-width: 0; }
+
+    .name-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4mm;
+      margin-bottom: 1.8mm;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+      font-size: 28pt;
+      line-height: 1;
+      letter-spacing: 0.8mm;
+      font-weight: 800;
+    }
+
+    .target {
+      color: var(--blue);
+      font-size: 12.3pt;
+      font-weight: 750;
+      letter-spacing: 0.25mm;
+    }
+
+    .contact {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.2mm 4.3mm;
+      color: var(--muted);
+      font-size: 9.15pt;
+      line-height: 1.52;
+    }
+
+    .contact a { color: inherit; text-decoration: none; }
+    .contact .portfolio { color: var(--blue-dark); font-weight: 600; }
+
+    .summary {
+      margin-top: 3mm;
+      padding: 2.8mm 3.2mm;
+      color: #283949;
+      background: linear-gradient(90deg, var(--blue-pale), rgba(237, 245, 250, 0.35));
+      border-left: 0.8mm solid #71a7c8;
+      font-size: 9.1pt;
+      line-height: 1.56;
+      text-align: justify;
+    }
+
+    .photo {
+      width: 27mm;
+      height: 38mm;
+      object-fit: cover;
+      object-position: center 24%;
+      border: 0.45mm solid #b6c5d1;
+      padding: 0.6mm;
+      background: #fff;
+    }
+
+    .section { margin-top: 4.4mm; break-inside: avoid; }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 2.4mm;
+      align-items: center;
+      margin-bottom: 2.4mm;
+    }
+
+    .section-index {
+      color: #7796ad;
+      font-size: 7.2pt;
+      font-weight: 800;
+      letter-spacing: 0.35mm;
+    }
+
+    h2 {
+      margin: 0;
+      color: var(--blue-dark);
+      font-size: 12.2pt;
+      line-height: 1;
+      letter-spacing: 0.35mm;
+      font-weight: 800;
+    }
+
+    .section-rule { height: 1px; background: var(--line); }
+
+    .education-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 5mm;
+    }
+
+    .edu-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      column-gap: 2mm;
+      align-items: baseline;
+      font-size: 9.2pt;
+      line-height: 1.5;
+    }
+
+    .edu-title { font-weight: 750; }
+    .edu-time { color: var(--muted); white-space: nowrap; font-size: 8.45pt; }
+    .edu-meta { grid-column: 1 / -1; color: var(--muted); }
+
+    .entry-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 3mm;
+      align-items: baseline;
+      margin-bottom: 1.1mm;
+    }
+
+    .entry-title {
+      font-size: 10.15pt;
+      font-weight: 800;
+      letter-spacing: 0.06mm;
+    }
+
+    .entry-role { color: var(--blue); font-weight: 750; }
+
+    .entry-time {
+      color: var(--muted);
+      font-size: 8.45pt;
+      white-space: nowrap;
+    }
+
+    .stack,
+    .description {
+      color: var(--muted);
+      font-size: 8.3pt;
+      line-height: 1.5;
+    }
+
+    .description { margin-top: 1mm; color: #344656; }
+
+    .stack strong,
+    .description strong { color: var(--ink); }
+
+    .bullets {
+      list-style: none;
+      padding: 0;
+      margin: 1.7mm 0 0;
+    }
+
+    .bullets li {
+      position: relative;
+      padding-left: 3.3mm;
+      margin: 0 0 1.55mm;
+      font-size: 8.85pt;
+      line-height: 1.54;
+      text-align: justify;
+    }
+
+    .bullets li:last-child { margin-bottom: 0; }
+
+    .bullets li::before {
+      content: "";
+      position: absolute;
+      left: 0.45mm;
+      top: 1.65mm;
+      width: 1.2mm;
+      height: 1.2mm;
+      border: 0.35mm solid var(--blue);
+      transform: rotate(45deg);
+    }
+
+    .bullets strong { color: var(--blue-dark); font-weight: 780; }
+
+    .skills {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.1mm 5mm;
+    }
+
+    .skill-row {
+      display: grid;
+      grid-template-columns: 16mm 1fr;
+      gap: 1.8mm;
+      align-items: baseline;
+      font-size: 8.55pt;
+      line-height: 1.52;
+    }
+
+    .skill-label {
+      color: var(--blue-dark);
+      font-weight: 800;
+      letter-spacing: 0.12mm;
+    }
+
+    .skill-text { color: #344656; }
+
+    .footer-mark {
+      position: absolute;
+      right: 13.5mm;
+      bottom: 4.2mm;
+      color: #8da2b2;
+      font-size: 5.9pt;
+      letter-spacing: 0.35mm;
+    }
+
+    .editing {
+      box-shadow: inset 0 0 0 1px rgba(7, 93, 155, 0.35), 0 20px 55px rgba(17, 31, 44, 0.17);
+    }
+
+    .editing [contenteditable="true"]:focus { outline: none; }
+
+    .print-preview { padding: 0; background: #fff; }
+    .print-preview .toolbar { display: none !important; }
+    .print-preview .sheet { margin: 0; box-shadow: none; }
+
+    @page { size: A4; margin: 0; }
+
+    @media print {
+      html, body { margin: 0; padding: 0; background: #fff; }
+      .toolbar { display: none !important; }
+      .sheet {
+        width: 210mm;
+        height: 297mm;
+        min-height: 297mm;
+        margin: 0;
+        box-shadow: none;
+        overflow: hidden;
+      }
+    }
+
+    @media screen and (max-width: 860px) {
+      body { padding-top: 10px; }
+      .toolbar { position: relative; top: 0; flex-direction: column; align-items: stretch; }
+      .toolbar-actions { justify-content: flex-end; }
+      .sheet { transform-origin: top center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar" aria-label="简历编辑工具栏">
+    <span class="toolbar-note">点击“编辑内容”后可直接修改文字；打印时工具栏自动隐藏。</span>
+    <div class="toolbar-actions">
+      <button type="button" id="edit-toggle">编辑内容</button>
+      <button type="button" id="download-html">保存 HTML</button>
+      <button type="button" class="primary" id="print-resume">导出 PDF</button>
+    </div>
+  </div>
+
+  <main class="sheet" id="resume" contenteditable="true" spellcheck="false">
+    <header class="masthead">
+      <div class="identity">
+        <div class="name-row">
+          <h1>蓝松松</h1>
+          <div class="target">2027 届｜AI 应用工程师</div>
+        </div>
+        <div class="contact">
+          <span>男｜23 岁</span>
+          <a href="tel:17369070912">17369070912</a>
+          <a href="mailto:1960155751@qq.com">1960155751@qq.com</a>
+          <a class="portfolio" href="https://github.com/leventsg/e-commerce-AI-system">github.com/leventsg/e-commerce-AI-system</a>
+        </div>
+        <div class="summary">
+          深圳大学计算机技术硕士，具备 <strong>Go 微服务与 LLM Agent 应用落地</strong>经验。基于 Eino 构建真实电商多 Agent 智能客服，覆盖工具调用、分层记忆、Skill/MCP、安全确认与评估回归，能够完成从模型编排到业务 RPC、缓存、消息队列和可观测性的端到端交付。
+        </div>
+      </div>
+      <img class="photo" src="assets/lan-songsong-photo.jpg" alt="蓝松松证件照">
+    </header>
+
+    <section class="section" aria-labelledby="education-title">
+      <div class="section-head">
+        <span class="section-index">01</span>
+        <h2 id="education-title">教育背景</h2>
+        <span class="section-rule"></span>
+      </div>
+      <div class="education-grid">
+        <div class="edu-item">
+          <span class="edu-title">深圳大学｜计算机技术｜硕士</span>
+          <span class="edu-time">2024.09—2027.07</span>
+          <span class="edu-meta">GPA 3.69/4.0｜二等学业奖学金 2 次</span>
+        </div>
+        <div class="edu-item">
+          <span class="edu-title">西南科技大学｜软件工程｜本科</span>
+          <span class="edu-time">2020.09—2024.07</span>
+          <span class="edu-meta">GPA 3.43/5.0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="project-title">
+      <div class="section-head">
+        <span class="section-index">02</span>
+        <h2 id="project-title">核心项目</h2>
+        <span class="section-rule"></span>
+      </div>
+      <div class="entry-head">
+        <div class="entry-title">go-mall｜可执行电商智能客服 Agent　<span class="entry-role">AI 应用工程</span></div>
+        <div class="entry-time">2025.12—至今</div>
+      </div>
+      <div class="stack"><strong>技术栈：</strong>Go / go-zero / Eino ADK / SSE / MySQL / Redis / Kafka / DTM / Elasticsearch / Gorse / Docker</div>
+      <div class="description"><strong>项目简介：</strong>面向商品、库存、订单、购物车、结算与优惠券业务，通过自然语言完成查询、推荐、低风险写操作和高风险确认。</div>
+      <ul class="bullets">
+        <li><strong>Multi-Agent 编排：</strong>基于 Eino ADK 构建 Supervisor 与 <strong>5 个领域 Agent</strong>，通过 AgentTool、ToolsNode 和领域工具白名单完成任务拆解与协作；SSE 持续输出工具进度、结果和最终回答。</li>
+        <li><strong>统一能力链路：</strong>管理核心 <strong>20 个业务 Tool + 2 个记忆能力 Tool</strong>，将本地 Tool、场景化 Skill 与 MCP 外部能力纳入统一参数校验、超时、权限和审计策略，隔离模型与业务 RPC 身份字段。</li>
+        <li><strong>分层记忆：</strong>实现 <strong>MemoryProvider + MemoryMiddleware</strong>，组合近期消息、滚动摘要、Redis 短期记忆缓存、长期事件、用户画像与工具事实；Kafka 异步更新画像和长期记忆，异常时降级而不阻塞对话。</li>
+        <li><strong>安全执行：</strong>对下单、取消订单等操作接入 <strong>StatefulInterrupt</strong>、Redis 短锁、MySQL CAS 与 Checkpoint 恢复；从认证上下文注入用户身份，拦截越权、过期和重复执行并记录审计。</li>
+        <li><strong>Agent 评估与工程底座：</strong>建立覆盖路由、工具参数、安全、记忆召回和回答质量的回归评估；以 Redis Lua、DTM Saga、Kafka 事件及 Elasticsearch/Gorse 检索推荐提供真实业务执行场景。</li>
+      </ul>
+    </section>
+
+    <section class="section" aria-labelledby="internship-title">
+      <div class="section-head">
+        <span class="section-index">03</span>
+        <h2 id="internship-title">实习经历</h2>
+        <span class="section-rule"></span>
+      </div>
+      <div class="entry-head">
+        <div class="entry-title">深圳小鹅网络技术有限公司　<span class="entry-role">Golang 后端开发实习生</span></div>
+        <div class="entry-time">2025.09—2025.12</div>
+      </div>
+      <ul class="bullets">
+        <li><strong>接口性能治理：</strong>统一年报多端数据入口，通过 Goroutine 并发拉取与按需懒加载，将核心接口响应由 <strong>800ms 降至 350ms</strong>。</li>
+        <li><strong>直播数据聚合：</strong>优先调用下游接口并对缺失指标实时下钻 Doris 补全，引入结果集缓存使 <strong>Doris 查询频率降低 40%</strong>，支撑数据秒级呈现。</li>
+        <li><strong>异步导出链路：</strong>采用字段预检与分页拉取，结合 Redis 队列、后台协程、Kubernetes 分发、数据库游标与 Kafka 回传，实现多实例任务调度和大数据量稳定导出。</li>
+      </ul>
+    </section>
+
+    <section class="section" aria-labelledby="skills-title">
+      <div class="section-head">
+        <span class="section-index">04</span>
+        <h2 id="skills-title">专业技能</h2>
+        <span class="section-rule"></span>
+      </div>
+      <div class="skills">
+        <div class="skill-row"><span class="skill-label">AI 工程</span><span class="skill-text">Eino ADK、Multi-Agent、Tool Calling、Context Engineering、Agent Skill、MCP、Agent Eval</span></div>
+        <div class="skill-row"><span class="skill-label">Go 后端</span><span class="skill-text">Go、go-zero、Gin、gRPC、Protobuf、RESTful API、SSE、GORM</span></div>
+        <div class="skill-row"><span class="skill-label">数据组件</span><span class="skill-text">MySQL、Redis、Kafka、Elasticsearch、Gorse、DTM、Doris、Consul</span></div>
+        <div class="skill-row"><span class="skill-label">工程实践</span><span class="skill-text">Docker、Kubernetes、Linux、Git、Prometheus、Grafana、Jaeger、EFK</span></div>
+      </div>
+    </section>
+
+    <div class="footer-mark">AI APPLICATION ENGINEERING · 2027</div>
+  </main>
+
+  <script>
+    const sheet = document.getElementById('resume');
+    const editButton = document.getElementById('edit-toggle');
+
+    if (new URLSearchParams(window.location.search).has('print-preview')) {
+      document.body.classList.add('print-preview');
+    }
+
+    editButton.addEventListener('click', () => {
+      const editing = sheet.classList.toggle('editing');
+      sheet.contentEditable = editing ? 'true' : 'false';
+      editButton.textContent = editing ? '完成编辑' : '编辑内容';
+      if (editing) sheet.focus();
+    });
+
+    document.getElementById('print-resume').addEventListener('click', () => window.print());
+
+    document.getElementById('download-html').addEventListener('click', () => {
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelector('#resume')?.classList.remove('editing');
+      clone.querySelector('#resume')?.setAttribute('contenteditable', 'true');
+      const blob = new Blob(['<!DOCTYPE html>\n' + clone.outerHTML], { type: 'text/html;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'lan-songsong-ai-application-engineer.html';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+  </script>
+</body>
+</html>

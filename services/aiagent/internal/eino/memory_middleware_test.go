@@ -68,7 +68,7 @@ func TestMemoryMiddlewareInjectsHistoryAndRuntimeContextOnce(t *testing.T) {
 	}
 }
 
-func TestMemoryMiddlewareMemorizesOriginalUserAndFinalAssistantOnly(t *testing.T) {
+func TestMemoryMiddlewareDoesNotMemorizeAfterModelRewrite(t *testing.T) {
 	provider := &fakeMemoryProvider{retrieve: &aimemory.RetrieveResult{
 		ContextMessages: []domain.ContextMessage{{Role: domain.ContextRoleUser, Content: "<conversation_context>\n摘要\n</conversation_context>"}},
 	}}
@@ -94,33 +94,8 @@ func TestMemoryMiddlewareMemorizesOriginalUserAndFinalAssistantOnly(t *testing.T
 	if _, _, err := middleware.AfterModelRewriteState(ctx, state, nil); err != nil {
 		t.Fatalf("AfterModelRewriteState() error = %v", err)
 	}
-	if provider.memorizeCalls != 1 {
-		t.Fatalf("memorize calls = %d, want 1", provider.memorizeCalls)
-	}
-	if len(provider.memorized.Messages) != 2 {
-		t.Fatalf("memorized messages = %+v", provider.memorized.Messages)
-	}
-	if provider.memorized.Messages[0].Content != "原始输入" || strings.Contains(provider.memorized.Messages[0].Content, "<conversation_context>") {
-		t.Fatalf("memorized user = %+v", provider.memorized.Messages[0])
-	}
-	if provider.memorized.Messages[1].Content != "最终回答" {
-		t.Fatalf("memorized assistant = %+v", provider.memorized.Messages[1])
-	}
-
-	provider.memorizeCalls = 0
-	toolCallState := &adk.ChatModelAgentState{Messages: append(state.Messages[:len(state.Messages)-1], &schema.Message{
-		Role:    schema.Assistant,
-		Content: "我要调用工具",
-		ToolCalls: []schema.ToolCall{{ID: "call-1", Function: schema.FunctionCall{
-			Name:      domain.ToolProductSearch,
-			Arguments: `{"keyword":"手机"}`,
-		}}},
-	})}
-	if _, _, err := middleware.AfterModelRewriteState(ctx, toolCallState, nil); err != nil {
-		t.Fatalf("AfterModelRewriteState(tool call) error = %v", err)
-	}
 	if provider.memorizeCalls != 0 {
-		t.Fatalf("tool-call assistant should not be memorized, calls=%d", provider.memorizeCalls)
+		t.Fatalf("AfterModelRewriteState should not memorize, calls=%d", provider.memorizeCalls)
 	}
 }
 

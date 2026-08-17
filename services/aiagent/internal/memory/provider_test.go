@@ -90,15 +90,10 @@ func TestCustomerServiceProviderRetrieveSplitsHistoryAndRuntimeContext(t *testin
 	}
 }
 
-func TestCustomerServiceProviderMemorizeRunsHooksWithFinalMessages(t *testing.T) {
-	summary := &fakeSummaryRefresher{}
-	profile := &fakeProfilePublisher{}
-	provider := NewCustomerServiceProvider(CustomerServiceProviderConfig{
-		SummaryRefresher: summary,
-		ProfilePublisher: profile,
-	})
+func TestCustomerServiceProviderMemorizeIsNoop(t *testing.T) {
+	provider := NewCustomerServiceProvider(CustomerServiceProviderConfig{})
 
-	err := provider.Memorize(context.Background(), &MemorizeRequest{
+	if err := provider.Memorize(context.Background(), &MemorizeRequest{
 		UserID:         42,
 		ConversationID: "conv-1",
 		Messages: []domain.ContextMessage{
@@ -106,15 +101,8 @@ func TestCustomerServiceProviderMemorizeRunsHooksWithFinalMessages(t *testing.T)
 			{Role: domain.ContextRoleAssistant, Content: "最终回答"},
 		},
 		MessageIDs: []string{"msg-user", "msg-final"},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("Memorize() error = %v", err)
-	}
-	if summary.userID != 42 || summary.conversationID != "conv-1" {
-		t.Fatalf("summary refresh user=%d conversation=%q", summary.userID, summary.conversationID)
-	}
-	if profile.userID != 42 || profile.conversationID != "conv-1" || len(profile.messageIDs) != 2 {
-		t.Fatalf("profile update = user:%d conversation:%q ids:%+v", profile.userID, profile.conversationID, profile.messageIDs)
 	}
 }
 
@@ -186,30 +174,6 @@ type fakeProfileStore struct {
 
 func (f *fakeProfileStore) LoadActive(ctx context.Context, userID uint64) (*domain.UserProfile, error) {
 	return f.profile, f.err
-}
-
-type fakeSummaryRefresher struct {
-	userID         uint64
-	conversationID string
-}
-
-func (f *fakeSummaryRefresher) RefreshMemorySummary(ctx context.Context, userID uint64, conversationID string) error {
-	f.userID = userID
-	f.conversationID = conversationID
-	return nil
-}
-
-type fakeProfilePublisher struct {
-	userID         uint64
-	conversationID string
-	messageIDs     []string
-}
-
-func (f *fakeProfilePublisher) PublishMemoryUpdate(ctx context.Context, userID uint64, conversationID string, messageIDs []string) error {
-	f.userID = userID
-	f.conversationID = conversationID
-	f.messageIDs = messageIDs
-	return nil
 }
 
 func messageRow(id, role, content string, createdAt time.Time) *aimessages.AiMessages {

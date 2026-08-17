@@ -1123,8 +1123,8 @@ Expected: 上下文工具事实来自 `ai_tool_calls`，recent 列表不直接�
 - Retrieve 返回 system/history/context 三类槽位。
 - 有摘要水位时，已摘要原文不重复进入 history。
 - MemoryMiddleware 只注入一次，并将 runtime context 追加到当前 user message。
-- 写回使用原始 user，不包含 runtime context。
-- tool-call assistant 和空 assistant 不写回。
+- MemoryMiddleware 不在 `AfterModelRewriteState` 做记忆写回。
+- ReAct 多次模型调用不会触发摘要、画像或长期事件更新。
 
 - [x] **Step 2: 定义 MemoryProvider 和 ConversationMetadata**
 
@@ -1202,7 +1202,7 @@ goctl model mysql ddl -src dal/model/ai/user_profiles/ai_user_profiles.sql -dir 
 
 - [x] **Step 5: 接入聊天来源 UserProfile JSON**
 
-UserProfile 不再来自 users RPC。每轮聊天消息持久化成功后投递 Kafka 画像更新事件，异步 consumer 调用 LLM Profile Extractor 判断是否需要更新画像。画像以 JSON 保存，便于后续注入给 LLM。
+UserProfile 不再来自 users RPC。ChatLogic 在 `runSupervisor` 正常返回后调用 `updateConversationMemory`；只有 `SummaryManager.MaybeRefresh` 创建新摘要时，才投递一个 Kafka `AiMemoryUpdates` 事件。Profile consumer 和 Memory Event consumer 订阅同一个 topic，使用同一批 compressed message IDs，分别调用独立结构化模型更新画像和长期事件。画像以 JSON 保存，便于后续注入给 LLM。
 
 更新时机：
 
@@ -1223,7 +1223,7 @@ go test ./services/aiagent/internal/profileextractor -count=1
 
 Expected: 摘要窗口、消息去重、长期事件检索、聊天来源画像 JSON、Kafka 异步触发、用户隔离、失败降级和提示注入防护全部通过。
 
-**实现状态（2026-08-16）：** Task 19 已收敛为滚动摘要、长期事件和聊天来源 UserProfile JSON。旧原子记忆表已删除；长期用户上下文只保留 `ai_user_profiles` 与 `ai_user_memory_events`。SummaryManager 按 30 -> 10 + 20 推进摘要水位；Provider 注入最近事件和画像；Chat 消息持久化后触发摘要刷新，并投递 Kafka `AiUserProfileUpdates` 事件；异步 Profile Extractor 通过无工具权限 LLM 生成候选 patch，经后端策略校验证据、敏感信息、删除请求和用户隔离后保存画像，失败不阻塞聊天。
+**实现状态（2026-08-16）：** Task 19 已收敛为滚动摘要、长期事件和聊天来源 UserProfile JSON。旧原子记忆表已删除；长期用户上下文只保留 `ai_user_profiles` 与 `ai_user_memory_events`。SummaryManager 按 30 -> 10 + 20 推进摘要水位，并返回本次 compressed message IDs；Provider 注入最近事件和画像；ChatLogic 仅在创建新摘要后投递一个 Kafka `AiMemoryUpdates` 事件。异步 Profile Extractor 和 Memory Event Extractor 订阅同一个 topic，基于同一批消息分别更新画像和长期事件，失败不阻塞聊天。
 
 ### Task 20: Agent Run、TaskState 与 Checkpoint
 

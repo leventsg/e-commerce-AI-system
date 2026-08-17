@@ -25,6 +25,9 @@ func TestSummaryManagerSkipsWhenUnsummarizedMessagesBelowThreshold(t *testing.T)
 	if result.Created || len(store.saved) != 0 {
 		t.Fatalf("summary created = %v saved=%d, want none", result.Created, len(store.saved))
 	}
+	if len(result.CompressedMessageIDs) != 0 {
+		t.Fatalf("compressed message ids = %+v, want empty", result.CompressedMessageIDs)
+	}
 	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m010" || result.RecentMessages[19].MsgId != "m029" {
 		t.Fatalf("recent window = %s..%s len=%d, want m010..m029 len=20",
 			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
@@ -71,6 +74,9 @@ func TestSummaryManagerCompactsOldestTenAndKeepsTwentyRecent(t *testing.T) {
 		t.Fatalf("recent window = %s..%s len=%d, want m011..m030 len=20",
 			result.RecentMessages[0].MsgId, result.RecentMessages[len(result.RecentMessages)-1].MsgId, len(result.RecentMessages))
 	}
+	if len(result.CompressedMessageIDs) != 10 || result.CompressedMessageIDs[0] != "m001" || result.CompressedMessageIDs[9] != "m010" {
+		t.Fatalf("compressed message ids = %+v, want m001..m010", result.CompressedMessageIDs)
+	}
 	for _, compressed := range summarizer.messages {
 		for _, recent := range result.RecentMessages {
 			if compressed.MsgId == recent.MsgId {
@@ -95,6 +101,9 @@ func TestSummaryManagerCompactsMultipleRoundsWhenBacklogExceedsTrigger(t *testin
 	}
 	if store.saved[0].CoveredUntilMessageID != "m010" || store.saved[1].CoveredUntilMessageID != "m020" {
 		t.Fatalf("watermarks = %s,%s want m010,m020", store.saved[0].CoveredUntilMessageID, store.saved[1].CoveredUntilMessageID)
+	}
+	if len(result.CompressedMessageIDs) != 20 || result.CompressedMessageIDs[0] != "m001" || result.CompressedMessageIDs[19] != "m020" {
+		t.Fatalf("compressed message ids = %+v, want m001..m020", result.CompressedMessageIDs)
 	}
 	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m026" || result.RecentMessages[19].MsgId != "m045" {
 		t.Fatalf("recent window = %s..%s len=%d, want m026..m045 len=20",

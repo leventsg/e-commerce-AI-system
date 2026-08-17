@@ -16,8 +16,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
-	memory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
-	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -74,91 +73,62 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 	if prepared.Duplicate {
 		return l.replayDuplicateResponse(stream, prepared, uint64(in.UserId))
 	}
-	currentInput := strings.TrimSpace(in.Content)
-	persistedMessages, err := l.runSupervisor(in, prepared, []domain.ContextMessage{
-		{Role: domain.ContextRoleUser, Content: currentInput},
+	_, err = l.runSupervisor(in, prepared, []domain.ContextMessage{
+		{Role: domain.ContextRoleUser, Content: strings.TrimSpace(in.Content)},
 	}, stream)
 	if err != nil {
 		return err
 	}
-	go l.memorizeTurn(prepared, currentInput, persistedMessages, uint64(in.UserId))
+	go l.updateConversationMemory(prepared, uint64(in.UserId))
 	return nil
 }
 
-func (l *ChatLogic) memorizeTurn(prepared *conversation.PreparedConversation, currentInput string, messages []*aimessages.AiMessages, userID uint64) {
-	if prepared == nil {
+// 更新记忆
+func (l *ChatLogic) updateConversationMemory(prepared *conversation.PreparedConversation, userID uint64) {
+	if l.svcCtx == nil || l.svcCtx.SummaryManager == nil || l.svcCtx.MemoryUpdatePublisher == nil || prepared == nil {
 		return
 	}
-	finalAssistant := latestAssistantMessage(messages)
-	if finalAssistant == nil {
-		return
-	}
-	messageIDs := []string{prepared.UserMessageID, finalAssistant.MsgId}
-	if l.svcCtx != nil && l.svcCtx.MemoryProvider != nil {
-		if err := l.svcCtx.MemoryProvider.Memorize(l.ctx, &memory.MemorizeRequest{
-			UserID:          userID,
-			ConversationID:  prepared.ConversationID,
-			ClientMessageID: prepared.ClientMessageID,
-			Messages: []domain.ContextMessage{
-				{Role: domain.ContextRoleUser, Content: currentInput},
-				{Role: domain.ContextRoleAssistant, Content: finalAssistant.Content},
-			},
-			MessageIDs: messageIDs,
-		}); err != nil {
-			l.Errorw("memorize ai turn failed",
-				logx.Field("component", "memory_provider"),
-				logx.Field("stage", "memorize"),
-				logx.Field("conversation_id", prepared.ConversationID),
-				logx.Field("user_id", userID),
-				logx.Field("err", err))
-		}
-		return
-	}
-	go l.publishProfileUpdate(prepared, messages, userID)
-	go l.refreshConversationSummary(prepared.ConversationID, userID)
-}
+	ctx, cancel := context.WithTimeout(contextWithoutCancel(l.ctx), 2*time.Minute)
+	defer cancel()
 
-func latestAssistantMessage(messages []*aimessages.AiMessages) *aimessages.AiMessages {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i] != nil && messages[i].Role == conversation.RoleAssistant && strings.TrimSpace(messages[i].Content) != "" {
-			return messages[i]
-		}
-	}
-	return nil
-}
-
-// publishProfileUpdate 发布用户画像更新事件
-func (l *ChatLogic) publishProfileUpdate(prepared *conversation.PreparedConversation, messages []*aimessages.AiMessages, userID uint64) {
-	if l.svcCtx.ProfileUpdatePublisher == nil || prepared == nil {
-		return
-	}
-	messageIDs := make([]string, 0, len(messages)+1)
-	// 传当前用户消息
-	if prepared.UserMessageID != "" {
-		messageIDs = append(messageIDs, prepared.UserMessageID)
-	}
-	// 传其他消息
-	for _, message := range messages {
-		if message != nil && message.MsgId != "" {
-			messageIDs = append(messageIDs, message.MsgId)
-		}
-	}
-	event := profileextractor.UpdateEvent{
-		EventID:        "profile_evt_" + uuid.NewString(),
+	result, err := l.svcCtx.SummaryManager.MaybeRefresh(ctx, contextmanager.SummaryRefreshRequest{
 		UserID:         userID,
 		ConversationID: prepared.ConversationID,
-		MessageIDs:     messageIDs,
+	})
+	if err != nil {
+		l.Errorw("refresh ai conversation summary failed",
+			logx.Field("component", "context_manager"),
+			logx.Field("stage", "summary_refresh"),
+			logx.Field("conversation_id", prepared.ConversationID),
+			logx.Field("user_id", userID),
+			logx.Field("err", err))
+		return
+	}
+	if !result.Created {
+		return
+	}
+	event := memoryupdate.UpdateEvent{
+		EventID:        "memory_evt_" + uuid.NewString(),
+		UserID:         userID,
+		ConversationID: prepared.ConversationID,
+		MessageIDs:     result.CompressedMessageIDs,
 		CreatedAt:      time.Now(),
 	}
-	// 推到kafka
-	if err := l.svcCtx.ProfileUpdatePublisher.PublishProfileUpdate(l.ctx, event); err != nil {
-		l.Errorw("publish ai user profile update failed",
-			logx.Field("component", "profile_extractor"),
+	if err := l.svcCtx.MemoryUpdatePublisher.PublishMemoryUpdate(ctx, event); err != nil {
+		l.Errorw("publish ai memory update failed",
+			logx.Field("component", "memory_update"),
 			logx.Field("stage", "publish_update_event"),
 			logx.Field("conversation_id", prepared.ConversationID),
 			logx.Field("user_id", userID),
 			logx.Field("err", err))
 	}
+}
+
+func contextWithoutCancel(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
 }
 
 // replayDuplicateResponse 重放重复请求的响应
@@ -182,23 +152,6 @@ func (l *ChatLogic) replayDuplicateResponse(stream agentEventSender, prepared *c
 		}
 	}
 	return nil
-}
-
-// refreshConversationSummary 尝试刷新会话的滚动摘要
-func (l *ChatLogic) refreshConversationSummary(conversationID string, userID uint64) {
-	if l.svcCtx == nil || l.svcCtx.SummaryManager == nil {
-		return
-	}
-	if _, err := l.svcCtx.SummaryManager.MaybeRefresh(l.ctx, contextmanager.SummaryRefreshRequest{
-		UserID: userID, ConversationID: conversationID,
-	}); err != nil {
-		l.Errorw("refresh ai conversation summary failed",
-			logx.Field("component", "context_manager"),
-			logx.Field("stage", "summary_refresh"),
-			logx.Field("conversation_id", conversationID),
-			logx.Field("user_id", userID),
-			logx.Field("err", err))
-	}
 }
 
 // persistenceErrorEvent 生成持久化消息失败的事件

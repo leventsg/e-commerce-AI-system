@@ -16,7 +16,6 @@ type memoryMiddleware struct {
 }
 
 type memoryPreparedContextKey struct{}
-type memoryOriginalUserContextKey struct{}
 
 func NewMemoryMiddleware(provider aimemory.MemoryProvider) adk.ChatModelAgentMiddleware {
 	return &memoryMiddleware{
@@ -53,10 +52,7 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	}
 	system, rest := splitFirstSystemMessage(state.Messages)
 	runtimeContext := joinRuntimeContext(result.ContextMessages)
-	nextRest, originalUser := appendRuntimeContextToLatestUser(rest, runtimeContext)
-	if originalUser != nil {
-		ctx = context.WithValue(ctx, memoryOriginalUserContextKey{}, originalUser)
-	}
+	nextRest := appendRuntimeContextToLatestUser(rest, runtimeContext)
 	history, err := ConvertContextMessages(result.HistoryMessages)
 	if err != nil {
 		return ctx, state, err
@@ -75,40 +71,6 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	state.Messages = enhanced
 	ctx = context.WithValue(ctx, memoryPreparedContextKey{}, true)
 	return ctx, state, nil
-}
-
-// 每次模型调用后调用
-func (m *memoryMiddleware) AfterModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	if m == nil || m.provider == nil || state == nil || len(state.Messages) == 0 {
-		return ctx, state, nil
-	}
-	meta, ok := memoryConversationMetadata(ctx)
-	if !ok {
-		return ctx, state, nil
-	}
-	assistant := state.Messages[len(state.Messages)-1]
-	if assistant == nil || assistant.Role != schema.Assistant || strings.TrimSpace(assistant.Content) == "" || len(assistant.ToolCalls) > 0 {
-		return ctx, state, nil
-	}
-	user, _ := ctx.Value(memoryOriginalUserContextKey{}).(*schema.Message)
-	if user == nil {
-		user = latestUserBeforeLastAssistant(state.Messages)
-	}
-	if user == nil || strings.TrimSpace(user.Content) == "" {
-		return ctx, state, nil
-	}
-	err := m.provider.Memorize(ctx, &aimemory.MemorizeRequest{
-		UserID:          meta.UserID,
-		ConversationID:  meta.ConversationID,
-		RunID:           meta.RunID,
-		ClientMessageID: meta.ClientMessageID,
-		Messages: []domain.ContextMessage{
-			{Role: domain.ContextRoleUser, Content: user.Content},
-			{Role: domain.ContextRoleAssistant, Content: assistant.Content},
-		},
-		MessageIDs: []string{meta.CurrentMessageID},
-	})
-	return ctx, state, err
 }
 
 // 从会话值中获取上下文元信息
@@ -133,23 +95,22 @@ func splitFirstSystemMessage(messages []*schema.Message) (*schema.Message, []*sc
 	return system, rest
 }
 
-func appendRuntimeContextToLatestUser(messages []*schema.Message, runtimeContext string) ([]*schema.Message, *schema.Message) {
+func appendRuntimeContextToLatestUser(messages []*schema.Message, runtimeContext string) []*schema.Message {
 	if strings.TrimSpace(runtimeContext) == "" {
-		return messages, nil
+		return messages
 	}
 	next := append([]*schema.Message(nil), messages...)
 	for i := len(next) - 1; i >= 0; i-- {
 		if next[i] == nil || next[i].Role != schema.User {
 			continue
 		}
-		original := cloneSchemaMessage(next[i])
 		updated := cloneSchemaMessage(next[i])
 		updated.Content = strings.TrimRight(updated.Content, "\n") + "\n\n-----\n" + runtimeContext
 		next[i] = updated
-		return next, original
+		return next
 	}
 	next = append(next, schema.UserMessage(runtimeContext))
-	return next, nil
+	return next
 }
 
 func joinRuntimeContext(messages []domain.ContextMessage) string {
@@ -180,19 +141,6 @@ func schemaMessagesToContext(messages []*schema.Message) []domain.ContextMessage
 		})
 	}
 	return result
-}
-
-func latestUserBeforeLastAssistant(messages []*schema.Message) *schema.Message {
-	end := len(messages)
-	if end > 0 && messages[end-1] != nil && messages[end-1].Role == schema.Assistant {
-		end--
-	}
-	for i := end - 1; i >= 0; i-- {
-		if messages[i] != nil && messages[i].Role == schema.User {
-			return cloneSchemaMessage(messages[i])
-		}
-	}
-	return nil
 }
 
 func cloneSchemaMessage(message *schema.Message) *schema.Message {

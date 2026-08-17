@@ -74,9 +74,9 @@ KafkaMQ:
   Username: ""
   Password: ""
   Topics:
-    AiUserProfileUpdates:
-      Topic: "ai-user-profile-updates"
-      Group: "ai-user-profile-updates-consumer"
+    AiMemoryUpdates:
+      Topic: "ai-memory-updates"
+      Group: "ai-memory-updates-profile-consumer"
       Offset: last
       Conns: 1
       Consumers: 1

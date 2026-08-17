@@ -40,41 +40,29 @@ type UserProfileStore interface {
 	LoadActive(ctx context.Context, userID uint64) (*domain.UserProfile, error)
 }
 
-type SummaryRefresher interface {
-	RefreshMemorySummary(ctx context.Context, userID uint64, conversationID string) error
-}
-
-type ProfileUpdatePublisher interface {
-	PublishMemoryUpdate(ctx context.Context, userID uint64, conversationID string, messageIDs []string) error
-}
-
 type MemoryEventStore interface {
 	ListRecentUserMemoryEvents(ctx context.Context, userID uint64, limit int) ([]Event, error)
 	SearchUserMemoryEvents(ctx context.Context, query UserMemoryEventQuery) ([]Event, error)
 }
 
 type CustomerServiceProviderConfig struct {
-	Messages         MessageStore
-	Summaries        SummaryStore
-	Tools            ToolContextStore
-	TaskStates       TaskStateStore
-	Profiles         UserProfileStore
-	Events           MemoryEventStore
-	SummaryRefresher SummaryRefresher
-	ProfilePublisher ProfileUpdatePublisher
-	Now              func() time.Time
+	Messages   MessageStore
+	Summaries  SummaryStore
+	Tools      ToolContextStore
+	TaskStates TaskStateStore
+	Profiles   UserProfileStore
+	Events     MemoryEventStore
+	Now        func() time.Time
 }
 
 type CustomerServiceProvider struct {
-	messages         MessageStore
-	summaries        SummaryStore
-	tools            ToolContextStore
-	taskStates       TaskStateStore
-	profiles         UserProfileStore
-	events           MemoryEventStore
-	summaryRefresher SummaryRefresher
-	profilePublisher ProfileUpdatePublisher
-	now              func() time.Time
+	messages   MessageStore
+	summaries  SummaryStore
+	tools      ToolContextStore
+	taskStates TaskStateStore
+	profiles   UserProfileStore
+	events     MemoryEventStore
+	now        func() time.Time
 }
 
 func NewCustomerServiceProvider(cfg CustomerServiceProviderConfig) *CustomerServiceProvider {
@@ -83,15 +71,13 @@ func NewCustomerServiceProvider(cfg CustomerServiceProviderConfig) *CustomerServ
 		now = time.Now
 	}
 	return &CustomerServiceProvider{
-		messages:         cfg.Messages,
-		summaries:        cfg.Summaries,
-		tools:            cfg.Tools,
-		taskStates:       cfg.TaskStates,
-		profiles:         cfg.Profiles,
-		events:           cfg.Events,
-		summaryRefresher: cfg.SummaryRefresher,
-		profilePublisher: cfg.ProfilePublisher,
-		now:              now,
+		messages:   cfg.Messages,
+		summaries:  cfg.Summaries,
+		tools:      cfg.Tools,
+		taskStates: cfg.TaskStates,
+		profiles:   cfg.Profiles,
+		events:     cfg.Events,
+		now:        now,
 	}
 }
 
@@ -151,20 +137,6 @@ func (p *CustomerServiceProvider) Retrieve(ctx context.Context, req *RetrieveReq
 }
 
 func (p *CustomerServiceProvider) Memorize(ctx context.Context, req *MemorizeRequest) error {
-	if req == nil || req.UserID == 0 || req.ConversationID == "" {
-		return nil
-	}
-	if len(req.Messages) < 2 || len(req.MessageIDs) < 2 {
-		return nil
-	}
-	if p.summaryRefresher != nil {
-		if err := p.summaryRefresher.RefreshMemorySummary(ctx, req.UserID, req.ConversationID); err != nil {
-			return err
-		}
-	}
-	if p.profilePublisher != nil {
-		return p.profilePublisher.PublishMemoryUpdate(ctx, req.UserID, req.ConversationID, req.MessageIDs)
-	}
 	return nil
 }
 

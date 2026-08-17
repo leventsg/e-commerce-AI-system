@@ -17,7 +17,6 @@
 {
   "event": "画像更新事件",
   "existing_profile": {},
-  "memories": [],
   "messages": []
 }
 
@@ -28,11 +27,6 @@
 
 它是已有事实，但不是绝对正确。
 如果用户明确纠正，应优先更新。
-
-## memories
-长期记忆。
-只能作为辅助证据。
-不能直接复制为 UserProfile。
 
 ## messages
 用户和 AI 客服本轮聊天消息。

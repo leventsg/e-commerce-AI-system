@@ -7,6 +7,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/consumer"
+	_ "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/consumer/memory_event_update"
 	_ "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/consumer/profile_update"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"

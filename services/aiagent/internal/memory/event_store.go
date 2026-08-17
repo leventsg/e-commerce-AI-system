@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
@@ -76,6 +77,26 @@ func (s *SQLEventStore) SearchUserMemoryEvents(ctx context.Context, query UserMe
 	return eventsFromRows(rows), nil
 }
 
+func (s *SQLEventStore) SaveUserMemoryEvents(ctx context.Context, userID uint64, events []Event) error {
+	if s == nil || s.conn == nil || userID == 0 || len(events) == 0 {
+		return nil
+	}
+	query := "insert into `ai_user_memory_events` (`id`, `user_id`, `type`, `event_date`, `summary`, `keywords`, `status`) values (?, ?, ?, ?, ?, ?, ?)"
+	for _, event := range events {
+		if strings.TrimSpace(event.Type) == "" || strings.TrimSpace(event.EventDate) == "" || strings.TrimSpace(event.Summary) == "" {
+			continue
+		}
+		keywords, err := json.Marshal(compactKeywords(event.Keywords))
+		if err != nil {
+			return err
+		}
+		if _, err := s.conn.ExecCtx(ctx, query, newUserMemoryEventID(), userID, event.Type, event.EventDate, event.Summary, string(keywords), "active"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type eventRow struct {
 	UserID    uint64    `db:"user_id"`
 	Type      string    `db:"type"`
@@ -119,4 +140,12 @@ func compactKeywords(items []string) []string {
 		}
 	}
 	return result
+}
+
+func newUserMemoryEventID() string {
+	id, err := uuid.NewV7()
+	if err != nil {
+		id = uuid.New()
+	}
+	return "mem_evt_" + strings.ReplaceAll(id.String(), "-", "")
 }

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"regexp"
 	"strings"
-	"time"
 
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
 )
 
 const (
@@ -29,14 +29,7 @@ var (
 	sensitiveProfilePattern = regexp.MustCompile(`(?i)(user_id|token|auth|password|passwd|secret|api[_-]?key|cookie|支付密码|验证码|身份证|银行卡|完整地址|详细地址|收货地址)`)
 )
 
-// 更新事件
-type UpdateEvent struct {
-	EventID        string    `json:"event_id"`
-	UserID         uint64    `json:"user_id"`
-	ConversationID string    `json:"conversation_id"`
-	MessageIDs     []string  `json:"message_ids"`
-	CreatedAt      time.Time `json:"created_at"`
-}
+type UpdateEvent = memoryupdate.UpdateEvent
 
 // AI 模型输出的候选更新
 type Candidate struct {

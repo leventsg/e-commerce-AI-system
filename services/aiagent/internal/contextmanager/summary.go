@@ -55,9 +55,10 @@ type SummaryRefreshRequest struct {
 }
 
 type SummaryRefreshResult struct {
-	Created        bool
-	Summary        *domain.ConversationSummary
-	RecentMessages []*aimessages.AiMessages
+	Created              bool
+	Summary              *domain.ConversationSummary
+	RecentMessages       []*aimessages.AiMessages
+	CompressedMessageIDs []string
 }
 
 type SummarizeRequest struct {
@@ -152,6 +153,11 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 		}
 		result.Created = true
 		result.Summary = next
+		for _, message := range toCompress {
+			if message != nil && strings.TrimSpace(message.MsgId) != "" {
+				result.CompressedMessageIDs = append(result.CompressedMessageIDs, message.MsgId)
+			}
+		}
 		previous = next
 		afterCreatedAt = next.CoveredUntilCreatedAt
 		afterMessageID = next.CoveredUntilMessageID

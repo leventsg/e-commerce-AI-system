@@ -1,4 +1,4 @@
-package profile_update
+package memory_event_update
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	consumer.Register("ai_memory_updates_profile", Init)
+	consumer.Register("ai_user_memory_events_updates", Init)
 }
 
 func Init(c config.Config) error {
@@ -24,10 +24,10 @@ func Init(c config.Config) error {
 	if err != nil {
 		return err
 	}
-	handler := NewConsumer(svc.NewServiceContext(c).ProfileExtractor)
+	handler := NewConsumer(svc.NewServiceContext(c).MemoryEventExtractor)
 	go func() {
-		if err := kafkaConsumer.Consume(context.Background(), kafkaConf.Topic, kafkaConf.Group, handler, nil); err != nil {
-			logx.Errorw("ai user profile update consumer stopped", logx.Field("err", err))
+		if err := kafkaConsumer.Consume(context.Background(), kafkaConf.Topic, kafkaConf.Group+"-memory-events", handler, nil); err != nil {
+			logx.Errorw("ai user memory event update consumer stopped", logx.Field("err", err))
 		}
 	}()
 	return nil

@@ -5,8 +5,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/leventsg/e-commerce-AI-system/common/mq"
 	aiagentruns "github.com/leventsg/e-commerce-AI-system/dal/model/ai/agent_runs"
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
 	aiconversationsummaries "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversation_summaries"
@@ -21,6 +19,8 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	aimemory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryeventextractor"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
@@ -38,34 +38,35 @@ import (
 )
 
 type ServiceContext struct {
-	Config                 config.Config
-	Mysql                  sqlx.SqlConn
-	RedisClient            *redis.Redis
-	ConversationsModel     aiconversations.AiConversationsModel
-	MessagesModel          aimessages.AiMessagesModel
-	ToolCallsModel         aitoolcalls.AiToolCallsModel
-	ConfirmationsModel     aiconfirmations.AiConfirmationsModel
-	AgentRunsModel         aiagentruns.AiAgentRunsModel
-	UserProfilesModel      aiuserprofiles.AiUserProfilesModel
-	SummariesModel         aiconversationsummaries.AiConversationSummariesModel
-	ProductRpc             productcatalogservice.ProductCatalogService
-	InventoryRpc           inventoryclient.Inventory
-	OrderRpc               orderservice.OrderService
-	CheckoutRpc            checkoutservice.CheckoutService
-	CartRpc                cartsclient.Cart
-	CouponRpc              couponsclient.Coupons
-	AuditRpc               auditclient.Audit
-	ToolRegistry           *aitools.Registry
-	ToolExecutor           *aitools.Executor
-	ConfirmationManager    aiconfirmation.ConfirmationManager
-	ConversationManager    conversation.Manager
-	ContextManager         contextmanager.Manager
-	MemoryProvider         aimemory.MemoryProvider
-	SummaryManager         *contextmanager.SummaryManager
-	UserProfileStore       *contextmanager.UserProfileModelStore
-	ProfileUpdatePublisher profileextractor.Publisher
-	ProfileExtractor       *profileextractor.Extractor
-	AgentRunner            eino.Runner
+	Config                config.Config
+	Mysql                 sqlx.SqlConn
+	RedisClient           *redis.Redis
+	ConversationsModel    aiconversations.AiConversationsModel
+	MessagesModel         aimessages.AiMessagesModel
+	ToolCallsModel        aitoolcalls.AiToolCallsModel
+	ConfirmationsModel    aiconfirmations.AiConfirmationsModel
+	AgentRunsModel        aiagentruns.AiAgentRunsModel
+	UserProfilesModel     aiuserprofiles.AiUserProfilesModel
+	SummariesModel        aiconversationsummaries.AiConversationSummariesModel
+	ProductRpc            productcatalogservice.ProductCatalogService
+	InventoryRpc          inventoryclient.Inventory
+	OrderRpc              orderservice.OrderService
+	CheckoutRpc           checkoutservice.CheckoutService
+	CartRpc               cartsclient.Cart
+	CouponRpc             couponsclient.Coupons
+	AuditRpc              auditclient.Audit
+	ToolRegistry          *aitools.Registry
+	ToolExecutor          *aitools.Executor
+	ConfirmationManager   aiconfirmation.ConfirmationManager
+	ConversationManager   conversation.Manager
+	ContextManager        contextmanager.Manager
+	MemoryProvider        aimemory.MemoryProvider
+	SummaryManager        *contextmanager.SummaryManager
+	UserProfileStore      *contextmanager.UserProfileModelStore
+	MemoryUpdatePublisher *memoryupdate.KafkaPublisher
+	ProfileExtractor      *profileextractor.Extractor
+	MemoryEventExtractor  *memoryeventextractor.Extractor
+	AgentRunner           eino.Runner
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -89,6 +90,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	summaryStore := contextmanager.NewSummaryStore(summariesModel)
 	toolCallStore := contextmanager.NewToolCallStore(toolCallsModel)
 	userProfileStore := contextmanager.NewUserProfileStore(userProfilesModel)
+	eventStore := aimemory.NewSQLEventStore(mysql)
 	conversationManager := conversation.NewManager(
 		conversationsModel,
 		messagesModel,
@@ -105,15 +107,15 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		contextmanager.NewSummaryMessageStore(messagesModel),
 		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.Eino)),
 	)
-	profileUpdatePublisher := newProfileUpdatePublisher(c)
+	// 记忆更新事件发布器
+	memoryUpdatePublisher := memoryupdate.NewKafkaPublisher(c)
+	// 记忆提供器
 	memoryProvider := aimemory.NewCustomerServiceProvider(aimemory.CustomerServiceProviderConfig{
-		Messages:         contextmanager.NewMessageStore(messagesModel),
-		Summaries:        summaryStore,
-		Tools:            toolCallStore,
-		Profiles:         userProfileStore,
-		Events:           aimemory.NewSQLEventStore(mysql),
-		SummaryRefresher: summaryRefreshAdapter{manager: summaryManager},
-		ProfilePublisher: profilePublisherAdapter{publisher: profileUpdatePublisher},
+		Messages:  contextmanager.NewMessageStore(messagesModel),
+		Summaries: summaryStore,
+		Tools:     toolCallStore,
+		Profiles:  userProfileStore,
+		Events:    eventStore,
 	})
 	// 业务工具实例集合
 	businessTools := aitools.DefaultBusinessTools(aitools.DefaultToolClients{
@@ -149,6 +151,11 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		userProfileStore,
 		eino.NewProfileExtractorModel(modelFactory, selectProfileModelConfig(c.ProfileModel, c.SummaryModel, c.Eino)),
 	)
+	memoryEventExtractor := memoryeventextractor.NewExtractor(
+		messagesModel,
+		eventStore,
+		eino.NewUserMemoryEventExtractorModel(modelFactory, selectProfileModelConfig(c.ProfileModel, c.SummaryModel, c.Eino)),
+	)
 	var agentRunner eino.Runner
 	checkpointTTL := time.Duration(c.Confirmation.ExpireSeconds) * time.Second
 	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry,
@@ -162,34 +169,35 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	}
 
 	return &ServiceContext{
-		Config:                 c,
-		Mysql:                  mysql,
-		RedisClient:            redisClient,
-		ConversationsModel:     conversationsModel,
-		MessagesModel:          messagesModel,
-		ToolCallsModel:         toolCallsModel,
-		ConfirmationsModel:     confirmationsModel,
-		AgentRunsModel:         agentRunsModel,
-		UserProfilesModel:      userProfilesModel,
-		SummariesModel:         summariesModel,
-		ProductRpc:             productRPC,
-		InventoryRpc:           inventoryRPC,
-		OrderRpc:               orderRPC,
-		CheckoutRpc:            checkoutRPC,
-		CartRpc:                cartRPC,
-		CouponRpc:              couponRPC,
-		AuditRpc:               auditRPC,
-		ToolRegistry:           toolRegistry,
-		ToolExecutor:           toolExecutor,
-		ConfirmationManager:    confirmationManager,
-		ConversationManager:    conversationManager,
-		ContextManager:         contextManager,
-		MemoryProvider:         memoryProvider,
-		SummaryManager:         summaryManager,
-		UserProfileStore:       userProfileStore,
-		ProfileUpdatePublisher: profileUpdatePublisher,
-		ProfileExtractor:       profileExtractor,
-		AgentRunner:            agentRunner,
+		Config:                c,
+		Mysql:                 mysql,
+		RedisClient:           redisClient,
+		ConversationsModel:    conversationsModel,
+		MessagesModel:         messagesModel,
+		ToolCallsModel:        toolCallsModel,
+		ConfirmationsModel:    confirmationsModel,
+		AgentRunsModel:        agentRunsModel,
+		UserProfilesModel:     userProfilesModel,
+		SummariesModel:        summariesModel,
+		ProductRpc:            productRPC,
+		InventoryRpc:          inventoryRPC,
+		OrderRpc:              orderRPC,
+		CheckoutRpc:           checkoutRPC,
+		CartRpc:               cartRPC,
+		CouponRpc:             couponRPC,
+		AuditRpc:              auditRPC,
+		ToolRegistry:          toolRegistry,
+		ToolExecutor:          toolExecutor,
+		ConfirmationManager:   confirmationManager,
+		ConversationManager:   conversationManager,
+		ContextManager:        contextManager,
+		MemoryProvider:        memoryProvider,
+		SummaryManager:        summaryManager,
+		UserProfileStore:      userProfileStore,
+		MemoryUpdatePublisher: memoryUpdatePublisher,
+		ProfileExtractor:      profileExtractor,
+		MemoryEventExtractor:  memoryEventExtractor,
+		AgentRunner:           agentRunner,
 	}
 }
 
@@ -217,58 +225,6 @@ func selectProfileModelConfig(profileConfig, summaryConfig, intentConfig config.
 		return selectSummaryModelConfig(summaryConfig, intentConfig)
 	}
 	return profileConfig
-}
-
-func newProfileUpdatePublisher(c config.Config) profileextractor.Publisher {
-	kafkaConf, err := c.KafkaMQ.TopicConfig(profileextractor.TopicKeyAiUserProfileUpdates)
-	if err != nil {
-		logx.Errorw("ai user profile update publisher disabled",
-			logx.Field("component", "profile_extractor"),
-			logx.Field("stage", "publisher_init"),
-			logx.Field("err", err))
-		return nil
-	}
-	producer, err := mq.NewKafkaProducer(c.KafkaMQ)
-	if err != nil {
-		logx.Errorw("ai user profile update publisher disabled",
-			logx.Field("component", "profile_extractor"),
-			logx.Field("stage", "producer_init"),
-			logx.Field("err", err))
-		return nil
-	}
-	return profileextractor.NewKafkaPublisher(producer, kafkaConf.Topic)
-}
-
-type summaryRefreshAdapter struct {
-	manager *contextmanager.SummaryManager
-}
-
-func (a summaryRefreshAdapter) RefreshMemorySummary(ctx context.Context, userID uint64, conversationID string) error {
-	if a.manager == nil {
-		return nil
-	}
-	_, err := a.manager.MaybeRefresh(ctx, contextmanager.SummaryRefreshRequest{
-		UserID:         userID,
-		ConversationID: conversationID,
-	})
-	return err
-}
-
-type profilePublisherAdapter struct {
-	publisher profileextractor.Publisher
-}
-
-func (a profilePublisherAdapter) PublishMemoryUpdate(ctx context.Context, userID uint64, conversationID string, messageIDs []string) error {
-	if a.publisher == nil || len(messageIDs) == 0 {
-		return nil
-	}
-	return a.publisher.PublishProfileUpdate(ctx, profileextractor.UpdateEvent{
-		EventID:        "profile_evt_" + uuid.NewString(),
-		UserID:         userID,
-		ConversationID: conversationID,
-		MessageIDs:     messageIDs,
-		CreatedAt:      time.Now(),
-	})
 }
 
 func modelBaseURLHost(raw string) string {

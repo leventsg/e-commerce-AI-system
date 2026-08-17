@@ -6,9 +6,9 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
 
-// MemoryProvider abstracts model-context retrieval and post-response memory work.
-// The customer-service implementation reads existing conversation, summary, tool,
-// memory, and profile stores;
+// MemoryProvider abstracts online model-context retrieval.
+// The customer-service implementation reads conversation, summary, tool,
+// user profile, and user memory event stores.
 type MemoryProvider interface {
 	Retrieve(ctx context.Context, req *RetrieveRequest) (*RetrieveResult, error)
 	Memorize(ctx context.Context, req *MemorizeRequest) error
