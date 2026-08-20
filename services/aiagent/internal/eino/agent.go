@@ -682,10 +682,6 @@ func invokableToolsToBaseTools(tools []einotool.InvokableTool) []einotool.BaseTo
 	return result
 }
 
-func invokableToolInfos(ctx context.Context, tools []einotool.InvokableTool) ([]*schema.ToolInfo, error) {
-	return baseToolInfos(ctx, invokableToolsToBaseTools(tools))
-}
-
 func baseToolInfos(ctx context.Context, tools []einotool.BaseTool) ([]*schema.ToolInfo, error) {
 	result := make([]*schema.ToolInfo, 0, len(tools))
 	for _, item := range tools {
