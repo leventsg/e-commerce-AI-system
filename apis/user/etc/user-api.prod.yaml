@@ -20,6 +20,7 @@ Consul:
     auths.rpc
     # 日志配置
 Log:
+  Stat: false
   ServiceName: "user-api"
   Mode: 'file'
   Encoding: "json"
@@ -45,5 +46,4 @@ WhitePathList:
   - /douyin/user/register
 OptionPathList:
   - /douyin/user/address 
-
 

@@ -125,8 +125,8 @@ func formatSummaryTime(t time.Time) string {
 }
 
 var (
-	summarySensitiveAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*=\s*[^\s,，;；]+`)
-	summarySensitiveColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*[:：]\s*[^\s,，;；]+`)
+	summarySensitiveAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|auth)\b\s*=\s*[^\s,，;；]+`)
+	summarySensitiveColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|auth)\b\s*[:：]\s*[^\s,，;；]+`)
 )
 
 // redactSummarySensitiveContext 脱敏敏感上下文

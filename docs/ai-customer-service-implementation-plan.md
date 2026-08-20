@@ -32,7 +32,7 @@
 
 - 运营后台配置页面。
 - 支付、退款、地址修改等后续敏感操作。
-- 复杂长期记忆推荐策略。首期只保留 `ai_user_memories` 表和最小读写接口。
+- 复杂长期记忆推荐策略。长期用户上下文收敛为 `ai_user_profiles` 和 `ai_user_memory_events`。
 
 ## 2. 文件与模块规划
 
@@ -86,7 +86,7 @@ service AiAgent {
 - Create: `services/aiagent/internal/eino/model_factory.go`
 - Create: `services/aiagent/internal/eino/agent.go`
 - Create: `services/aiagent/internal/eino/messages.go`
-- Create: `services/aiagent/internal/eino/callbacks.go`
+- Create: `services/aiagent/internal/eino/event_helpers.go`
 - Create: `services/aiagent/internal/conversation/manager.go`
 - Create: `services/aiagent/internal/planner/planner.go`
 - Create: `services/aiagent/internal/tools/registry.go`
@@ -102,7 +102,7 @@ service AiAgent {
 
 职责：
 
-- `eino`: Eino ChatModel 工厂、Agent/Chain/Graph 编排、消息转换、callback 事件转换、超时和降级。
+- `eino`: Eino ChatModel 工厂、Agent/Chain/Graph 编排、消息转换、ADK iterator 事件转换、超时和降级。
 - `conversation`: 会话创建、历史加载、消息保存、上下文裁剪。
 - `planner`: 规则兜底意图识别、参数抽取、缺参追问和确认策略判断。
 - `tools`: Eino Tool 注册、本地工具白名单、参数 schema、风险等级、RPC 执行、结果转换。
@@ -115,7 +115,6 @@ service AiAgent {
 - Create: `dal/model/ai/messages/ai_messages.sql`
 - Create: `dal/model/ai/tool_calls/ai_tool_calls.sql`
 - Create: `dal/model/ai/confirmations/ai_confirmations.sql`
-- Create: `dal/model/ai/user_memories/ai_user_memories.sql`
 - Modify: `construct/depend/sql/init.sql`
 
 表名：
@@ -124,7 +123,8 @@ service AiAgent {
 - `ai_messages`
 - `ai_tool_calls`
 - `ai_confirmations`
-- `ai_user_memories`
+- `ai_user_profiles`
+- `ai_user_memory_events`
 
 生成模型：
 
@@ -133,7 +133,7 @@ goctl model mysql ddl -src dal/model/ai/conversations/ai_conversations.sql -dir 
 goctl model mysql ddl -src dal/model/ai/messages/ai_messages.sql -dir dal/model/ai/messages -c
 goctl model mysql ddl -src dal/model/ai/tool_calls/ai_tool_calls.sql -dir dal/model/ai/tool_calls -c
 goctl model mysql ddl -src dal/model/ai/confirmations/ai_confirmations.sql -dir dal/model/ai/confirmations -c
-goctl model mysql ddl -src dal/model/ai/user_memories/ai_user_memories.sql -dir dal/model/ai/user_memories -c
+goctl model mysql ddl -src dal/model/ai/user_profiles/ai_user_profiles.sql -dir dal/model/ai/user_profiles -c
 ```
 
 ## 3. 数据库实施
@@ -146,7 +146,6 @@ goctl model mysql ddl -src dal/model/ai/user_memories/ai_user_memories.sql -dir 
 - Create: `dal/model/ai/messages/ai_messages.sql`
 - Create: `dal/model/ai/tool_calls/ai_tool_calls.sql`
 - Create: `dal/model/ai/confirmations/ai_confirmations.sql`
-- Create: `dal/model/ai/user_memories/ai_user_memories.sql`
 - Modify: `construct/depend/sql/init.sql`
 
 - [x] **Step 1: 新增会话表**
@@ -191,18 +190,20 @@ CREATE TABLE `ai_messages` (
 
 ```sql
 CREATE TABLE `ai_tool_calls` (
-  `id` varchar(64) NOT NULL COMMENT '调用ID',
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `conversation_id` varchar(64) NOT NULL COMMENT '会话ID',
+  `tool_call_id` varchar(128) NOT NULL DEFAULT '' COMMENT '模型工具调用ID',
   `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
   `tool_name` varchar(64) NOT NULL COMMENT '工具名称',
   `arguments` json NOT NULL COMMENT '工具参数',
-  `result_summary` text COMMENT '结果摘要',
+  `result` json NOT NULL COMMENT '真实工具返回JSON',
   `status` varchar(16) NOT NULL COMMENT 'success/failed',
   `error_message` varchar(512) NOT NULL DEFAULT '',
   `latency_ms` bigint NOT NULL DEFAULT 0,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_conversation_tool_call` (`conversation_id`, `tool_call_id`),
   KEY `idx_user_tool_created` (`user_id`, `tool_name`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
@@ -232,20 +233,11 @@ CREATE TABLE `ai_confirmations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [x] **Step 5: 新增用户记忆表**
+- [x] **Step 5: 新增用户画像和长期事件表**
 
 ```sql
-CREATE TABLE `ai_user_memories` (
-  `id` varchar(64) NOT NULL COMMENT '记忆ID',
-  `user_id` bigint unsigned NOT NULL COMMENT '用户ID',
-  `memory_type` varchar(32) NOT NULL COMMENT 'preference/category/price',
-  `content` text NOT NULL COMMENT '记忆内容',
-  `confidence` decimal(5,4) NOT NULL DEFAULT 0.0000 COMMENT '置信度',
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_user_type_updated` (`user_id`, `memory_type`, `updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE `ai_user_profiles` (...);
+CREATE TABLE `ai_user_memory_events` (...);
 ```
 
 - [x] **Step 6: 生成 go-zero model 并运行编译检查**
@@ -379,7 +371,7 @@ Expected: 所有包可编译。
 - Create: `services/aiagent/internal/eino/model_factory.go`
 - Create: `services/aiagent/internal/eino/agent.go`
 - Create: `services/aiagent/internal/eino/messages.go`
-- Create: `services/aiagent/internal/eino/callbacks.go`
+- Create: `services/aiagent/internal/eino/event_helpers.go`
 - Test: `services/aiagent/internal/eino/model_factory_test.go`
 - Test: `services/aiagent/internal/eino/agent_test.go`
 
@@ -421,7 +413,7 @@ type ModelFactory interface {
 
 - [x] **Step 5: 实现 Agent Runner**
 
-Agent Runner 输入当前用户消息、会话历史和工具集合，主链路输出 `AgentEvent` channel。当前实现使用 Eino ADK ChatModelAgent：ChatModel 通过 `WithTools` 绑定 ToolInfo，ChatModelAgent 通过 `ToolsConfig.ToolsNodeConfig.Tools` 接收可执行工具，ADK 内部调用 ToolsNode 执行已注册工具，并将工具结果回填模型生成最终回复。主链路使用 `adk.WithCallbacks` 捕获模型和工具生命周期：模型 callback 只绑定 `supervisor_agent`，面向用户的最终自然语言流式输出转为带消息 ID 的 `assistant_delta` 并在 bridge 中累计，模型 reasoning 和工具调用前中间过程转为无消息 ID 的 `assistant_thinking_delta`；ADK iterator 结束后统一生成一条完整 `assistant_message` 用于持久化，已有 assistant delta 时不重复下发，只有 thinking delta 时仍转发最终消息。工具 callback 全局捕获，工具开始转为按 `tool + arguments` 去重的 `tool_progress`，工具完成转为按 `tool + status + data/content` 去重的 `tool_result`。ADK iterator 继续负责 interrupt、最终错误和生命周期收尾。`Run` / `Resume` 只作为收集型兼容适配器，不再作为流式主路径。
+Agent Runner 输入当前用户消息和工具集合，主链路输出 `AgentEvent` channel。当前实现使用 Eino ADK ChatModelAgent：Supervisor root agent 挂载 MemoryMiddleware，在每次模型调用前通过 Eino session values 机制传入可信 conversationID metadata，并自动注入历史消息和 runtime context。主链路不再使用 callback 向前端发送事件，`consumeEvents` 是唯一 ADK iterator -> `domain.AgentEvent` 转换入口：reasoning 转为无消息 ID 的 `assistant_thinking_delta`，assistant tool call 转为 `tool_progress`，tool message 转为 `tool_result`，confirmation interrupt 和错误也在 iterator consumer 中统一处理。普通 streaming content 不转为 `assistant_delta`。ADK iterator 中 supervisor 的无 tool call final assistant message 是唯一最终回答事实，logic 层先持久化 `assistant_message` 再下发给前端。callback 仅适合作为日志、trace、metrics 等只读观测入口。`Run` / `Resume` 只作为收集型兼容适配器，不再作为流式主路径。
 
 ```go
 type Runner interface {
@@ -512,7 +504,7 @@ type Metadata struct {
 }
 ```
 
-运行时链路已收敛为 `Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC`。旧 `QueryTools`、`WriteTools`、`HighRiskTools` manager 和 `queryInvokableTool/writeInvokableTool/highRiskInvokableTool` 已删除；`DefaultTools(clients, timeout)` 直接产出完整 `[]Tool`。
+运行时链路已收敛为 `Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC/Store`。旧 `QueryTools`、`WriteTools`、`HighRiskTools` manager 和 `queryInvokableTool/writeInvokableTool/highRiskInvokableTool` 已删除；`DefaultBusinessTools(clients, timeout)` 与 `DefaultCapabilityTools(deps)` 直接产出统一 `[]Tool`。
 
 - [x] **Step 3: 注册首期 Eino Tool**
 
@@ -697,7 +689,7 @@ Run:
 go test ./services/aiagent/internal/tools -run TestUnified -count=1
 ```
 
-Expected: Eino Tool 入参转换、用户 ID 注入、RPC 调用、结果摘要字段均正确。
+Expected: Eino Tool 入参转换、用户 ID 注入、RPC 调用、真实工具结果 JSON 字段均正确。
 
 ### Task 9: 接入低风险写操作
 
@@ -728,11 +720,13 @@ RPC 对应：
 - `user_id`
 - `tool_name`
 - `arguments`
+- `tool_call_id`
+- `result`
 - `status`
 - `error_message`
 - `latency_ms`
 
-Task 9 前置最小可复用 recorder：共享 Executor 的所有工具调用写入 `ai_tool_calls`，metadata 标记为写操作的调用额外写入 audit 服务。Task 14 继续负责覆盖后续高风险工具和完整观测测试。
+Task 9 前置最小可复用 recorder：共享 Executor 的所有工具调用写入 `ai_tool_calls`，`result` 保存真实工具返回 JSON，metadata 标记为写操作的调用额外写入 audit 服务。Task 14 继续负责覆盖后续高风险工具和完整观测测试。
 
 - [x] **Step 3: 运行测试**
 
@@ -824,7 +818,7 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 RPC 对应：
 
 - `cart_delete` -> `Cart.DeleteCartItem`
-- `order_create` -> `OrderService.CreateOrder`
+- `order_create` -> `order-api POST /douyin/order/create`
 - `order_cancel` -> `OrderService.CancelOrder`
 
 - [x] **Step 3: 创建订单前置结算**
@@ -838,8 +832,8 @@ RPC 对应：
 工具参数契约同步为真实 RPC 结构：
 
 - `checkout_prepare` 必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
-- `order_create` 必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选。
-- `payment_method` 使用 1（微信）或 2（支付宝）。
+- `order_create` 必填 `pre_order_id`、`address_id`，`coupon_id` 可选。
+- 支付方式固定为支付宝，不再由模型传入 `payment_method`。
 
 - [x] **Step 4: 使用优惠券下单必须确认**
 
@@ -1048,7 +1042,7 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 - [ ] **Step 6: 创建订单**
 
-先创建预结算，再返回确认请求；确认后调用 `OrderService.CreateOrder`。
+先创建预结算，再返回确认请求；确认后调用 `order-api POST /douyin/order/create`，并固定支付宝。
 
 - [ ] **Step 7: 风控验证**
 
@@ -1056,115 +1050,126 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 ## 11. 上下文工程优化
 
-上下文优化的目标设计见 `docs/ai-agent-context-optimization.md`。原始消息继续由 Conversation Manager 完整保存；Planner 和 Agent 的模型输入统一由轻量 Context Manager 临时组装。首期不引入向量数据库，不持久化模型输入，不做运行时 token 上限裁剪，也不在这些任务中重构 ReAct 循环。
+上下文优化的目标设计见 `docs/context/customer-service-memory-architecture.md`。原始消息继续由 Conversation Manager 完整保存；Supervisor Agent 的模型输入由 `MemoryProvider + MemoryMiddleware + SessionValues` 自动检索、注入和写回。首期不引入向量数据库，不持久化模型输入，不做运行时 token 上限裁剪。
 
-**实现状态（2026-07-24）：** 上下文方案已从重型治理收敛为轻量 Context Manager。Task 18 已正式接入：Chat 分别构建 IntentContext 和 AgentContext，Planner/Runner 只消费领域 ContextMessages，token 估算不参与裁剪或阻断。后续继续补齐 Task 19-21 的滚动摘要、长期记忆、TaskState 持久化、观测和旧路径清理。
+**实现状态（2026-08-14）：** 上下文方案已升级为 AGGO 风格分层。ChatLogic 不再手动调用 `ContextManager.Build()`；Runner 只传当前 user message，并通过 `adk.WithSessionValues` 注入可信 user/conversation/run/message metadata。Supervisor root agent 挂载 MemoryMiddleware；旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
 
 ### Task 17: 工具结果引用和按需读取
 
 **Files:**
 
 - Create/Modify: `services/aiagent/internal/contextmanager/tool_results.go`
-- Modify: `services/aiagent/internal/tools/result_projector.go`
+- Create: `services/aiagent/internal/tools/tool_call_result_tool.go`
+- Create: `services/aiagent/internal/prompts/tools/tool_call_result.go`
+- Modify: `services/aiagent/internal/eino/agent.go`
 - Modify: `services/aiagent/internal/logic/chatlogic.go`
 - Test: `services/aiagent/internal/contextmanager/tool_results_test.go`
-- Test: `services/aiagent/internal/tools/result_projector_test.go`
+- Test: `services/aiagent/internal/tools/tool_call_result_tool_test.go`
+- Test: `services/aiagent/internal/eino/agent_test.go`
 
-- [ ] **Step 1: 先写 ToolCallRef 与按需读取测试**
+- [ ] **Step 1: 先写工具调用原始记录读取测试**
 
 覆盖：
 
-- 成功工具结果完整保存到 `ai_messages.metadata.tool_result`。
-- ToolCallRef 包含 `tool_call_id`、`tool_name`、`status`、`summary`、`created_at` 和关键 entity ID。
-- 最近一次成功工具结果可完整进入 AgentContext。
-- 更早工具调用只以 ToolCallRef 进入上下文。
-- 按 `tool_call_id` 读取完整结果必须同时校验 user ID 和 conversation ID。
-- 失败、非法 JSON、未知工具名、跨用户或跨会话结果不得返回给模型。
+- 成功工具结果完整保存到 `ai_tool_calls.result`。
+- 最近一次成功工具调用以原始 `ai_tool_calls` 记录进入 AgentContext。
+- 最近工具调用列表以最小记录进入上下文，只包含工具名、参数和 `tool_call_id`。
+- 按 `tool_call_id` 读取工具调用必须同时校验 user ID 和 conversation ID。
+- 跨用户或跨会话结果不得返回给模型。
 
-- [ ] **Step 2: 实现 ToolResultStore**
+- [ ] **Step 2: 实现 ToolCallStore**
 
-ToolResultStore 从 `ai_messages.metadata.tool_result` 读取完整 envelope；旧记录兼容读取 `metadata.data_json`，但旧数据只能用于生成有限 ToolCallRef，不能伪造成完整成功 envelope。
+ToolCallStore 从 `ai_tool_calls` 读取真实工具调用记录，直接返回 `*AiToolCalls` 或 `[]*AiToolCalls`。`ai_messages` 的 tool metadata 只用于会话历史展示和幂等重放，不再作为上下文工具事实来源。
 
-- [ ] **Step 3: 实现 ToolCallRef projector**
+- [ ] **Step 3: 接入 MemoryProvider 上下文**
 
-按工具注册 allowlist projector，只输出后续推理需要的关键 ID、状态、摘要和时间字段。projector 只删除无关字段，不截断 ID、订单号、数量和状态。
+`<latest_tool_result>` 注入最近一次完整工具调用，`<recent_tool_calls>` 注入最近工具调用最小列表，并按 `tool_call_id` 排除 latest，避免重复。
 
-- [ ] **Step 4: 运行测试**
+- [ ] **Step 4: 新增 get_tool_call_result 上下文工具**
+
+新增 `get_tool_call_result`，只接受 `tool_call_id`，从可信 `ToolExecutionContext` 获取 user ID 和 conversation ID，调用 `ToolCallStore.FindToolCallByCallID` 返回真实 `result`。该工具作为 Capability Tool 统一注册进 `tools.Registry`，统一走 Executor，并写入 `ai_tool_calls`。
+
+- [ ] **Step 5: 运行测试**
 
 ```bash
-go test ./services/aiagent/internal/contextmanager -run 'TestToolResult|TestToolCallRef' -count=1
-go test ./services/aiagent/internal/tools -run TestResultProjector -count=1
+go test ./services/aiagent/internal/contextmanager -run 'TestToolCallStore|TestBuildToolResultMetadata' -count=1
+go test ./services/aiagent/internal/tools -run TestGetToolCallResultTool -count=1
+go test ./services/aiagent/internal/eino -run TestSupervisorAndSubAgentsUseToolCallResultContextTool -count=1
+go test ./services/aiagent/internal/memory -count=1
 ```
 
-Expected: ToolResult envelope 可恢复，ToolCallRef 不丢关键 ID，按需读取强制用户和会话隔离。
+Expected: 上下文工具事实来自 `ai_tool_calls`，recent 列表不直接注入历史 result，按需读取强制用户和会话隔离。
 
-### Task 18: 轻量 Context Manager 正式接入
+### Task 18: MemoryProvider / MemoryMiddleware 正式接入
 
 **Files:**
 
-- Create/Modify: `services/aiagent/internal/contextmanager/manager.go`
-- Create/Modify: `services/aiagent/internal/domain/context.go`
+- Create: `services/aiagent/internal/memory/provider.go`
+- Create: `services/aiagent/internal/memory/session.go`
+- Create: `services/aiagent/internal/memory/customer_service_provider.go`
+- Create: `services/aiagent/internal/eino/memory_middleware.go`
 - Modify: `services/aiagent/internal/logic/chatlogic.go`
-- Modify: `services/aiagent/internal/planner/planner.go`
 - Modify: `services/aiagent/internal/eino/agent.go`
-- Test: `services/aiagent/internal/contextmanager/manager_test.go`
-- Test: `services/aiagent/internal/planner/planner_test.go`
-- Test: `services/aiagent/internal/eino/agent_test.go`
-- Test: `services/aiagent/internal/logic/chatlogic_test.go`
+- Modify: `services/aiagent/internal/tools/memory_search_tool.go`
+- Test: `services/aiagent/internal/memory/provider_test.go`
+- Test: `services/aiagent/internal/eino/memory_middleware_test.go`
+- Test: `services/aiagent/internal/logic/stream_visibility_test.go`
+- Test: `services/aiagent/internal/tools/memory_search_tool_test.go`
 
-- [x] **Step 1: 先写 Context 组装测试**
+- [x] **Step 1: 先写 MemoryProvider 和 MemoryMiddleware 测试**
 
 覆盖：
 
-- IntentContext 只包含当前输入、最近对话、当前 TaskState 和长期记忆摘要。
-- AgentContext 包含摘要、最近 20 条未压缩消息、最近一次完整工具结果、历史 ToolCallRef、TaskState、UserMemory 和可选 UserProfile JSON。
-- Context Manager 只返回临时 `[]domain.ContextMessage` 和轻量 build metadata，不落库模型输入。
-- token 估算只记录在 build metadata 或日志中，不参与裁剪，不返回错误。
+- Retrieve 返回 system/history/context 三类槽位。
+- 有摘要水位时，已摘要原文不重复进入 history。
+- MemoryMiddleware 只注入一次，并将 runtime context 追加到当前 user message。
+- MemoryMiddleware 不在 `AfterModelRewriteState` 做记忆写回。
+- ReAct 多次模型调用不会触发摘要、画像或长期事件更新。
 
-- [x] **Step 2: 定义轻量 Context 类型**
+- [x] **Step 2: 定义 MemoryProvider 和 ConversationMetadata**
 
-使用 `ContextMode`、`BuildContextRequest`、`ContextMessage` 和 `BuildContextResult`。`BuildContextResult` 至少包含 messages、summary covered watermark、recent message range、latest tool call ID、tool ref count 和 estimated input tokens。
+使用 `MemoryProvider`、`RetrieveRequest`、`RetrieveResult`、`MemorizeRequest`、`ConversationMetadata`。`conversationID` 是本项目唯一的客服对话标识，不再额外引入旧会话 ID 字段。
 
-- [x] **Step 3: Planner 接入 IntentContext**
+- [x] **Step 3: CustomerServiceProvider 复用现有 stores**
 
-Planner 只接收 Context Manager 已组装的 IntentContext，不再自行做固定 8 条或单条 300 字符裁剪。缺少历史工具完整结果时，Planner 返回澄清问题或读取工具结果的计划，不猜测参数。
+Provider 读取 `ai_messages`、会话摘要、最近完整工具调用、最近工具调用最小列表、UserProfile 和可选长期事件。Store 故障按组件降级，不阻塞基础聊天。
 
-- [x] **Step 4: AgentRunner 接入 AgentContext**
+- [x] **Step 4: AgentRunner 接入 MemoryMiddleware**
 
-Runner 接收 AgentContext 的 `[]domain.ContextMessage`，由 `internal/eino/messages.go` 转换为 Eino `schema.Message`，不再直接把 `[]*AiMessages` 转换为模型输入。
+ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 挂载 MemoryMiddleware，子 agent 不重复注入完整会话上下文。
 
-- [x] **Step 5: 运行测试**
+- [x] **Step 5: 接入 search_user_memory**
+
+当 provider 实现 `UserMemoryEventSearcher` 时，`DefaultCapabilityTools` 注册 `search_user_memory`。工具忽略模型传入的 `user_id`，只使用 ToolExecutionContext 中的认证 user ID，并统一经过 Executor 记录工具调用。
+
+- [x] **Step 6: 运行测试**
 
 ```bash
-go test ./services/aiagent/internal/contextmanager -run TestManager -count=1
-go test ./services/aiagent/internal/planner -run Test -count=1
+go test ./services/aiagent/internal/memory -count=1
 go test ./services/aiagent/internal/eino -run Test -count=1
-go test ./services/aiagent/internal/logic -run TestChat -count=1
+go test ./services/aiagent/internal/logic -run Test -count=1
+go test ./services/aiagent/internal/tools -run TestSearchUserMemory -count=1
 ```
 
-Expected: Planner 和 Runner 均消费轻量 Context Manager 输出；Context 组装不会因 token 估算触发裁剪或错误。
+Expected: Provider/Middleware 接管模型上下文，final assistant 是唯一最终回答事实，长期事件检索工具强制使用可信 user ID。
 
-### Task 19: 滚动摘要与长期记忆
+### Task 19: 滚动摘要、长期事件与用户画像
 
 **Files:**
 
 - Create/Modify: `dal/model/ai/conversation_summaries/ai_conversation_summaries.sql`
 - Create/Modify: `dal/model/ai/conversation_summaries/**`
-- Modify: `dal/model/ai/user_memories/ai_user_memories.sql`
-- Regenerate: `dal/model/ai/user_memories/**`
 - Create/Modify: `dal/model/ai/user_profiles/ai_user_profiles.sql`
 - Create/Modify: `dal/model/ai/user_profiles/**`
 - Modify: `construct/depend/sql/init.sql`
 - Modify: `construct/depend/sql/migrations/20260722_ai_context_engineering.sql`
 - Create/Modify: `services/aiagent/internal/contextmanager/summary.go`
-- Create/Modify: `services/aiagent/internal/contextmanager/memory_policy.go`
 - Create/Modify: `services/aiagent/internal/contextmanager/user_profile.go`
 - Create/Modify: `services/aiagent/internal/profileextractor/**`
 - Modify: `services/aiagent/internal/logic/chatlogic.go`
 - Modify: `services/aiagent/etc/aiagent.yaml`
 - Modify: `services/aiagent/etc/aiagent.prod.yaml`
 - Test: `services/aiagent/internal/contextmanager/summary_test.go`
-- Test: `services/aiagent/internal/contextmanager/memory_policy_test.go`
 
 - [x] **Step 1: 先写 30 -> 10 + 20 摘要测试**
 
@@ -1175,16 +1180,15 @@ Expected: Planner 和 Runner 均消费轻量 Context Manager 输出；Context �
 - 摘要成功后水位推进，剩余 20 条仍作为近期原文。
 - 同一条消息不会同时出现在摘要和近期原文。
 - 摘要失败或非法 JSON 时保留上一版摘要，近期原文继续保留。
-- 显式记忆可以保存、更新、删除和过期。
-- 推断记忆只有 `confidence >= 0.85`、存在来源消息、非敏感且有 TTL 时才写入。
+- 最近长期事件可进入上下文，更早事件通过 `search_user_memory` 按需检索。
+- 用户画像更新只基于当前消息和 existing profile。
 
-- [x] **Step 2: 新增或保留摘要表、扩展记忆表并新增画像表**
+- [x] **Step 2: 新增或保留摘要表、画像表和长期事件表**
 
-按设计文档保留 `ai_conversation_summaries`，扩展 `ai_user_memories` 的 memory key、source、source message、status、expires 和 last confirmed 字段，并新增 `ai_user_profiles` 保存聊天来源 UserProfile JSON。生成 go-zero model；生成文件不手改。
+按设计文档保留 `ai_conversation_summaries`，新增 `ai_user_profiles` 保存聊天来源 UserProfile JSON，并使用 `ai_user_memory_events` 保存长期事件。生成 go-zero model；生成文件不手改。
 
 ```bash
 goctl model mysql ddl -src dal/model/ai/conversation_summaries/ai_conversation_summaries.sql -dir dal/model/ai/conversation_summaries -c
-goctl model mysql ddl -src dal/model/ai/user_memories/ai_user_memories.sql -dir dal/model/ai/user_memories -c
 goctl model mysql ddl -src dal/model/ai/user_profiles/ai_user_profiles.sql -dir dal/model/ai/user_profiles -c
 ```
 
@@ -1192,13 +1196,13 @@ goctl model mysql ddl -src dal/model/ai/user_profiles/ai_user_profiles.sql -dir 
 
 摘要模型无工具权限，输入上一版摘要和本次要压缩的 10 条消息，输出 `summary/key_facts/open_tasks` 严格 JSON。保存前校验 JSON、字段长度和引用实体 ID。
 
-- [x] **Step 4: 实现显式和受控推断 MemoryPolicy**
+- [x] **Step 4: 接入长期事件检索**
 
-模型只能产生候选，MemoryPolicy 负责脱敏、置信度、来源、TTL、冲突和 upsert。禁止保存认证信息、支付凭据、完整地址、瞬时库存和单次订单状态。
+`ai_user_memory_events` 保存 milestone/event 时间线。Provider 只注入最近事件；Supervisor 可通过 `search_user_memory` 按可信 user ID 检索更早事件。
 
 - [x] **Step 5: 接入聊天来源 UserProfile JSON**
 
-UserProfile 不再来自 users RPC。每轮聊天消息持久化成功后投递 Kafka 画像更新事件，异步 consumer 调用 LLM Profile Extractor 判断是否需要更新画像。画像以 JSON 保存，便于后续注入给 LLM。
+UserProfile 不再来自 users RPC。ChatLogic 在 `runSupervisor` 正常返回后调用 `updateConversationMemory`；只有 `SummaryManager.MaybeRefresh` 创建新摘要时，才投递一个 Kafka `AiMemoryUpdates` 事件。Profile consumer 和 Memory Event consumer 订阅同一个 topic，使用同一批 compressed message IDs，分别调用独立结构化模型更新画像和长期事件。画像以 JSON 保存，便于后续注入给 LLM。
 
 更新时机：
 
@@ -1213,13 +1217,13 @@ LLM 只能输出严格 JSON patch 或候选更新，不能直接写数据库；�
 
 ```bash
 go test ./dal/model/ai/...
-go test ./services/aiagent/internal/contextmanager -run 'TestSummary|TestMemory|TestUserProfile' -count=1
+go test ./services/aiagent/internal/contextmanager -run 'TestSummary|TestUserProfile' -count=1
 go test ./services/aiagent/internal/profileextractor -count=1
 ```
 
-Expected: 摘要窗口、消息去重、记忆生命周期、聊天来源画像 JSON、Kafka 异步触发、用户隔离、失败降级和提示注入防护全部通过。
+Expected: 摘要窗口、消息去重、长期事件检索、聊天来源画像 JSON、Kafka 异步触发、用户隔离、失败降级和提示注入防护全部通过。
 
-**实现状态（2026-07-25）：** Task 19 已接入滚动摘要、长期记忆和聊天来源 UserProfile JSON。新增 `ai_conversation_summaries` 与 `ai_user_profiles` 表和 model，扩展 `ai_user_memories` 的 key/source/status/TTL 字段；SummaryManager 按 30 -> 10 + 20 推进摘要水位，摘要失败保留旧摘要和未压缩原文；MemoryPolicy 支持显式记忆保存/更新/删除/过期，并约束推断记忆必须高置信、有来源、非敏感且有 TTL；Context Manager 已使用摘要、active memories 和 DB-backed UserProfile JSON。Chat 消息持久化后触发摘要刷新，并投递 Kafka `AiUserProfileUpdates` 事件；异步 Profile Extractor 通过无工具权限 LLM 生成候选 patch，经后端策略校验证据、置信度、敏感信息、删除请求和用户隔离后保存画像，失败不阻塞聊天。
+**实现状态（2026-08-16）：** Task 19 已收敛为滚动摘要、长期事件和聊天来源 UserProfile JSON。旧原子记忆表已删除；长期用户上下文只保留 `ai_user_profiles` 与 `ai_user_memory_events`。SummaryManager 按 30 -> 10 + 20 推进摘要水位，并返回本次 compressed message IDs；Provider 注入最近事件和画像；ChatLogic 仅在创建新摘要后投递一个 Kafka `AiMemoryUpdates` 事件。异步 Profile Extractor 和 Memory Event Extractor 订阅同一个 topic，基于同一批消息分别更新画像和长期事件，失败不阻塞聊天。
 
 ### Task 20: Agent Run、TaskState 与 Checkpoint
 
@@ -1274,11 +1278,11 @@ Expected: 等待确认可以跨实例恢复，重复或越权恢复不能执行�
 
 - [ ] **Step 1: 增加轻量观测**
 
-记录 context 构建耗时、估算 token、摘要命中、ToolCallRef 数量、按需读取工具结果次数、降级原因、记忆候选决策和 checkpoint 恢复结果。估算 token 只进入日志和指标，不参与裁剪。
+记录 context 构建耗时、估算 token、摘要命中、最近工具调用数量、按需读取工具结果次数、降级原因、记忆候选决策和 checkpoint 恢复结果。估算 token 只进入日志和指标，不参与裁剪。
 
 - [ ] **Step 2: 删除重型上下文设计**
 
-删除独立上下文快照持久化、相关表/model/recorder、复杂预算打包和超限阻断。保留原始消息、ToolResult envelope、摘要、记忆、TaskState 和结构化日志。
+删除独立上下文快照持久化、相关表/model/recorder、复杂预算打包和超限阻断。保留原始消息、原始工具调用记录、摘要、记忆、TaskState 和结构化日志。
 
 - [ ] **Step 3: 收敛旧逻辑**
 
@@ -1294,6 +1298,67 @@ go test ./...
 
 Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部通过。
 
+### Task 22: 知识库检索（RAG）
+
+- [ ] **Step 1: 配置与客户端**
+
+新增 `RAG` 配置（BaseURL、APIKey、RetrievePath、EmbeddingPath、Timeout、TopK、阈值、TTL、PreviewBaseURL），实现知识库 Retrieve/Embedding HTTP 客户端，超时 3 秒、失败静默降级。
+
+- [ ] **Step 2: 分类与检索编排**
+
+新增 `internal/rag`：分类模型（复用 Eino ChatModel）判断 `need_rag && confidence>=0.6`；先调 Embedding API 生成 query 向量，再用 Redis Vector 缓存查相似度；未命中才调检索，并用响应中的 `queryEmbedding` 更新缓存；结果按文档去重并截断为前端展示片段。
+
+- [ ] **Step 3: 上下文注入与 SSE**
+
+通过 `RetrieveRequest.RAGContext` 合并进 MemoryProvider；`assistant_message` 的 `data.sources` 下发来源；sources 随 assistant 消息 metadata 持久化。
+
+- [ ] **Step 4: 前端来源面板**
+
+回答下方显示“n篇来源”按钮，点击打开右侧面板，展示全部文档片段，点击片段跳转 `document_url`。
+
+- [ ] **Step 5: 测试**
+
+覆盖分类输出解析、Retrieve/Embedding 客户端、sources 映射、RAGContext 注入、前端类型与事件解析。
+
+### Task 23: 历史会话查询接口
+
+**Files:**
+
+- Modify: `services/aiagent/aiagent.proto`、`services/aiagent/aiagentclient/aiagent.go`、`services/aiagent/internal/server/aiagentserver.go`
+- Modify: `dal/model/ai/conversations/aiconversationsmodel.go`、`dal/model/ai/messages/aimessagesmodel.go`
+- Create: `services/aiagent/internal/logic/listconversationslogic.go`、`services/aiagent/internal/logic/listmessageslogic.go`
+- Modify: `apis/ai/ai.api`、`apis/ai/internal/handler/routes.go`
+- Create: `apis/ai/internal/handler/historyhandler.go`、`apis/ai/internal/logic/historylogic.go`、`apis/ai/internal/types/history.go`
+- Test: `services/aiagent/internal/logic/historylogic_test.go`、`apis/ai/internal/logic/historylogic_test.go`、`dal/model/ai/conversations/aiconversationsmodel_test.go`、`dal/model/ai/messages/aimessagesmodel_test.go`
+
+- [x] **Step 1: 定义 RPC 契约并重新生成 pb**
+
+新增 `ListConversations` / `ListMessages` 及 `ConversationSummary`、`HistoryMessage` 消息；使用 goctl 重新生成 pb/grpc 代码，手工补齐 client 与 server 胶水。
+
+- [x] **Step 2: model 查询方法**
+
+`ai_conversations` 新增按用户分页查询（附带最后活跃时间、最后消息预览、消息数）和总数统计；`ai_messages` 新增按 `user_id + conversation_id` 分页正序查询和总数统计。
+
+- [x] **Step 3: aiagent 历史 logic**
+
+`ListConversationsLogic` 返回当前用户会话列表；`ListMessagesLogic` 先做会话归属校验（不存在返回“会话不存在”，跨用户返回“无权访问该会话”），再按用户和会话查询全部 user/assistant/tool 消息，metadata 原样透传。
+
+- [x] **Step 4: API 网关**
+
+新增 `GET /douyin/ai/sessions` 与 `GET /douyin/ai/sessions/messages`，沿用现有认证中间件，用户 ID 只来自登录态上下文。
+
+- [x] **Step 5: 测试**
+
+覆盖：用户隔离（跨用户会话拒绝）、会话不存在、分页参数归一化、user/assistant/tool 三种角色返回、tool metadata 透传、SQL 查询作用域与排序。
+
+- [ ] **Step 6: 运行验收**
+
+```bash
+go test ./services/aiagent/... ./apis/ai/...
+```
+
+**实现状态（2026-08-20）：** 已完成 RPC 契约、model 查询、aiagent 与网关实现和单元测试，目标测试命令通过；最终全量 `go test ./...` 验收见完成标准。
+
 ## 12. 推荐实施顺序
 
 1. 数据库与 model：Task 1。
@@ -1305,10 +1370,11 @@ Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部
 7. SSE API：Task 12-13。
 8. 限流、超时、端到端验收：Task 15-16。
 9. 工具结果引用和按需读取：Task 17。
-10. 轻量 Context Manager 正式接入：Task 18。
-11. 滚动摘要和长期记忆：Task 19。
+10. MemoryProvider / MemoryMiddleware 正式接入：Task 18。
+11. 滚动摘要、长期事件和用户画像：Task 19。
 12. Agent Run 与 Checkpoint：Task 20。
 13. 观测、清理和旧路径收敛：Task 21。
+14. 历史会话查询：Task 23。
 
 每完成一个阶段执行：
 
@@ -1332,9 +1398,9 @@ go test ./...
 - 业务服务返回字段不完整：工具结果转换层只暴露 PRD 要求字段，缺失字段返回空值并记录日志。
 - 模型不可用：返回“AI 服务暂时不可用，请稍后重试”，查询/写操作不自动编造结果。
 - 上下文过长：不做运行时裁剪；通过 30 -> 10 + 20 滚动摘要、近期 20 条原文和历史工具引用从源头节省 token，并记录估算 token 便于排查。
-- 工具结果过大：只把最近一次完整工具结果放入上下文，历史工具调用保留 ToolCallRef；需要完整结果时按 `tool_call_id` 重新读取。
-- 摘要、记忆或画像错误：原始消息始终保留；摘要、记忆和 UserProfile JSON 失败降级到近期消息，不阻塞基础聊天。
-- 记忆污染和提示注入：模型只能提交候选，MemoryPolicy 负责来源、置信度、敏感信息、TTL 和冲突校验；记忆不能覆盖 system prompt。
+- 工具结果过大：上下文直接注入最近一次完整工具调用；历史工具调用只注入最小记录，需要真实 result 时通过 `get_tool_call_result` 按需读取。
+- 摘要、长期事件或画像错误：原始消息始终保留；摘要、事件和 UserProfile JSON 失败降级到近期消息，不阻塞基础聊天。
+- 画像污染和提示注入：模型只能提交画像候选 patch，后端负责证据、敏感信息、删除请求和用户隔离校验；画像和事件不能覆盖 system prompt。
 - checkpoint 丢失：Redis 只做热缓存，MySQL AgentRun、confirmation 和 tool call 记录可重建执行状态。
 
 ## 14. 完成标准
@@ -1346,12 +1412,12 @@ go test ./...
 - 所有写操作有审计记录。
 - `go test ./services/aiagent/... ./apis/ai/...` 通过。
 - 风控场景在 `test/ai-customer-service-e2e.md` 中有明确验收记录。
-- Planner 和 Agent 的模型输入统一由轻量 Context Manager 临时组装。
+- Supervisor Agent 的模型输入统一由 MemoryProvider / MemoryMiddleware 临时组装。
 - token 估算只进入日志和指标，不参与裁剪、不阻塞模型调用。
 - 结构化工具结果不因上下文裁剪损坏，动态事实写操作前重新校验。
 - 超出近期 20 条原文窗口的关键事实可通过会话摘要恢复。
-- 历史工具调用以 ToolCallRef 保留，完整结果只能通过 user ID + conversation ID + tool_call_id 按需读取。
-- 长期记忆具备来源、置信度、冲突、过期、删除和用户隔离。
+- 历史工具调用以 `ai_tool_calls` 原始记录保留，按需读取必须通过 user ID + conversation ID + tool_call_id 校验。
+- 长期用户上下文由 UserProfile 和 UserMemoryEvent 提供，事件支持按需检索和用户隔离。
 - UserProfile 只来源于 AI 聊天过程，异步抽取为 JSON，并支持明确偏好、稳定模式、主动纠正和删除/遗忘偏好四类更新。
 - waiting_confirmation 可以跨实例恢复，重复恢复不会重复执行写 RPC。
 - 每次模型调用可以通过结构化日志追踪摘要覆盖水位、近期消息范围、最近工具结果和历史工具引用数量。

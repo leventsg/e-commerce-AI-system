@@ -91,7 +91,54 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 }
 ```
 
-服务端响应为 `text/event-stream`。每个事件使用 `event: <type>`、`id: <message_id>` 和 `data: <ServerEvent JSON>` 输出，并在事件产生后立即 flush；空闲连接每 10 秒发送 `: ping`，单次连接最长 5 分钟；当事件没有 `message_id` 时不输出 `id:` 行。前端使用 `fetch + ReadableStream` 发送 POST JSON 并消费 SSE。模型面向用户的最终自然语言输出按 `assistant_delta` 片段实时推送并携带消息 ID；模型 reasoning 或工具调用前的中间过程按无消息 ID 的 `assistant_thinking_delta` 推送，前端按会话本地折叠展示，不与最终回答拼接，不落库。如果本轮已有 `assistant_delta`，最终 `assistant_message` 只用于落库和幂等重放，不在同一次 SSE 中重复下发；只有 `assistant_thinking_delta` 时仍允许最终 `assistant_message` 下发。工具调用前发送去重后的 `tool_progress`，工具完成后发送去重后的中文摘要 `tool_result`。
+服务端响应为 `text/event-stream`。每个事件使用 `event: <type>`、`id: <message_id>` 和 `data: <ServerEvent JSON>` 输出，并在事件产生后立即 flush；空闲连接每 10 秒发送 `: ping`，单次连接最长 5 分钟；当事件没有 `message_id` 时不输出 `id:` 行。前端使用 `fetch + ReadableStream` 发送 POST JSON 并消费 SSE。模型 reasoning 或工具调用前的中间过程按无消息 ID 的 `assistant_thinking_delta` 推送，前端按会话本地折叠展示，不与最终回答拼接，不落库。最终自然语言回答只来自 ADK iterator 中 supervisor 的 final assistant message，后端先持久化为 `assistant_message`，再在同一次 SSE 中下发给前端。工具调用前发送 `tool_progress`，工具完成后发送中文摘要 `tool_result`。
+
+### 2.1 历史会话查询接口
+
+接口：
+
+- `GET /douyin/ai/sessions`：当前用户历史会话列表，支持 `page`、`page_size` 分页，按最后活跃时间倒序。
+- `GET /douyin/ai/sessions/messages?conversation_id=<conversation_id>`：指定会话内全部历史消息，支持分页，按消息创建顺序正序。
+
+鉴权：沿用现有认证中间件，用户 ID 从请求上下文获取，客户端不得传入 `user_id`。
+
+RPC：`services/aiagent` 新增 `ListConversations` / `ListMessages`，负责归属校验、分页与数据组装；`apis/ai` 网关只做鉴权、协议转换和字段映射。
+
+会话列表项：
+
+```json
+{
+  "conversation_id": "conv_001",
+  "title": "订单咨询",
+  "last_message_preview": "你的订单已送达",
+  "updated_at": "2026-08-20T15:06:37+08:00",
+  "message_count": 6
+}
+```
+
+历史消息项：
+
+```json
+{
+  "message_id": "msg_001",
+  "role": "tool",
+  "content": "查询结果",
+  "metadata": {
+    "tool_name": "order_get",
+    "status": "success",
+    "tool_call_id": "call_001"
+  },
+  "client_message_id": "client_msg_0190f1f0e8a57000",
+  "created_at": "2026-08-20T15:00:02+08:00"
+}
+```
+
+说明：
+
+- `role` 取值 `user` / `assistant` / `tool`，`tool` 即 tool_result 消息。
+- `metadata` 透传 `ai_messages.metadata` 原始 JSON：工具消息包含 `tool_name`、`status`、`tool_call_id`、`data_json` 等；assistant 消息可能包含 RAG `sources`。
+- 会话最后活跃时间取会话内最新消息 `created_at`，无消息时回退到会话创建时间。
+- 消息查询强制按 `user_id + conversation_id` 过滤，会话归属校验在 `services/aiagent` 完成，跨用户访问直接拒绝。
 
 ## 3. 核心模块
 ### 3.1 Eino 模型接入
@@ -112,11 +159,12 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 
 ### 3.2 Eino Agent Orchestrator
 职责：
-- 将会话上下文转换为 Eino message。
+- 通过 MemoryMiddleware 在模型调用前自动注入会话历史和动态运行上下文。
 - 构建系统提示词，约束模型只能调用已注册工具。
 - 使用 Eino ADK ChatModelAgent 编排“模型推理 -> ToolsNode 工具调用 -> 工具结果回填 -> 最终回复”流程。
-- 通过 Eino `adk.WithCallbacks` 捕获 Agent、ChatModel 和 Tool 生命周期；模型 callback 仅绑定 `supervisor_agent`，工具 callback 全局捕获并过滤 agent tool。模型最终回答流式输出转为 `assistant_delta`，模型 reasoning 和工具调用前中间过程转为 `assistant_thinking_delta`，工具执行转为去重后的 `tool_progress` / `tool_result`，ADK iterator 仍负责 interrupt、错误和执行收尾。
-- 将 Eino callback 或本地包装器中的工具调用事件写入 `ai_tool_calls`。
+- 通过 ADK iterator 统一消费 `AgentEvent`，将 reasoning 转为 `assistant_thinking_delta`，将 assistant tool call 转为 `tool_progress`，将 tool message 转为 `tool_result`，并只把 supervisor final assistant 作为最终回答事实。
+- callback 不再承担用户可见输出职责；后续仅可用于日志、trace、metrics 等只读观测。
+- 将工具执行链路中的结构化工具调用事件写入 `ai_tool_calls`。
 - 在 Eino 执行工具前调用本地风险策略，拦截高风险工具并创建确认请求。
 
 设计约束：
@@ -134,19 +182,22 @@ AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自
 
 Conversation Manager 不再直接决定模型上下文。原始消息是不可变事实记录；模型输入由独立 Context Manager 根据调用场景临时组装。
 
-### 3.4 Context Manager
+### 3.4 MemoryProvider / MemoryMiddleware
 
-Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 `docs/ai-agent-context-optimization.md`。
+AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详细方案见 `docs/context/customer-service-memory-architecture.md`。
 
 职责：
 
-- 组合 system prompt、当前用户输入、当前任务状态、待确认动作、近期消息、会话摘要、长期记忆、最小用户画像和必要工具上下文。
-- 生成 `AgentContext` 领域无关临时 ContextMessages。
+- `MemoryProvider.Retrieve` 组合当前任务状态、待确认动作、近期消息、会话摘要、长期事件、最小用户画像和必要工具上下文。
+- `MemoryMiddleware.BeforeModelRewriteState` 将 `HistoryMessages` 插在 system prompt 后，将动态 `ContextMessages` 追加到当前 user message 末尾。
+- `MemoryMiddleware` 只做模型调用前上下文注入；记忆更新不放在 `AfterModelRewriteState`，避免 ReAct 多次模型调用重复触发。
 - 通过滚动摘要和固定近期窗口从源头节省 token：默认保留最近 20 条未压缩消息；未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
+- `ChatLogic` 在 `runSupervisor` 正常返回后异步调用 `updateConversationMemory`；只有 `SummaryManager.MaybeRefresh` 创建新摘要时，才发布一个 `AiMemoryUpdates` Kafka 事件。
+- Profile consumer 和 Memory Event consumer 订阅同一个 topic，分别使用独立结构化模型基于同一批 compressed message IDs 更新 `ai_user_profiles` 和 `ai_user_memory_events`。
 - 每条消息只进入摘要或近期原文之一，不重复注入。
-- 工具结果只直接保留最近一次完整结果；其他历史工具调用只注入固定数量的 ToolCallRef，需要完整结果时按 `tool_call_id` 受控读取。
-- 记录上下文来源、摘要覆盖水位、近期消息范围、最近工具调用、工具引用数量、Token 估算和构建耗时。
-- 摘要、记忆或画像不可用时按策略降级，不阻塞基础聊天。
+- 工具上下文直接来自 `ai_tool_calls`：`<latest_tool_result>` 注入最近一次完整工具调用；`<recent_tool_calls>` 只注入工具名、参数和 `tool_call_id`，需要历史 result 时调用 `get_tool_call_result`。
+- 记录上下文来源、摘要覆盖水位、近期消息范围、最近工具调用数量、Token 估算和构建耗时。
+- 摘要、长期事件或画像不可用时按策略降级，不阻塞基础聊天。
 
 上下文优先级：
 
@@ -156,17 +207,17 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 4. 经过校验的结构化工具事实。
 5. 近期对话。
 6. 会话摘要。
-7. 长期用户记忆和最小用户画像。
+7. 长期事件和最小用户画像。
 
 安全约束：
 
-- Context Manager 的 user ID 只能来自认证上下文。
+- MemoryProvider 的 user ID 只能来自认证上下文和 ADK session values。
 - 所有上下文 Store 必须同时按 user ID 和 conversation ID 查询。
-- UserMemory、ConversationSummary、ToolFact 和 UserProfile 都是不可信数据，不能覆盖 system prompt、工具白名单、确认规则和 Execution Guard。
+- ConversationSummary、ToolFact、UserMemoryEvent 和 UserProfile 都是不可信数据，不能覆盖 system prompt、工具白名单、确认规则和 Execution Guard。
 - 动态 ToolFact 过期后只用于理解历史，写操作前必须重新调用业务 RPC 校验。
-- Context Manager 不包含 Eino 类型；只有 `internal/eino` 的 Supervisor Runner 适配器可以把领域消息转换为 `schema.Message`。
+- `internal/memory` 不包含 Eino 类型；只有 `internal/eino` 的 MemoryMiddleware 可以把领域消息转换为 `schema.Message`。
 
-当前方案已收敛为轻量 Context Manager：Planner 和 Agent Runner 默认消费临时组装的 ContextMessages；不持久化模型输入，不做运行时 token 上限裁剪。Conversation Manager 继续负责会话归属校验和原始消息持久化，不再决定模型输入窗口。
+当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 通过 MemoryMiddleware 自动注入上下文。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
 
 ### 3.5 Supervisor Agent
 职责：
@@ -194,7 +245,7 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 ### 3.6 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
 
-工具层统一链路为：`Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC`。`services/aiagent/internal/tools.Tool` 是工具定义的单一事实来源，统一承载 `Name`、`Desc`、`Params`、`Metadata`、`Handler` 和可选 `ConfirmationSummary`。启动时由 `DefaultTools(clients, timeout)` 生成完整 catalog，Registry 只保存 `map[string]Tool` 并负责导出 ToolInfo、InvokableTool adapter、metadata 和确认摘要。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再有 schema-only 占位工具和二次绑定。
+工具层统一链路为：`Tool Catalog -> Registry -> Eino adapter -> Executor -> Handler -> RPC/Store`。`services/aiagent/internal/tools.Tool` 是工具定义的单一事实来源，统一承载 `Name`、`Desc`、`Params`、`Kind`、`Visibility`、`Metadata`、`Handler` 和可选 `ConfirmationSummary`。启动时由 `DefaultBusinessTools(clients, timeout)` 与 `DefaultCapabilityTools(deps)` 生成统一 catalog，Registry 负责导出 root/sub agent 可见工具列表、ToolInfo、InvokableTool adapter、metadata 和确认摘要。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再有 schema-only 占位工具和二次绑定。
 
 首期工具：
 - product_search
@@ -234,7 +285,7 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 首期下单工具契约：
 
 - `checkout_prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
-- `order_create` 接收必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选；`payment_method` 使用现有 RPC 枚举值 1（微信）或 2（支付宝）。
+- `order_create` 接收必填 `pre_order_id`、`address_id`，`coupon_id` 可选；支付方式固定为支付宝，工具不接收 `payment_method`。
 - 高风险 Tool 的普通 Eino 调用在 ChatModelAgent middleware 中创建确认记录后调用官方 `tool.StatefulInterrupt` 中断，不调用业务 RPC。只有结构化 `ConfirmAction` 携带 `confirmation_id`，成功领取 `pending -> approved` 后，服务端才使用 `runner.ResumeWithParams` 恢复同一次工具调用，并通过同一个 Execution Guard 调用业务 RPC；`pending -> rejected` 是确定性终态，由后端直接返回取消结果，不恢复 checkpoint，不调用 LLM。
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
@@ -251,7 +302,53 @@ Context Manager 是 Supervisor Agent 的统一上下文入口，详细方案见 
 
 Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器中。任何 Eino 工具实际调用 RPC 前，都必须先经过该 Guard。
 
-### 3.8 Confirmation Manager
+### 3.8 工具失败治理
+
+工具调用失败不能直接升级成“AI 服务不可用”，也不能在前端或模型侧伪造成成功。工具失败治理按四层设计，分阶段落地：
+
+第一层：工具层重试。
+
+- `Executor` 是唯一工具执行入口，负责将可预期工具失败转换为结构化 `tool_result`，而不是向 ADK 抛普通 Go error。
+- 工具结果统一使用 envelope：`status`、`tool_name`、`attempt_count`、`retry_count`、`error`、`business_outcome`、`result`、`attempt_trail`。
+- `status=failed` 时，`error` 只包含稳定错误码和安全提示，不向模型暴露底层网络、数据库、鉴权 token、连接串等原始错误。
+- 瞬态异常可按工具策略有限重试；`MaxRetries` 不包含首次调用，`attempt_count` 包含首次调用，`retry_count` 只统计额外重试。
+- 默认查询工具和 Capability Tool 最多重试 2 次，即最多 3 次总 attempt；默认退避为 150ms 起步、指数退避、full jitter、最大 1s、总耗时上限 5s。
+- 所有写工具默认不自动重试，包括 `checkout_prepare`。只有完成明确幂等状态机并能返回同一份成功结果后，才允许逐个开启写工具重试。
+- backoff 等待必须响应父 context 取消；如果下一次 delay 或 attempt 会超过父 deadline / 工具 `MaxElapsed`，立即停止重试。
+
+错误分类规则：
+
+- 参数错误、JSON 参数错误、权限/鉴权失败、工具未注册、业务拒绝、调用方 `context.Canceled`、未知错误默认永久失败，不重试。
+- `bizerr.Parse` 优先识别 gRPC `codes.Aborted` 中的业务错误；`Aborted` 默认不重试，避免库存不足、订单状态不允许等业务错误触发无效重试。
+- `Unavailable`、attempt `DeadlineExceeded`、网络超时、依赖空响应可按工具策略重试。
+- `ResourceExhausted` 暂不默认重试，除非后续工具明确声明安全且有可用的 retry 信息。
+- 写工具超时或结果无法确认时，`business_outcome=unknown`，不得声称成功或未执行；只有 `business_outcome=executed` 才能设置 `BusinessExecuted=true`。
+
+第二层：conversation 全局兜底预算。
+
+- 后续使用 Redis 按 `conversationID + runID` 管控本轮对话的总重试预算，防止多个工具连续瞬态失败导致资源被耗尽。
+- 真正安排 retry 前占用预算；Redis 操作用 Lua 原子完成检查、递增和 TTL 设置。
+- Redis 不可用时 fail-open 到单工具上限，并记录治理降级日志，不能让治理组件成为工具全面不可用的新单点。
+- 除 retry 预算外，还需要 `max_tool_calls_per_run` 和同工具同参数终态失败短期去重，避免模型收到失败后在同一 run 内循环调用。
+
+第三层：熔断降级。
+
+- 后续以环境 + RPC service + method 作为主熔断 key，必要时再细分到工具名。
+- 只累计依赖故障：网络错误、`Unavailable`、服务端超时；不累计参数、权限、业务拒绝、用户级限流和调用方取消。
+- Redis Lua 维护 `closed/open/half_open` 状态；open 到期后只允许少量带租约的 half-open probe。
+- probe 成功关闭熔断，失败重新打开并延长窗口；Redis 故障时 fail-open，并记录熔断治理降级指标。
+- 高流量场景优先采用“最小样本数 + 失败率”，例如至少 20 次调用且失败率超过 50%；低流量可保留短窗口连续失败阈值。
+
+第四层：可观测日志层。
+
+- 每次最终工具调用仍只写一条 `ai_tool_calls`，`result` 保存最终 envelope。
+- envelope 的 `attempt_trail` 记录每次 attempt 的状态、错误类别、错误码、耗时和是否发起 RPC。
+- retry scheduled、retry exhausted、permanent failure、budget exceeded、circuit open/half-open/closed、治理组件降级都要有结构化日志。
+- 日志字段至少包含 `conversation_id`、`run_id`、`tool_call_id`、`tool_name`、`attempt`、`retry_count`、`delay_ms`、`error_kind`、`error_code`。
+
+当前阶段只落地第一层工具层重试；conversation 全局预算、熔断和更完整的观测指标作为后续阶段推进。
+
+### 3.9 Confirmation Manager
 高风险操作必须进入确认流程。
 职责：
 - 创建确认记录。
@@ -308,12 +405,13 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 ### 4.3 ai_tool_calls
 | 字段 | 说明 |
 |---|---|
-| id | 调用 ID |
+| id | 自增主键 |
 | conversation_id | 会话 ID |
+| tool_call_id | 模型真实工具调用 ID |
 | user_id | 用户 ID |
 | tool_name | 工具名称 |
 | arguments | 工具参数 |
-| result_summary | 结果摘要 |
+| result | 最终工具结果 envelope；成功时 `result` 子字段保存真实工具返回 JSON，失败时保存安全错误与 attempt trail |
 | status | success / failed |
 | error_message | 错误信息 |
 | latency_ms | 耗时 |
@@ -336,24 +434,20 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 | executed_at | 执行时间 |
 | created_at | 创建时间 |
 
-### 4.5 ai_user_memories
+### 4.5 ai_user_memory_events
 | 字段 | 说明 |
 |---|---|
-| id | 记忆 ID |
+| id | 事件 ID |
 | user_id | 用户 ID |
-| memory_key | 用户内稳定记忆键 |
-| memory_type | instruction / preference / price / profile_fact |
-| content | 记忆内容 |
-| confidence | 置信度 |
-| source | explicit / inferred |
-| source_message_id | 来源消息 ID |
-| status | active / superseded / deleted / expired |
-| expires_at | 过期时间 |
-| last_confirmed_at | 最近确认时间 |
+| type | milestone / event |
+| event_date | 事件时间 |
+| summary | 事件摘要 |
+| keywords | 检索关键词 |
+| status | active / deleted |
 | created_at | 创建时间 |
 | updated_at | 更新时间 |
 
-长期记忆采用“显式 + 受控推断”策略。用户明确要求记住的内容可直接保存；推断偏好必须经过置信度、来源、敏感信息和 TTL 策略校验。模型只能生成候选，不能直接写库。
+长期事件记录用户时间线、关键里程碑和可检索历史事实。`MemoryProvider.Retrieve` 只注入最近事件；更早事件通过 `search_user_memory` 按需检索。结构化偏好和稳定画像保存在 `ai_user_profiles`。
 
 ### 4.6 ai_conversation_summaries
 
@@ -417,26 +511,36 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 
 ### 5.4 创建订单流程
 1. 用户表达购买意图。
-2. AI 确认商品、数量、优惠券、地址、支付方式；缺少参数时先追问，不猜测。
+2. AI 确认商品、数量、优惠券、地址；支付方式固定为支付宝，缺少参数时先追问，不猜测。
 3. 没有 `pre_order_id` 时调用 `checkout_prepare` 创建预结算。
 4. 使用当前用户身份查询预结算详情，取得应付金额和商品数量。
 5. 创建 `order_create` 确认请求并中断；使用优惠券时先调用 `coupon_calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
-6. 用户确认后，由确认状态机的唯一 winner 使用 checkpoint 恢复原工具调用，并通过 Execution Guard 调用 `order_create`。
+6. 用户确认后，由确认状态机的唯一 winner 使用 checkpoint 恢复原工具调用，并通过 Execution Guard 调用 `order-api POST /douyin/order/create`。
 7. 成功标记确认记录为 `executed`，失败标记为 `failed`，并返回真实订单结果。
 
 ### 5.5 上下文构建流程
 
 1. Conversation Manager 校验会话归属并保存当前用户原始消息。
-2. Context Manager 构建 `AgentContext`。
-3. 加载最新会话摘要、水位后的近期原文、有效长期记忆、活跃 TaskState、pending confirmation、最近一次完整工具结果和历史 ToolCallRef。
-4. 如果未压缩消息达到 30 条，异步将最早 10 条与旧摘要合并成新摘要，之后仍保留最近 20 条原文。
-5. AgentContext 包含当前用户输入、摘要、近期 20 条原文、最近一次完整工具结果、历史工具引用、TaskState、UserMemory 和可选 UserProfile。
-6. Supervisor Runner 在 `internal/eino` 边界转换消息后调用 ADK Supervisor。
-7. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 负责本领域工具选择与执行。
-8. 工具和 assistant 结果持久化后更新 TaskState，并异步评估是否需要生成新摘要或长期记忆候选。
-9. 摘要、记忆或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
+2. ChatLogic 将当前用户输入作为最小 user message 交给 Supervisor Runner。
+3. MemoryMiddleware 在 root model 调用前加载最新会话摘要、水位后的近期原文、长期事件、活跃 TaskState、pending confirmation、最近一次完整工具调用和最近工具调用最小列表。
+4. MemoryProvider 返回 history 和 runtime context；runtime context 追加到当前 user message，不写入原始历史。
+5. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 负责本领域工具选择与执行。
+6. 工具和 assistant 结果持久化后，ChatLogic 在 `runSupervisor` 正常返回后异步调用 `updateConversationMemory`。
+7. 如果未压缩消息达到 30 条，`SummaryManager` 将最早 10 条与旧摘要合并成新摘要，返回本次 compressed message IDs；否则结束。
+8. 摘要创建时只发布一个 `AiMemoryUpdates` 事件；Profile consumer 和 Memory Event consumer 用同一批消息分别更新画像和长期事件。
+9. 摘要、长期事件或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
 
-工具结果持久化采用双字段兼容：`metadata.tool_result` 保存结构化机器 envelope，`metadata.data_json` 保留投影后的业务 JSON 供现有 SSE/旧消费者使用。Context Manager 优先读取 envelope，旧记录才回退读取 `data_json`。
+工具结果事实来源是 `ai_tool_calls.result`，保存最终工具结果 envelope，并通过 `tool_call_id` 与模型工具调用关联；成功 envelope 的 `result` 子字段保存真实工具返回 JSON。`get_tool_call_result` 可按 `tool_call_id` 读取当前用户当前 conversation 的历史工具结果；`ai_messages` 仍可保存 role=tool 消息和展示 metadata，但 Context Manager / MemoryProvider 不再从 `ai_messages.metadata` 读取工具结果。
+
+### 5.6 知识库检索（RAG）
+
+- 触发：普通 `user_message` 进入 Supervisor 前，用轻量分类模型（复用现有 Eino ChatModel）判断是否需要 RAG；分类上下文为最近 6 条消息 + 会话摘要。
+- 判断：输出 `{need_rag, confidence, reason}`，`need_rag=true` 且 `confidence>=0.6` 才检索；分类失败、检索失败或结果为空时静默降级为正常回答。
+- 检索：调用知识库平台 `POST /api/ragent/open-api/v1/retrieve`，`topK=5`，超时 3 秒不重试。
+- 缓存：先调知识库 Embedding API 生成 query 向量，再使用 Redis Vector（HNSW cosine）按 0.95 相似度查缓存；未命中才调检索，检索响应中的 `queryEmbedding` 用于更新缓存；缓存 TTL 24 小时，完整保存 topK 片段。
+- 注入：检索片段通过 `RetrieveRequest.RAGContext` 合并进 MemoryProvider 的 `ContextMessages`，只影响当前轮，不写历史。
+- 输出：`assistant_message` 的 `data` 携带按文档去重的 `sources`（document_id/title/document_url/chunks），前端显示“n篇来源”按钮，点击片段跳转知识库 `preview/doc/{documentId}`。
+- 持久化：sources 随 assistant 消息 metadata 落库，历史会话回看仍可展示。
 
 ## 6. 测试方案
 ### 6.1 单元测试
@@ -449,7 +553,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - Context Manager 的 Intent/Agent 组装来源。
 - ToolFact 的完整 JSON 恢复和关键 ID 保留。
 - 摘要复合水位推进和失败降级。
-- 长期记忆的显式写入、受控推断、冲突、过期、删除和用户隔离。
+- 长期事件检索、画像更新、删除/遗忘语义和用户隔离。
 - TaskState 状态条件更新和 checkpoint 恢复。
 
 ### 6.2 集成测试
@@ -497,9 +601,9 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 完成风控测试。
 
 第五阶段：增强能力  
-- 按 `docs/ai-agent-context-optimization.md` 分阶段接入 Context Manager。
-- 轻量 Context Manager、滚动摘要和 Token 估算日志。
-- 会话增量摘要、长期记忆和最小用户画像。
+- 按 `docs/context/customer-service-memory-architecture.md` 接入 MemoryProvider / MemoryMiddleware 上下文工程。
+- 滚动摘要、长期事件检索和 Token 估算日志。
+- 会话增量摘要、长期事件和最小用户画像。
 - Agent Run、TaskState 和可恢复 checkpoint。
 - 运营配置。
 - 模型切换。

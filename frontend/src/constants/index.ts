@@ -1,5 +1,6 @@
 export const API_BASE = import.meta.env.VITE_API_BASE || ''
 export const CONVERSATIONS_PAGE_SIZE = 30
+export const MESSAGES_PAGE_SIZE = 50
 
 export const STORAGE_KEYS = {
   TOKEN: 'go-mall-token',

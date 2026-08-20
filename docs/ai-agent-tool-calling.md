@@ -39,16 +39,17 @@ POST /douyin/ai/chat SSE user_message
 | SSE 网关 | `apis/ai/internal/logic/chatlogic.go` | 鉴权用户透传、协议校验、调用 Chat/ConfirmAction RPC stream、事件 flush |
 | 会话管理 | `services/aiagent/internal/conversation/manager.go` | 创建/校验会话、保存用户消息、加载有界历史 |
 | Supervisor Runner | `services/aiagent/internal/eino/agent.go` | 使用 Eino ADK ChatModelAgent + AgentTool 编排领域 SubAgent，负责意图识别、任务拆解、路由和总结 |
-| Tool Catalog | `services/aiagent/internal/tools/catalog.go` | 通过 `DefaultTools` 组装 `[]tools.Tool`，统一承载 schema、metadata、Handler 和确认摘要 |
+| Tool Catalog | `services/aiagent/internal/tools/catalog.go` / `tools/capability` | 通过 `DefaultBusinessTools` 和 `DefaultCapabilityTools` 组装统一 `[]tools.Tool` |
 | Tool Registry | `services/aiagent/internal/tools/registry.go` | 保存 `map[string]Tool`，返回 metadata、ToolInfo、InvokableTool adapter 和确认摘要 |
 | 领域 Handler | `services/aiagent/internal/tools/*_tools.go` | 转换参数、调用既有业务 RPC、压缩返回结果 |
 | Executor | `services/aiagent/internal/tools/executor.go` | 工具白名单检查、敏感参数剔除、可信用户注入、超时、统一事件和记录 |
 | Approval Manager | `services/aiagent/internal/tools/approval_manager.go` | 创建高风险确认并绑定 resume target；批准后由同一 adapter 进入 Executor |
 | Confirmation Manager | `services/aiagent/internal/confirmation/manager.go` | 确认状态机、用户/会话归属校验、过期和幂等控制 |
 | 审计 Recorder | `services/aiagent/internal/audit/recorder.go` | 所有调用写 `ai_tool_calls`，写操作额外调用 audit RPC |
+| Capability Tool | `services/aiagent/internal/tools/capability` | `search_user_memory` 和 `get_tool_call_result` 读取长期事件或历史工具结果，统一进入 Registry 和 Executor |
 | 领域 SubAgent | `services/aiagent/internal/eino/agent.go` | Product/Order/CartCheckout/Coupon/General Agent，各自只暴露本领域工具 |
 
-`services/aiagent/internal/svc/servicecontext.go` 在服务启动时创建并连接上述对象。注册顺序为：创建业务 RPC clients 和 recorder，调用 `tools.DefaultTools(...)` 得到完整工具 catalog，创建 Registry 和 Executor，创建 Approval Manager，最后创建 Eino Supervisor。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再存在 schema-only 占位工具或二次绑定。
+`services/aiagent/internal/svc/servicecontext.go` 在服务启动时创建并连接上述对象。注册顺序为：创建业务 RPC clients、store 和 recorder，调用 `tools.DefaultBusinessTools(...)` 与 `tools.DefaultCapabilityTools(...)` 得到统一工具 catalog，创建 Registry 和 Executor，创建 Approval Manager，最后创建 Eino Supervisor。旧的 `QueryTools`、`WriteTools`、`HighRiskTools` 运行时 manager 已删除，不再存在 schema-only 占位工具或二次绑定。
 
 ## 4. 工具注册机制
 
@@ -98,7 +99,7 @@ InvokableRun(JSON arguments)
   -> 返回结构化 data_json
 ```
 
-调用 Eino 包装器前，编排器必须通过 `tools.WithToolExecutionContext` 注入可信 `UserID`，并尽量携带 `ConversationID`、`MessageID` 和 `ClientIP` 供审计。当前在线 `ChatLogic` 通过 ADK Runner 注入该上下文；SubAgent 工具调用进入 Eino 包装器后再由 Execution Guard 执行业务 RPC。
+调用 Eino 包装器前，编排器必须通过 `tools.WithToolExecutionContext` 注入可信 `UserID`，并尽量携带 `ConversationID`、`MessageID` 和 `ClientIP` 供审计。工具真正执行时，Eino middleware 会从 `ToolContext.CallID` 补入真实模型 `tool_call_id`，该值不从模型参数或客户端读取。当前在线 `ChatLogic` 通过 ADK Runner 注入该上下文；SubAgent 工具调用进入 Eino 包装器后再由 Execution Guard 执行业务 RPC。
 
 ## 5. Supervisor 与工具选择
 
@@ -150,7 +151,7 @@ SubAgent 只绑定本领域 `ToolInfo` 和可执行工具。缺参追问、参�
 
 `Executor` 是当前实现中的 Execution Guard。Handler 收到的 `UserID` 只能来自 `ExecuteRequest.UserID`，不会从模型 arguments 中读取。每个具体 Handler 负责参数类型、范围及 RPC 返回状态校验，并只返回生成用户摘要所需的紧凑字段。
 
-默认查询超时为 3 秒，写操作超时为 5 秒，可由 `ToolTimeout` 配置覆盖。超时或 RPC 错误统一生成 `status=failed` 的 `tool_result`。
+默认查询超时为 3 秒，写操作超时为 5 秒，可由 `ToolTimeout` 配置覆盖。超时或 RPC 错误统一生成 `status=failed` 的结构化 `tool_result`。当前阶段已落地工具层重试：查询工具和 Capability Tool 默认最多重试 2 次，写工具默认不自动重试。
 
 ## 7. 高风险确认流程
 
@@ -171,7 +172,7 @@ Supervisor 调用领域 AgentTool
   -> 返回 confirmation_required
 ```
 
-首次请求不会调用目标写 RPC。`order_create` 在创建确认前还会以可信用户查询预结算详情；使用优惠券时调用 `coupon_calculate` 验证可用性并计算最新应付金额。
+首次请求不会调用目标写操作。`order_create` 在创建确认前还会以可信用户查询预结算详情；使用优惠券时调用 `coupon_calculate` 验证可用性并计算最新应付金额。
 
 ### 7.2 用户批准或拒绝
 
@@ -232,16 +233,32 @@ WrapperAuthMiddleware
 
 ## 9. 记录、审计与失败语义
 
-所有进入 Executor 的工具调用都会尝试写入 `ai_tool_calls`，记录 conversation ID、user ID、脱敏参数、工具名、状态、结果摘要、错误和耗时。写操作还会调用 audit 服务写审计日志。
+所有进入 Executor 的工具调用都会尝试写入 `ai_tool_calls`，记录 conversation ID、真实模型 tool call ID、user ID、脱敏参数、工具名、状态、最终工具结果 envelope、错误和耗时。成功 envelope 的 `result` 子字段保存真实工具返回 JSON，失败 envelope 保存安全错误和 attempt trail。写操作还会调用 audit 服务写审计日志。
+
+Capability Tool 也经过同一个 Executor，并写入 `ai_tool_calls`。`get_tool_call_result` 按可信 user ID + conversation ID + `tool_call_id` 读取已有 `ai_tool_calls.result`，本次读取调用本身也会生成新的工具调用记录。
 
 失败处理遵守以下语义：
 
-- Handler/RPC 失败：返回 `tool_result.failed`，不会生成成功结果。
-- 超时：明确返回“工具调用超时，未完成操作”。
+- Handler/RPC 失败：返回 `tool_result.failed`，不会生成成功结果，也不会把可预期工具失败升级成“AI 服务不可用”。
+- tool message 使用统一 envelope：`status`、`tool_name`、`attempt_count`、`retry_count`、`error`、`business_outcome`、`result`、`attempt_trail`。
+- iterator 必须解析 envelope 的真实 `status`；失败结果不能硬编码成 `success`，`BusinessExecuted` 只能由 `business_outcome=executed` 得出。
+- 超时：查询工具可按策略重试；写工具超时或执行结果无法确认时返回 `business_outcome=unknown`，不得声称成功或未执行。
+- 参数错误、权限错误、业务拒绝、`bizerr.Aborted`、调用方取消和未知错误默认不重试。
+- `Unavailable`、attempt `DeadlineExceeded`、网络超时和依赖空响应可按工具策略重试；当前查询/Capability 默认最多 2 次 retry。
+- `error.message` 是安全提示，原始网络、数据库、连接串、token 等内部错误只进入日志和受控审计字段，不直接交给模型。
 - 查询审计记录失败：业务结果保持原状态，记录错误日志。
 - 写操作业务成功但审计失败：事件改为 failed，`data_json.business_executed=true`，提示操作已完成但审计失败，防止用户盲目重试。
 - 高风险业务已执行但后续记录失败：确认仍标为 `executed`，避免确认 ID 被重复使用。
 - 消息持久化失败且业务已执行：返回“业务结果已产生，请勿重复操作”。
+
+完整工具失败治理按四层设计：
+
+1. 工具层重试：`Executor` 内部按工具 retry policy 对瞬态失败做有限指数退避重试，并输出最终 envelope。
+2. Conversation 全局预算：后续用 Redis 按 `conversationID + runID` 管控本轮对话的总 retry 和 tool call 上限，防止模型循环调用。
+3. 熔断降级：后续按环境 + RPC service + method 维护依赖熔断状态，只累计依赖故障，使用 open / half-open / closed 状态和少量 probe 恢复。
+4. 可观测日志：最终 `ai_tool_calls.result` 保存 envelope，日志记录 retry、预算、熔断和治理降级事件。
+
+当前实现范围仅包含第一层工具层重试；全局预算、熔断和完整治理指标后续独立推进。
 
 ## 10. 已注册工具与 RPC 映射
 
@@ -265,7 +282,7 @@ WrapperAuthMiddleware
 | `coupon_my_list` | 查询 | 否 | `Coupons.ListUserCoupons` |
 | `coupon_usage_list` | 查询 | 否 | `Coupons.ListCouponUsages` |
 | `coupon_calculate` | 查询 | 否 | `Coupons.CalculateCoupon` |
-| `order_create` | 高风险写 | 是 | `OrderService.CreateOrder` |
+| `order_create` | 高风险写 | 是 | `order-api POST /douyin/order/create` |
 | `order_cancel` | 高风险写 | 是 | `OrderService.CancelOrder` |
 
 ## 11. SSE 输出
@@ -287,9 +304,9 @@ WrapperAuthMiddleware
 新增工具应按以下顺序完成：
 
 1. 在 `internal/domain/tool.go` 定义稳定工具名。
-2. 在 `DefaultTools` 的默认 `[]Tool` catalog 中声明 schema、风险、确认、超时、读写分类和 RPC 映射；schema 不得包含 `user_id`。
+2. 在 `DefaultBusinessTools` 的默认 `[]Tool` catalog 中声明 schema、风险、确认、超时、读写分类和 RPC 映射；schema 不得包含 `user_id`。
 3. 在对应 `*_tools.go` 增加 Handler，所有用户数据 RPC 使用 `HandlerRequest.UserID`。
-4. 将 Handler 合并到 `DefaultTools` 的 handler map；高风险工具同时提供 `ConfirmationSummaryFunc`。
+4. 将 Handler 合并到 `DefaultBusinessTools` 的 handler map；高风险工具同时提供 `ConfirmationSummaryFunc`。
 5. 确保结果结构紧凑，RPC 失败返回 error 而不是成功摘要。
 6. 为 schema、参数转换、用户 ID 覆盖、超时、审计和确认策略补充测试。
 7. 若工具需要被当前在线聊天链路选择，同步更新 intent prompt；明确中文意图还应按需要扩展规则 Planner。

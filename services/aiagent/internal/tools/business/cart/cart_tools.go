@@ -1,0 +1,309 @@
+package cart_tools
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
+	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
+	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
+	"google.golang.org/grpc"
+)
+
+type CartQueryRPC interface {
+	CartItemList(ctx context.Context, in *cartsclient.UserInfo, opts ...grpc.CallOption) (*cartsclient.CartItemListResponse, error)
+}
+
+type CartWriteRPC interface {
+	CartItemList(ctx context.Context, in *cartsclient.UserInfo, opts ...grpc.CallOption) (*cartsclient.CartItemListResponse, error)
+	CreateCartItem(ctx context.Context, in *cartsclient.CartItemRequest, opts ...grpc.CallOption) (*cartsclient.CreateCartResponse, error)
+	SubCartItem(ctx context.Context, in *cartsclient.CartItemRequest, opts ...grpc.CallOption) (*cartsclient.SubCartResponse, error)
+}
+
+type CartHighRiskRPC interface {
+	CartItemList(ctx context.Context, in *cartsclient.UserInfo, opts ...grpc.CallOption) (*cartsclient.CartItemListResponse, error)
+	DeleteCartItem(ctx context.Context, in *cartsclient.CartItemRequest, opts ...grpc.CallOption) (*cartsclient.EmptyCartResponse, error)
+}
+
+func CartQueryHandlers(rpc CartQueryRPC) map[string]core.HandlerFunc {
+	if rpc == nil {
+		return nil
+	}
+	return map[string]core.HandlerFunc{
+		domain.ToolCartList: cartListHandler(rpc),
+	}
+}
+
+func CartWriteHandlers(rpc CartWriteRPC) map[string]core.HandlerFunc {
+	if rpc == nil {
+		return nil
+	}
+	return map[string]core.HandlerFunc{
+		domain.ToolCartAdd: cartAddHandler(rpc),
+		domain.ToolCartSub: cartSubHandler(rpc),
+	}
+}
+
+func CartHighRiskHandlers(rpc CartHighRiskRPC) map[string]core.HandlerFunc {
+	if rpc == nil {
+		return nil
+	}
+	return map[string]core.HandlerFunc{
+		domain.ToolCartDelete: cartDeleteHandler(rpc),
+	}
+}
+
+// 删除购物车条目工具处理函数
+func cartDeleteHandler(rpc CartHighRiskRPC) core.HandlerFunc {
+	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
+		userID, err := helper.AuthenticatedUserID32(req.UserID)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		cartItemValue, err := helper.RequiredInt64Argument(req.Arguments, "cart_item_id")
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		cartItemID, err := helper.PositiveInt32(cartItemValue, "cart_item_id")
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		listResp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_delete list rpc: %w", err)
+		}
+		if listResp == nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_delete list returned nil response")
+		}
+		if err := helper.ValidateRPCResponse("cart_delete list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+		item := OwnedCartItem(listResp.Data, cartItemID, userID)
+		if item == nil {
+			return core.HandlerResult{}, helper.InvalidArgument("cart_item_id", "does not belong to authenticated user")
+		}
+		resp, err := rpc.DeleteCartItem(ctx, &cartsclient.CartItemRequest{
+			Id:        cartItemID,
+			UserId:    userID,
+			ProductId: item.ProductId,
+		})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_delete rpc: %w", err)
+		}
+		if resp == nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_delete returned nil response")
+		}
+		if err := helper.ValidateRPCResponse("cart_delete", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+		return core.HandlerResult{
+			Data:    map[string]any{"cart_item_id": cartItemID, "product_id": item.ProductId},
+			Summary: fmt.Sprintf("购物车条目 %d 已删除。", cartItemID),
+		}, nil
+	}
+}
+
+// cartAddHandler 添加商品到购物车工具处理函数
+func cartAddHandler(rpc CartWriteRPC) core.HandlerFunc {
+	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
+		userID, err := helper.AuthenticatedUserID32(req.UserID)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		productValue, err := helper.RequiredInt64Argument(req.Arguments, "product_id")
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		productID, err := helper.PositiveInt32(productValue, "product_id")
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		quantity, err := writeQuantity(req.Arguments)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+
+		resp, err := rpc.CreateCartItem(ctx, &cartsclient.CartItemRequest{
+			UserId:    userID,
+			ProductId: productID,
+			Quantity:  quantity,
+		})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_add rpc: %w", err)
+		}
+		if resp == nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_add returned nil response")
+		}
+		if err := helper.ValidateRPCResponse("cart_add", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+
+		return core.HandlerResult{
+			Data: map[string]any{
+				"cart_item_id":   resp.Id,
+				"product_id":     productID,
+				"added_quantity": quantity,
+			},
+			Summary: fmt.Sprintf("已将商品 %d 加入购物车，数量增加 %d。", productID, quantity),
+		}, nil
+	}
+}
+
+// cartSubHandler 删除商品从购物车工具处理函数
+func cartSubHandler(rpc CartWriteRPC) core.HandlerFunc {
+	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
+		// 解析参数
+		userID, err := helper.AuthenticatedUserID32(req.UserID)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		cartItemValue, err := helper.RequiredInt64Argument(req.Arguments, "cart_item_id")
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		cartItemID, err := helper.PositiveInt32(cartItemValue, "cart_item_id")
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		quantity, err := writeQuantity(req.Arguments)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+
+		// 获取该用户的购物车列表
+		resp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_sub list rpc: %w", err)
+		}
+		if resp == nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_sub list returned nil response")
+		}
+		if err := helper.ValidateRPCResponse("cart_sub list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+		// 检查购物车项是否属于该用户
+		item := OwnedCartItem(resp.Data, cartItemID, userID)
+		if item == nil {
+			return core.HandlerResult{}, helper.InvalidArgument("cart_item_id", "does not belong to authenticated user")
+		}
+		if quantity >= item.Quantity {
+			return core.HandlerResult{}, helper.InvalidArgument("quantity", "would remove the cart item; use cart_delete with confirmation")
+		}
+
+		result, err := rpc.SubCartItem(ctx, &cartsclient.CartItemRequest{
+			Id:        cartItemID,
+			UserId:    userID,
+			ProductId: item.ProductId,
+			Quantity:  quantity,
+		})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_sub rpc: %w", err)
+		}
+		if result == nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_sub returned nil response")
+		}
+		if err := helper.ValidateRPCResponse("cart_sub", result, int64(result.StatusCode), result.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+
+		remaining := item.Quantity - quantity
+		return core.HandlerResult{
+			Data: map[string]any{
+				"cart_item_id":        cartItemID,
+				"product_id":          item.ProductId,
+				"subtracted_quantity": quantity,
+				"remaining_quantity":  remaining,
+			},
+			Summary: fmt.Sprintf("购物车商品数量已减少 %d，剩余 %d。", quantity, remaining),
+		}, nil
+	}
+}
+
+// writeQuantity 解析并验证购物车操作的数量参数，确保数量在1-100之间
+func writeQuantity(args map[string]any) (int32, error) {
+	value, err := helper.RequiredInt64Argument(args, "quantity")
+	if err != nil {
+		return 0, err
+	}
+	quantity, err := helper.PositiveInt32(value, "quantity")
+	if err != nil {
+		return 0, err
+	}
+	if quantity > 100 {
+		return 0, helper.InvalidArgument("quantity", "must not exceed 100")
+	}
+	return quantity, nil
+}
+
+// OwnedCartItem 检查并返回用户拥有的购物车项
+func OwnedCartItem(items []*cartsclient.CartInfoResponse, cartItemID, userID int32) *cartsclient.CartInfoResponse {
+	for _, item := range items {
+		if item != nil && item.Id == cartItemID && item.UserId == userID {
+			return item
+		}
+	}
+	return nil
+}
+
+// 购物车查询：获取用户购物车列表
+func cartListHandler(rpc CartQueryRPC) core.HandlerFunc {
+	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
+		userID, err := helper.AuthenticatedUserID32(req.UserID)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		page, pageSize, err := helper.QueryPagination(req.Arguments)
+		if err != nil {
+			return core.HandlerResult{}, err
+		}
+		resp, err := rpc.CartItemList(ctx, &cartsclient.UserInfo{Id: userID})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("cart_list rpc: %w", err)
+		}
+		if resp == nil {
+			return core.HandlerResult{}, fmt.Errorf("%w: cart_list returned nil response", helper.ErrQueryRPCUnavailable)
+		}
+		if err := helper.ValidateRPCResponse("cart_list", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+		pageItems := paginateCartItems(resp.Data, page, pageSize)
+		items := make([]map[string]any, 0, len(pageItems))
+		for _, item := range pageItems {
+			if item == nil {
+				continue
+			}
+			items = append(items, map[string]any{
+				"cart_item_id": item.Id,
+				"product_id":   item.ProductId,
+				"quantity":     item.Quantity,
+				"checked":      item.Checked,
+			})
+		}
+		total := resp.Total
+		if total == 0 && len(resp.Data) > 0 {
+			total = int32(len(resp.Data))
+		}
+		return core.HandlerResult{
+			Data: map[string]any{
+				"total":     total,
+				"page":      page,
+				"page_size": pageSize,
+				"items":     items,
+			},
+			Summary: fmt.Sprintf("购物车共有 %d 件条目。", total),
+		}, nil
+	}
+}
+
+func paginateCartItems(items []*cartsclient.CartInfoResponse, page, pageSize int32) []*cartsclient.CartInfoResponse {
+	start := int64(page-1) * int64(pageSize)
+	if start >= int64(len(items)) {
+		return []*cartsclient.CartInfoResponse{}
+	}
+	end := start + int64(pageSize)
+	if end > int64(len(items)) {
+		end = int64(len(items))
+	}
+	return items[int(start):int(end)]
+}

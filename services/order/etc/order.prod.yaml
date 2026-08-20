@@ -21,6 +21,7 @@ RedisConf:
   Tls: false
 
 Log:
+  Stat: false
   ServiceName: "order-rpc"
   Mode: 'file'
   Encoding: "json"

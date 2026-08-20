@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/olivere/elastic/v7"
-	"github.com/qiniu/go-sdk/v7/storage"
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
+	esproduct "github.com/leventsg/e-commerce-AI-system/dal/es/product"
 	product2 "github.com/leventsg/e-commerce-AI-system/dal/model/products/product"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/products/product_categories"
 	"github.com/leventsg/e-commerce-AI-system/services/product/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/product/product"
+	"github.com/olivere/elastic/v7"
+	"github.com/qiniu/go-sdk/v7/storage"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"strconv"
 )
 
@@ -107,7 +108,7 @@ func (l *UpdateProductLogic) UpdateProduct(in *product.UpdateProductReq) (*produ
 	if _, err := l.svcCtx.EsClient.Update().
 		Index(biz.ProductEsIndexName).
 		Id(strconv.Itoa(int(in.Id))).
-		Doc(productRes).
+		Doc(esproduct.BuildESProductDocument(productRes, in.Categories)).
 		Refresh("true").
 		DocAsUpsert(true). // 如果文档不存在则创建
 		Do(l.ctx); err != nil && !elastic.IsNotFound(err) {

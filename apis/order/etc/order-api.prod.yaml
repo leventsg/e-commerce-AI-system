@@ -8,6 +8,7 @@ Timeout: 30000 # 默认为0，表示不超时
 
 # 日志配置
 Log:
+  Stat: false
   ServiceName: "order-api"
   Mode: 'file'
   Encoding: "json"

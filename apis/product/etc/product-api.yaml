@@ -1,4 +1,9 @@
 Name: product-api
+Log:
+  Stat: false
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/product-api"
 Host: 0.0.0.0
 Port: 8002
 

@@ -74,20 +74,19 @@ var (
 【前置条件】
 - 必须先完成 checkout_prepare 获得 pre_order_id
 - address_id：用户已选择的收货地址 ID
-- payment_method：1=微信支付, 2=支付宝
+- 支付方式固定为支付宝，工具调用时不需要 payment_method 参数
 - coupon_id：可选，用户在结算时选择使用的优惠券 ID
 
 【执行限制】
 - 高风险写操作，不可逆，执行前必须获得用户明确确认
-- pre_order_id、address_id、payment_method 为必填参数
+- pre_order_id、address_id 为必填参数
 - 系统自动校验：预订单有效性、地址归属、优惠券可用性
 - 同一 pre_order_id 不可重复创建订单（幂等保护）`
 
 	OrderCreateParameters = map[string]*schema.ParameterInfo{
-		"pre_order_id":   {Type: schema.String, Desc: "Pre-order ID.", Required: true},
-		"coupon_id":      {Type: schema.String, Desc: "Coupon ID to use for order creation.", Required: false},
-		"address_id":     {Type: schema.Integer, Desc: "Delivery address ID.", Required: true},
-		"payment_method": {Type: schema.Integer, Desc: "Payment method: 1 WeChat Pay, 2 Alipay.", Required: true},
+		"pre_order_id": {Type: schema.String, Desc: "Pre-order ID.", Required: true},
+		"coupon_id":    {Type: schema.String, Desc: "Coupon ID to use for order creation.", Required: false},
+		"address_id":   {Type: schema.Integer, Desc: "Delivery address ID.", Required: true},
 	}
 
 	// OrderCancel

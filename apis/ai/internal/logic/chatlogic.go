@@ -66,10 +66,22 @@ func (l *ChatLogic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var input types.ClientMessage
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSSERequestSize)).Decode(&input); err != nil {
+		l.Errorw("ai gateway request decode failed", logx.Field("component", "ai_gateway"), logx.Field("stage", "request_received"), logx.Field("user_id", userID), logx.Field("err", err))
 		l.writeEvent(w, flusher, errorEvent("", "消息格式无效"))
 		l.writeDone(w, flusher)
 		return
 	}
+	conversationID := strings.TrimSpace(input.ConversationID)
+	l.Infow("ai gateway request received",
+		logx.Field("component", "ai_gateway"),
+		logx.Field("stage", "request_received"),
+		logx.Field("event_type", input.Type),
+		logx.Field("conversation_id", conversationID),
+		logx.Field("user_id", userID),
+		logx.Field("client_message_id", strings.TrimSpace(input.ClientMessageID)),
+		logx.Field("confirmation_id", strings.TrimSpace(input.ConfirmationID)),
+		logx.Field("content", input.Content),
+	)
 	if len(input.UserID) > 0 {
 		l.writeEvent(w, flusher, errorEvent(strings.TrimSpace(input.ConversationID), "客户端不得提交 user_id"))
 		l.writeDone(w, flusher)
@@ -81,8 +93,16 @@ func (l *ChatLogic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if clientIP, ok := r.Context().Value(biz.ClientIPKey).(string); ok && strings.TrimSpace(clientIP) != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)
 	}
+	if accessToken := strings.TrimSpace(r.Header.Get(biz.TokenKey)); accessToken != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-access-token", accessToken)
+	}
+	for _, cookie := range r.Cookies() {
+		if cookie.Name == biz.RefreshTokenKey && strings.TrimSpace(cookie.Value) != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, "x-refresh-token", strings.TrimSpace(cookie.Value))
+			break
+		}
+	}
 
-	conversationID := strings.TrimSpace(input.ConversationID)
 	switch input.Type {
 	case types.ClientEventUserMessage:
 		l.handleUserMessage(ctx, w, flusher, userID, conversationID, input)
@@ -96,12 +116,14 @@ func (l *ChatLogic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (l *ChatLogic) handleUserMessage(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, userID uint32, conversationID string, input types.ClientMessage) {
 	if strings.TrimSpace(input.Content) == "" {
+		l.Errorw("ai gateway user message invalid", logx.Field("component", "ai_gateway"), logx.Field("stage", "validate_request"), logx.Field("conversation_id", conversationID), logx.Field("user_id", userID), logx.Field("err", "content 为必填字段"))
 		l.writeEvent(w, flusher, errorEvent(conversationID, "content 为必填字段"))
 		l.writeDone(w, flusher)
 		return
 	}
 	clientMessageID := strings.TrimSpace(input.ClientMessageID)
 	if clientMessageID == "" {
+		l.Errorw("ai gateway user message invalid", logx.Field("component", "ai_gateway"), logx.Field("stage", "validate_request"), logx.Field("conversation_id", conversationID), logx.Field("user_id", userID), logx.Field("err", "client_message_id 为必填字段"))
 		l.writeEvent(w, flusher, errorEvent(conversationID, "client_message_id 为必填字段"))
 		l.writeDone(w, flusher)
 		return
@@ -110,6 +132,13 @@ func (l *ChatLogic) handleUserMessage(ctx context.Context, w http.ResponseWriter
 	if source == "" {
 		source = "web"
 	}
+	l.Infow("ai gateway chat rpc call start",
+		logx.Field("component", "ai_gateway"),
+		logx.Field("stage", "rpc_call"),
+		logx.Field("conversation_id", conversationID),
+		logx.Field("user_id", userID),
+		logx.Field("client_message_id", clientMessageID),
+	)
 	stream, err := l.svcCtx.AiAgentRpc.Chat(ctx, &aiagent.ChatRequest{
 		UserId:          userID,
 		ConversationId:  conversationID,
@@ -119,6 +148,7 @@ func (l *ChatLogic) handleUserMessage(ctx context.Context, w http.ResponseWriter
 		ClientMessageId: clientMessageID,
 	})
 	if err != nil || stream == nil {
+		l.Errorw("ai gateway chat rpc call failed", logx.Field("component", "ai_gateway"), logx.Field("stage", "rpc_call"), logx.Field("conversation_id", conversationID), logx.Field("user_id", userID), logx.Field("client_message_id", clientMessageID), logx.Field("err", err))
 		l.writeEvent(w, flusher, errorEvent(conversationID, "AI 服务暂时不可用，请稍后重试"))
 		l.writeDone(w, flusher)
 		return
@@ -128,17 +158,29 @@ func (l *ChatLogic) handleUserMessage(ctx context.Context, w http.ResponseWriter
 
 func (l *ChatLogic) handleConfirmAction(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, userID uint32, conversationID string, input types.ClientMessage) {
 	if conversationID == "" || strings.TrimSpace(input.ConfirmationID) == "" || input.Approved == nil {
+		l.Errorw("ai gateway confirmation request invalid", logx.Field("component", "ai_gateway"), logx.Field("stage", "validate_request"), logx.Field("conversation_id", conversationID), logx.Field("user_id", userID), logx.Field("err", "conversation_id、confirmation_id 和 approved 为必填字段"))
 		l.writeEvent(w, flusher, errorEvent(conversationID, "conversation_id、confirmation_id 和 approved 为必填字段"))
 		l.writeDone(w, flusher)
 		return
 	}
+	confirmationID := strings.TrimSpace(input.ConfirmationID)
+	approved := *input.Approved
+	l.Infow("ai gateway confirmation rpc call start",
+		logx.Field("component", "ai_gateway"),
+		logx.Field("stage", "rpc_call"),
+		logx.Field("conversation_id", conversationID),
+		logx.Field("user_id", userID),
+		logx.Field("confirmation_id", confirmationID),
+		logx.Field("approved", approved),
+	)
 	stream, err := l.svcCtx.AiAgentRpc.ConfirmAction(ctx, &aiagent.ConfirmActionRequest{
 		UserId:         userID,
 		ConversationId: conversationID,
-		ConfirmationId: strings.TrimSpace(input.ConfirmationID),
-		Approved:       *input.Approved,
+		ConfirmationId: confirmationID,
+		Approved:       approved,
 	})
 	if err != nil || stream == nil {
+		l.Errorw("ai gateway confirmation rpc call failed", logx.Field("component", "ai_gateway"), logx.Field("stage", "rpc_call"), logx.Field("conversation_id", conversationID), logx.Field("user_id", userID), logx.Field("confirmation_id", confirmationID), logx.Field("err", err))
 		l.writeEvent(w, flusher, errorEvent(conversationID, "确认服务暂时不可用，请稍后重试"))
 		l.writeDone(w, flusher)
 		return
@@ -176,6 +218,7 @@ func (l *ChatLogic) proxyStream(ctx context.Context, w http.ResponseWriter, flus
 		select {
 		// 处理请求超时
 		case <-ctx.Done():
+			l.Errorw("ai gateway stream timeout", logx.Field("component", "ai_gateway"), logx.Field("stage", "sse_relay"), logx.Field("conversation_id", fallbackConversationID), logx.Field("err", ctx.Err()))
 			l.writeEvent(w, flusher, errorEvent(fallbackConversationID, "AI 服务请求超时，请稍后重试"))
 			l.writeDone(w, flusher)
 			return
@@ -185,14 +228,17 @@ func (l *ChatLogic) proxyStream(ctx context.Context, w http.ResponseWriter, flus
 		// 处理agent事件流
 		case item, ok := <-items:
 			if !ok {
+				l.Infow("ai gateway stream finished", logx.Field("component", "ai_gateway"), logx.Field("stage", "sse_relay"), logx.Field("conversation_id", fallbackConversationID), logx.Field("done", true))
 				l.writeDone(w, flusher)
 				return
 			}
 			if item.err != nil {
 				if errors.Is(item.err, io.EOF) {
+					l.Infow("ai gateway stream finished", logx.Field("component", "ai_gateway"), logx.Field("stage", "sse_relay"), logx.Field("conversation_id", fallbackConversationID), logx.Field("done", true))
 					l.writeDone(w, flusher)
 					return
 				}
+				l.Errorw("ai gateway stream error", logx.Field("component", "ai_gateway"), logx.Field("stage", "sse_relay"), logx.Field("conversation_id", fallbackConversationID), logx.Field("err", item.err))
 				if ctx.Err() != nil {
 					l.writeEvent(w, flusher, errorEvent(fallbackConversationID, "AI 服务请求超时，请稍后重试"))
 				} else {
@@ -203,9 +249,20 @@ func (l *ChatLogic) proxyStream(ctx context.Context, w http.ResponseWriter, flus
 			}
 			mapped, err := mapAgentEvent(item.event)
 			if err != nil {
+				l.Errorw("ai gateway event map failed", logx.Field("component", "ai_gateway"), logx.Field("stage", "sse_relay"), logx.Field("conversation_id", fallbackConversationID), logx.Field("err", err))
 				l.writeEvent(w, flusher, errorEvent(fallbackConversationID, err.Error()))
 				continue
 			}
+			l.Infow("ai gateway relay event",
+				logx.Field("component", "ai_gateway"),
+				logx.Field("stage", "sse_relay"),
+				logx.Field("event_type", mapped.Type),
+				logx.Field("conversation_id", mapped.ConversationID),
+				logx.Field("tool", mapped.Tool),
+				logx.Field("status", mapped.Status),
+				logx.Field("confirmation_id", mapped.ConfirmationID),
+				logx.Field("done", mapped.Done),
+			)
 			if mapped.ConversationID != "" {
 				fallbackConversationID = mapped.ConversationID
 			}
@@ -229,6 +286,14 @@ func mapAgentEvent(event *aiagent.AgentEvent) (types.ServerEvent, error) {
 			return types.ServerEvent{}, errors.New("AI 服务返回无效工具数据")
 		}
 		result.Data = json.RawMessage(event.DataJson)
+		if event.Type == "assistant_message" {
+			var sourcesPayload struct {
+				Sources []types.SourceInfo `json:"sources"`
+			}
+			if err := json.Unmarshal([]byte(event.DataJson), &sourcesPayload); err == nil {
+				result.Sources = sourcesPayload.Sources
+			}
+		}
 	}
 	return result, nil
 }

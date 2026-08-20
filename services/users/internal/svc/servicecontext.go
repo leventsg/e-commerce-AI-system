@@ -2,6 +2,7 @@ package svc
 
 import (
 	"fmt"
+
 	gorse "github.com/leventsg/e-commerce-AI-system/common/utils/gorse"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/user"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/user_address"
@@ -45,7 +46,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	}
 
 	return &ServiceContext{
-
 		Config:       c,
 		GorseClient:  gorseClient,
 		Model:        sqlx.NewMysql(c.MysqlConfig.DataSource),

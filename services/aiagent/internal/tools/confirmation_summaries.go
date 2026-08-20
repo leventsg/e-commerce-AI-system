@@ -5,6 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	cart "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/cart"
+	checkout "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/checkout"
+	coupon "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/coupon"
+	product "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/product"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
+	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/couponsclient"
@@ -12,22 +18,22 @@ import (
 )
 
 type confirmationSummaryBuilder struct {
-	cart     CartHighRiskRPC
-	product  ProductQueryRPC
-	checkout CheckoutQueryRPC
-	coupon   CouponCalculateRPC
+	cart     cart.CartHighRiskRPC
+	product  product.ProductQueryRPC
+	checkout checkout.CheckoutQueryRPC
+	coupon   coupon.CouponCalculateRPC
 }
 
-func (b *confirmationSummaryBuilder) cartDeleteSummary(ctx context.Context, req ExecuteRequest) (string, error) {
-	value, err := requiredInt64Argument(req.Arguments, "cart_item_id")
+func (b *confirmationSummaryBuilder) cartDeleteSummary(ctx context.Context, req core.ExecuteRequest) (string, error) {
+	value, err := helper.RequiredInt64Argument(req.Arguments, "cart_item_id")
 	if err != nil {
 		return "", err
 	}
-	cartItemID, err := positiveInt32(value, "cart_item_id")
+	cartItemID, err := helper.PositiveInt32(value, "cart_item_id")
 	if err != nil {
 		return "", err
 	}
-	userID, err := authenticatedUserID32(req.UserID)
+	userID, err := helper.AuthenticatedUserID32(req.UserID)
 	if err != nil {
 		return "", err
 	}
@@ -41,12 +47,12 @@ func (b *confirmationSummaryBuilder) cartDeleteSummary(ctx context.Context, req 
 	if listResp == nil {
 		return "", fmt.Errorf("cart_delete summary list returned nil response")
 	}
-	if err := validateRPCResponse("cart_delete summary list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
+	if err := helper.ValidateRPCResponse("cart_delete summary list", listResp, int64(listResp.StatusCode), listResp.StatusMsg); err != nil {
 		return "", err
 	}
-	item := ownedCartItem(listResp.Data, cartItemID, userID)
+	item := cart.OwnedCartItem(listResp.Data, cartItemID, userID)
 	if item == nil {
-		return "", invalidArgument("cart_item_id", "does not belong to authenticated user")
+		return "", fmt.Errorf("cart_delete summary: cart item %d not found for user %d", cartItemID, userID)
 	}
 	productLabel := fmt.Sprintf("商品 %d", item.ProductId)
 	if productName := b.cartDeleteProductName(ctx, uint32(item.ProductId), userID); productName != "" {
@@ -66,7 +72,7 @@ func (b *confirmationSummaryBuilder) cartDeleteProductName(ctx context.Context, 
 	if err != nil || resp == nil {
 		return ""
 	}
-	if err := validateRPCResponse("cart_delete summary product_detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+	if err := helper.ValidateRPCResponse("cart_delete summary product_detail", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 		return ""
 	}
 	if resp.Product == nil {
@@ -75,12 +81,12 @@ func (b *confirmationSummaryBuilder) cartDeleteProductName(ctx context.Context, 
 	return strings.TrimSpace(resp.Product.Name)
 }
 
-func (b *confirmationSummaryBuilder) orderCancelSummary(_ context.Context, req ExecuteRequest) (string, error) {
-	orderID, err := requiredStringArgument(req.Arguments, "order_id")
+func (b *confirmationSummaryBuilder) orderCancelSummary(_ context.Context, req core.ExecuteRequest) (string, error) {
+	orderID, err := helper.RequiredStringArgument(req.Arguments, "order_id")
 	if err != nil {
 		return "", err
 	}
-	reason, err := optionalStringArgument(req.Arguments, "reason")
+	reason, err := helper.OptionalStringArgument(req.Arguments, "reason")
 	if err != nil {
 		return "", err
 	}
@@ -90,29 +96,22 @@ func (b *confirmationSummaryBuilder) orderCancelSummary(_ context.Context, req E
 	return fmt.Sprintf("确认取消订单 %s？取消原因为：%s。", orderID, reason), nil
 }
 
-func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req ExecuteRequest) (string, error) {
-	preOrderID, err := requiredStringArgument(req.Arguments, "pre_order_id")
+func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req core.ExecuteRequest) (string, error) {
+	preOrderID, err := helper.RequiredStringArgument(req.Arguments, "pre_order_id")
 	if err != nil {
 		return "", err
 	}
-	addressValue, err := requiredInt64Argument(req.Arguments, "address_id")
+	addressValue, err := helper.RequiredInt64Argument(req.Arguments, "address_id")
 	if err != nil {
 		return "", err
 	}
-	if _, err := positiveInt32(addressValue, "address_id"); err != nil {
+	if _, err := helper.PositiveInt32(addressValue, "address_id"); err != nil {
 		return "", err
-	}
-	paymentValue, err := requiredInt64Argument(req.Arguments, "payment_method")
-	if err != nil {
-		return "", err
-	}
-	if paymentValue != 1 && paymentValue != 2 {
-		return "", invalidArgument("payment_method", "must be 1 or 2")
 	}
 	if b.checkout == nil {
 		return "", ErrToolHandlerRequired
 	}
-	userID, err := authenticatedUserID32(req.UserID)
+	userID, err := helper.AuthenticatedUserID32(req.UserID)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +122,7 @@ func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req
 	if resp == nil || resp.Data == nil {
 		return "", fmt.Errorf("checkout_detail before order_create returned empty checkout")
 	}
-	if err := validateRPCResponse("checkout_detail before order_create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+	if err := helper.ValidateRPCResponse("checkout_detail before order_create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
 		return "", err
 	}
 	if resp.Data.UserId != int64(userID) {
@@ -135,8 +134,8 @@ func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req
 			quantity += int64(item.Quantity)
 		}
 	}
-	summary := fmt.Sprintf("确认使用预订单 %s 创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, resp.Data.FinalAmount, quantity)
-	couponID, err := optionalStringArgument(req.Arguments, "coupon_id")
+	summary := fmt.Sprintf("确认使用预订单 %s 以支付宝创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, resp.Data.FinalAmount, quantity)
+	couponID, err := helper.OptionalStringArgument(req.Arguments, "coupon_id")
 	if err != nil {
 		return "", err
 	}
@@ -159,13 +158,13 @@ func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req
 		if calculated == nil {
 			return "", fmt.Errorf("coupon_calculate before order_create returned nil response")
 		}
-		if err := validateRPCResponse("coupon_calculate before order_create", calculated, int64(calculated.StatusCode), calculated.StatusMsg); err != nil {
+		if err := helper.ValidateRPCResponse("coupon_calculate before order_create", calculated, int64(calculated.StatusCode), calculated.StatusMsg); err != nil {
 			return "", err
 		}
 		if !calculated.IsUsable {
-			return "", invalidArgument("coupon_id", "is not usable for the checkout items")
+			return "", helper.InvalidArgument("coupon_id", "is not usable for the checkout items")
 		}
-		summary = fmt.Sprintf("确认使用预订单 %s 和优惠券 %s 创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, couponID, calculated.FinalAmount, quantity)
+		summary = fmt.Sprintf("确认使用预订单 %s 和优惠券 %s 以支付宝创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, couponID, calculated.FinalAmount, quantity)
 	}
 	return summary, nil
 }

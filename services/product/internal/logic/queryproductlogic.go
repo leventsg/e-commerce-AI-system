@@ -3,11 +3,12 @@ package logic
 import (
 	"context"
 	"encoding/json"
-	"github.com/olivere/elastic/v7"
-	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
+	esproduct "github.com/leventsg/e-commerce-AI-system/dal/es/product"
 	"github.com/leventsg/e-commerce-AI-system/services/product/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/product/product"
+	"github.com/olivere/elastic/v7"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type QueryProductLogic struct {
@@ -30,13 +31,15 @@ func (l *QueryProductLogic) QueryProduct(in *product.QueryProductReq) (*product.
 	boolQuery := l.buildESQuery(in)
 	// 分页参数
 	pageSize := biz.DefaultPageSize // 默认分页大小
+	page := 1
 	from := 0
 	if in.Paginator != nil && in.Paginator.PageSize > 0 {
 		pageSize = int(in.Paginator.PageSize)
 	}
 	if in.Paginator != nil && in.Paginator.Page > 0 {
-		from = int(in.Paginator.Page) * pageSize
+		page = int(in.Paginator.Page)
 	}
+	from = (page - 1) * pageSize
 	// 构建搜索服务
 	searchService := l.svcCtx.EsClient.Search().
 		Index(biz.ProductEsIndexName).
@@ -65,11 +68,20 @@ func (l *QueryProductLogic) QueryProduct(in *product.QueryProductReq) (*product.
 	// 处理查询结果
 	var products []*product.Product
 	for _, hit := range searchResult.Hits.Hits {
-		var p *product.Product
-		if err := json.Unmarshal(hit.Source, &p); err != nil {
+		var doc esproduct.ESProductDocument
+		if err := json.Unmarshal(hit.Source, &doc); err != nil {
 			continue
 		}
-		products = append(products, p)
+		products = append(products, &product.Product{
+			Id:          doc.ID,
+			Name:        doc.Name,
+			Description: doc.Description,
+			Picture:     doc.Picture,
+			Price:       doc.Price,
+			Categories:  doc.Categories,
+			CratedAt:    doc.CreatedAt,
+			UpdatedAt:   doc.UpdatedAt,
+		})
 	}
 
 	return &product.GetAllProductsResp{
@@ -90,7 +102,7 @@ func (l *QueryProductLogic) buildESQuery(req *product.QueryProductReq) *elastic.
 			elastic.NewMultiMatchQuery(req.Keyword,
 				"name^1",        // name字段权重1（默认）
 				"description^2", // description字段权重2
-			),
+			).Operator("and"),
 			// 短语匹配（description权重更高）
 			elastic.NewMatchPhraseQuery("name", req.Keyword).Boost(1),        // 权重1
 			elastic.NewMatchPhraseQuery("description", req.Keyword).Boost(3), // 权重3

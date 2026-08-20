@@ -14,8 +14,9 @@ Telemetry:
   Batcher: jaeger
   Sampler: 1.0
 Log:
+  Stat: false
   ServiceName: "audit-rpc"
-  Mode: 'console'
+  Mode: 'file'
   Encoding: "json"
   Path: "./logs/audit-rpc"
 

@@ -18,6 +18,7 @@ MysqlConfig:
   Conntimeout: 5
 
 Log:
+  Stat: false
   ServiceName: "products-rpc"
   Mode: 'file'
   Encoding: "json"

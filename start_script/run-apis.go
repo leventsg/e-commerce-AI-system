@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -23,6 +24,17 @@ type APIManager struct {
 	rootPath  string
 	mu        sync.Mutex
 	processes []*exec.Cmd
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 func NewAPIManager(rootPath string) *APIManager {
@@ -64,8 +76,9 @@ func (am *APIManager) startAPIs(dirName, ext string) error {
 			continue
 		}
 
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
+		fileWriter := &lockedWriter{w: logFile}
+		cmd.Stdout = io.MultiWriter(fileWriter, os.Stdout)
+		cmd.Stderr = io.MultiWriter(fileWriter, os.Stderr)
 		if err := cmd.Start(); err != nil {
 			_ = logFile.Close()
 			fmt.Printf("Error running %s %s: %v\n", dirName, apiName, err)

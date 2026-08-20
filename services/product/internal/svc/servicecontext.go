@@ -7,6 +7,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/dal/es/product"
 	"github.com/leventsg/e-commerce-AI-system/dal/model/products/categories"
 	product2 "github.com/leventsg/e-commerce-AI-system/dal/model/products/product"
+	"github.com/leventsg/e-commerce-AI-system/dal/model/products/product_categories"
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventoryclient"
 	"github.com/leventsg/e-commerce-AI-system/services/product/internal/config"
 	"time"
@@ -49,15 +50,19 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 	gorseClient := gorse.NewGorseClient(c.GorseConfig.GorseAddr, c.GorseConfig.GorseApikey)
+	productModel := product2.NewProductsModel(sqlx.NewMysql(c.MysqlConfig.DataSource))
+	categoryModel := categories.NewCategoriesModel(sqlx.NewMysql(c.MysqlConfig.DataSource))
+	productCategoryModel := product_categories.NewProductCategoriesModel(sqlx.NewMysql(c.MysqlConfig.DataSource))
+	product.SyncProductsToES(context.TODO(), client, productModel, productCategoryModel)
 	return &ServiceContext{
 		Config:          c,
 		Mysql:           sqlx.NewMysql(c.MysqlConfig.DataSource),
 		RedisClient:     redisClient,
 		EsClient:        client,
 		GorseClient:     gorseClient,
-		ProductModel:    product2.NewProductsModel(sqlx.NewMysql(c.MysqlConfig.DataSource)),
+		ProductModel:    productModel,
 		InventoryRpc:    inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc)),
-		CategoriesModel: categories.NewCategoriesModel(sqlx.NewMysql(c.MysqlConfig.DataSource)),
+		CategoriesModel: categoryModel,
 	}
 }
 func initEs(ctx context.Context, esClient *elastic.Client) error {

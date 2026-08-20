@@ -23,6 +23,7 @@ ProductRpc:
 
 # 日志配置
 Log:
+  Stat: false
   ServiceName: "carts-api"
   Mode: 'file'
   Encoding: "json"

@@ -1,5 +1,7 @@
 # AI Agent 轻量上下文优化方案（问题 1、3、5 一体化）
 
+> 迁移说明：本文记录的是早期轻量 Context Manager 方案。当前 AI 客服上下文主链路已迁移到 `MemoryProvider + MemoryMiddleware + SessionValues`，最新架构以 `docs/context/customer-service-memory-architecture.md` 和 `docs/context/customer-service-memory-implementation-plan.md` 为准。
+
 ## 1. 文档目的
 
 本文针对 `docs/question.txt` 中的问题 1（上下文工程）、问题 3（工具协议）和问题 5（工具结果被上下文拦截）设计一套适合本地开发阶段的轻量方案。
@@ -33,7 +35,7 @@ ConversationManager
 
 1. 超出窗口的消息仍在数据库，但模型无法再看到。
 2. 没有滚动摘要，过去已经确认的事实和未完成任务会随窗口滚动丢失。
-3. 旧消息的 `ai_messages.metadata.data_json` 保存了结构化工具结果，但旧消息转换只向模型提供可读摘要，商品 ID、订单号、购物车条目 ID 等事实可能丢失。
+3. 工具结果如果只依赖 `ai_messages` 的可读摘要，商品 ID、订单号、购物车条目 ID 等事实可能丢失；上下文工具事实应从 `ai_tool_calls.result` 读取。
 4. Planner 和普通 ChatModel 使用不同的手写历史裁剪逻辑，输入口径不一致。
 5. `ai_user_memories` 只有表和 Model，尚未接入读写、冲突、过期和用户隔离流程。
 6. 没有轻量的上下文组装日志，无法快速解释一次模型调用用了哪些摘要、近期消息和工具引用。
@@ -292,8 +294,8 @@ type TaskStateStore interface {
 }
 
 type ToolResultStore interface {
-	FindLatestResult(ctx context.Context, userID uint64, conversationID string) (*ToolResultEnvelope, error)
-	FindRecentRefs(ctx context.Context, userID uint64, conversationID string, limit int) ([]ToolCallRef, error)
+	FindLatestToolResult(ctx context.Context, userID uint64, conversationID string) (*ToolResultEnvelope, error)
+	FindRecentToolCall(ctx context.Context, userID uint64, conversationID string, limit int) ([]ToolCallRef, error)
 	FindResultByCallID(ctx context.Context, userID uint64, conversationID, toolCallID string) (*ToolResultEnvelope, error)
 }
 ```
@@ -377,7 +379,7 @@ ORDER BY created_at ASC, id ASC
 
 ### 10.1 持久化
 
-工具结果必须继续以结构化 envelope 保存到 `ai_messages.metadata.tool_result`。为兼容 WebSocket 和旧消费者，投影后的业务 JSON 可以继续保存在 `metadata.data_json`，`content` 只保存用户可读 summary。
+工具结果事实来源是 `ai_tool_calls.result`，保存真实工具返回 JSON，并通过 `tool_call_id` 与模型工具调用关联。`ai_messages` 的 tool 消息只用于历史展示和幂等重放，不再作为上下文工具事实来源。
 
 ### 10.2 进入上下文的规则
 
@@ -619,7 +621,7 @@ CREATE TABLE `ai_user_profiles` (
 ### Phase 1：工具结果协议和引用
 
 - 保留统一 ToolDefinition、BaseTool 和 ToolResult envelope。
-- 工具结果完整保存到 `metadata.tool_result`。
+- 工具结果完整保存到 `ai_tool_calls.result`。
 - 增加 ToolCallRef 投影，提取 tool_call_id、tool_name、summary、created_at 和关键 entity ID。
 
 退出条件：成功工具结果可完整恢复；历史工具引用不会丢关键 ID；失败工具不会成为成功事实。
@@ -782,7 +784,7 @@ go test ./...
 
 **工作项：**
 
-1. 从 `ai_messages.metadata.data_json`、`metadata.tool_result` 和 `ai_tool_calls` 采集现有工具结果样例。
+1. 从 `ai_tool_calls.result` 采集现有工具结果样例。
 2. 为 `product_detail`、`product_recommend`、`cart_list`、`order_get`、`checkout_detail`、`coupon_calculate` 建立结果字段 allowlist。
 3. 标记每个字段的类型、是否关键标识、是否动态、TTL 和是否允许进入模型。
 4. 建立端到端黄金场景：
@@ -853,7 +855,7 @@ type BaseTool interface {
 
 1. 固定 ToolResult envelope 的字段语义。
 2. 为每个工具注册 allowlist projector，只删除明确无关字段，不截断 ID、订单号、数量和状态。
-3. 保存完整合法 envelope 到 `ai_messages.metadata.tool_result`。
+3. 保存真实工具返回 JSON 到 `ai_tool_calls.result`。
 4. 从 envelope 中提取 ToolCallRef，保留 tool_call_id、tool_name、summary、created_at 和关键 entity ID。
 5. AgentContext 只注入最近一次完整工具结果和最近固定数量 ToolCallRef。
 6. 增加按 `tool_call_id` 读取完整工具结果的受控接口，并强制 user ID + conversation ID 校验。

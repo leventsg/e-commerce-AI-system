@@ -22,6 +22,8 @@ services:
     environment:
       REDIS_ARGS: "--requirepass leventsg --appendonly yes"
     restart: unless-stopped
+    ports:
+      - "6379:6379"
     networks:
       - go-mall
     healthcheck:

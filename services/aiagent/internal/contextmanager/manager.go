@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
+	aitoolcalls "github.com/leventsg/e-commerce-AI-system/dal/model/ai/tool_calls"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	agentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/agent"
 )
@@ -18,7 +19,6 @@ const (
 	recentMessageLimit      = 20
 	recentMessageQueryLimit = recentMessageLimit + 1
 	recentToolRefLimit      = 20
-	activeMemoryLimit       = 12
 )
 
 var (
@@ -34,10 +34,6 @@ type SummaryStore interface {
 	FindLatest(ctx context.Context, userID uint64, conversationID string) (*domain.ConversationSummary, error)
 }
 
-type MemoryStore interface {
-	ListActive(ctx context.Context, userID uint64, limit int) ([]domain.UserMemory, error)
-}
-
 type TaskStateStore interface {
 	FindActive(ctx context.Context, userID uint64, conversationID, runID string) (*domain.TaskState, error)
 }
@@ -47,15 +43,14 @@ type UserProfileStore interface {
 }
 
 type ToolContextStore interface {
-	FindLatestResult(ctx context.Context, userID uint64, conversationID string) (*domain.ToolResultEnvelope, error)
-	FindRecentRefs(ctx context.Context, userID uint64, conversationID string, limit int) ([]domain.ToolCallRef, error)
+	FindLatestToolResult(ctx context.Context, userID uint64, conversationID string) (*aitoolcalls.AiToolCalls, error)
+	FindRecentToolCall(ctx context.Context, userID uint64, conversationID string, limit int) ([]*aitoolcalls.AiToolCalls, error)
 }
 
 type manager struct {
 	messages    MessageStore
 	tools       ToolContextStore
 	summaries   SummaryStore // 会话级记忆
-	memories    MemoryStore  // 用户级记忆
 	taskStates  TaskStateStore
 	userProfile UserProfileStore
 }
@@ -64,10 +59,6 @@ type Option func(*manager)
 
 func WithSummaryStore(store SummaryStore) Option {
 	return func(m *manager) { m.summaries = store }
-}
-
-func WithMemoryStore(store MemoryStore) Option {
-	return func(m *manager) { m.memories = store }
 }
 
 func WithTaskStateStore(store TaskStateStore) Option {
@@ -124,7 +115,6 @@ func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*d
 
 	m.appendToolContext(ctx, req, result)
 	m.appendTaskState(ctx, req, result)
-	m.appendAgentMemory(ctx, req, result)
 	m.appendUserProfile(ctx, req, result)
 
 	result.Messages = append(result.Messages, domain.ContextMessage{Role: domain.ContextRoleUser, Content: req.CurrentInput})
@@ -133,8 +123,8 @@ func (m *manager) Build(ctx context.Context, req domain.BuildContextRequest) (*d
 }
 
 var (
-	sensitiveContextAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*=\s*[^\s,，;；]+`)
-	sensitiveContextColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|session_id|auth)\b\s*[:：]\s*[^\s,，;；]+`)
+	sensitiveContextAssignmentPattern = regexp.MustCompile(`(?i)\b(user_id|token|auth)\b\s*=\s*[^\s,，;；]+`)
+	sensitiveContextColonPattern      = regexp.MustCompile(`(?i)\b(user_id|token|auth)\b\s*[:：]\s*[^\s,，;；]+`)
 )
 
 func redactSensitiveContext(content string) string {
@@ -157,31 +147,31 @@ func (m *manager) appendToolContext(ctx context.Context, req domain.BuildContext
 	if m.tools == nil {
 		return
 	}
-	latest, err := m.tools.FindLatestResult(ctx, req.UserID, req.ConversationID)
+	latest, err := m.tools.FindLatestToolResult(ctx, req.UserID, req.ConversationID)
 	if err == nil && latest != nil {
 		if message, ok := structuredContextMessage("latest_tool_result", latest); ok {
 			result.Messages = append(result.Messages, message)
-			result.LatestToolCallID = latest.ToolCallID
+			result.LatestToolCallID = latest.ToolCallId
 		}
 	}
 
-	refs, err := m.tools.FindRecentRefs(ctx, req.UserID, req.ConversationID, recentToolRefLimit)
+	recent, err := m.tools.FindRecentToolCall(ctx, req.UserID, req.ConversationID, recentToolRefLimit)
 	if err != nil {
 		return
 	}
-	historical := make([]domain.ToolCallRef, 0, len(refs))
-	for _, ref := range refs {
-		if ref.ToolCallID == result.LatestToolCallID {
+	historical := make([]*aitoolcalls.AiToolCalls, 0, len(recent))
+	for _, call := range recent {
+		if call == nil || call.ToolCallId == result.LatestToolCallID {
 			continue
 		}
-		historical = append(historical, ref)
+		historical = append(historical, call)
 	}
 	if len(historical) == 0 {
 		return
 	}
-	if message, ok := structuredContextMessage("tool_call_refs", historical); ok {
+	if message, ok := structuredContextMessage("recent_tool_calls", historical); ok {
 		result.Messages = append(result.Messages, message)
-		result.ToolCallRefCount = len(historical)
+		result.RecentToolCallCount = len(historical)
 	}
 }
 
@@ -194,19 +184,6 @@ func (m *manager) appendTaskState(ctx context.Context, req domain.BuildContextRe
 		return
 	}
 	if message, ok := structuredContextMessage("task_state", state); ok {
-		result.Messages = append(result.Messages, message)
-	}
-}
-
-func (m *manager) appendAgentMemory(ctx context.Context, req domain.BuildContextRequest, result *domain.BuildContextResult) {
-	if m.memories == nil {
-		return
-	}
-	memories, err := m.memories.ListActive(ctx, req.UserID, activeMemoryLimit)
-	if err != nil || len(memories) == 0 {
-		return
-	}
-	if message, ok := structuredContextMessage("user_memories", memories); ok {
 		result.Messages = append(result.Messages, message)
 	}
 }

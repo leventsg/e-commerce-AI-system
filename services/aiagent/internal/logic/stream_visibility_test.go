@@ -37,7 +37,7 @@ func TestAgentEventsToMessagesPersistsOnlyDurableEvents(t *testing.T) {
 	}
 }
 
-func TestRunSupervisorPersistsDurableEventsAndDoesNotForwardAssistantMessage(t *testing.T) {
+func TestRunSupervisorPersistsDurableEventsAndForwardsAssistantMessage(t *testing.T) {
 	ctx := context.Background()
 	messages := &confirmActionFakeMessagesModel{}
 	runner := &chatFakeRunner{streamEvents: []domain.AgentEvent{
@@ -61,7 +61,7 @@ func TestRunSupervisorPersistsDurableEventsAndDoesNotForwardAssistantMessage(t *
 		ConversationID:  "conv-1",
 		ClientMessageID: "client-1",
 		UserMessageID:   "msg-user",
-	}, nil, stream)
+	}, nil, stream, nil, nil)
 	if err != nil {
 		t.Fatalf("runSupervisor returned error: %v", err)
 	}
@@ -78,12 +78,10 @@ func TestRunSupervisorPersistsDurableEventsAndDoesNotForwardAssistantMessage(t *
 	sentTypes := make([]string, 0, len(stream.events))
 	for _, event := range stream.events {
 		sentTypes = append(sentTypes, event.Type)
-		if event.Type == domain.EventAssistantMessage {
-			t.Fatalf("assistant_message should not be forwarded, sent events=%+v", stream.events)
-		}
 	}
 	wantSentTypes := []string{
 		domain.EventAssistantDelta,
+		domain.EventAssistantMessage,
 		domain.EventToolProgress,
 		domain.EventToolResult,
 		domain.EventConfirmationRequired,

@@ -1,7 +1,15 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UIMessage, ConversationSummary, StreamingState, TraceStep } from '@/types'
-import type { AgentEvent, ClientMessage } from '@/types'
-import { streamAgentChat, streamConfirmAction } from '@/services/api/agent'
+import type { AgentEvent, ClientMessage, RAGSource } from '@/types'
+import {
+  streamAgentChat,
+  streamConfirmAction,
+  listSessions,
+  listMessages,
+  type SessionSummaryDTO,
+  type HistoryMessageDTO,
+} from '@/services/api/agent'
+import { CONVERSATIONS_PAGE_SIZE, MESSAGES_PAGE_SIZE } from '@/constants'
 import { useAuth } from '@/contexts'
 
 let idCounter = 0
@@ -58,6 +66,15 @@ function eventToolCallId(event: AgentEvent) {
   return undefined
 }
 
+function eventSources(event: AgentEvent): RAGSource[] | undefined {
+  if (event.sources && event.sources.length > 0) return event.sources
+  if (event.data && typeof event.data === 'object' && 'sources' in event.data) {
+    const sources = (event.data as { sources?: unknown }).sources
+    if (Array.isArray(sources)) return sources as RAGSource[]
+  }
+  return undefined
+}
+
 export function finalizeStreamingMessages(messages: UIMessage[], assistantMessageId = '') {
   const streamingIdx = assistantMessageId
     ? messages.findIndex(message => message.id === assistantMessageId)
@@ -83,6 +100,86 @@ function lastStreamingThinkingIndex(messages: UIMessage[], conversationId = '') 
 export function finalizeThinkingMessages(messages: UIMessage[], conversationId = '') {
   if (!messages.some(message => message.type === 'thinking' && message.streaming && messageBelongsToConversation(message, conversationId))) return messages
   return messages.map(message => message.type === 'thinking' && message.streaming && messageBelongsToConversation(message, conversationId) ? { ...message, streaming: false } : message)
+}
+
+/** 后端会话 DTO 转前端会话摘要；id 统一为 conversation_id。 */
+export function conversationSummaryFromDTO(dto: SessionSummaryDTO): ConversationSummary {
+  return {
+    id: dto.conversation_id,
+    title: dto.title,
+    last_message_preview: dto.last_message_preview,
+    updated_at: dto.updated_at,
+    message_count: dto.message_count,
+  }
+}
+
+function historySources(metadata?: Record<string, unknown> | null): RAGSource[] | undefined {
+  const sources = metadata && typeof metadata.sources === 'object' && metadata.sources !== null ? metadata.sources : undefined
+  if (Array.isArray(sources) && sources.length > 0) return sources as RAGSource[]
+  return undefined
+}
+
+/** 后端历史消息 DTO 转前端渲染消息；tool 消息还原工具名、状态和 data_json。 */
+export function historyMessageToUIMessage(dto: HistoryMessageDTO): UIMessage {
+  const timestamp = Date.parse(dto.created_at) || Date.now()
+  const metadata = dto.metadata && typeof dto.metadata === 'object' ? dto.metadata : undefined
+
+  if (dto.role === 'user') {
+    return { id: `history_${dto.message_id}`, type: 'user', content: dto.content, timestamp }
+  }
+  if (dto.role === 'tool') {
+    const toolName = typeof metadata?.tool_name === 'string' ? metadata.tool_name : undefined
+    const toolCallId = typeof metadata?.tool_call_id === 'string' ? metadata.tool_call_id : undefined
+    const dataJson = typeof metadata?.data_json === 'string' ? metadata.data_json : undefined
+    const rawStatus = metadata?.status
+    return {
+      id: toolCallId ? `tool_${toolCallId}` : `history_${dto.message_id}`,
+      type: 'tool-result',
+      content: dto.content,
+      timestamp,
+      toolName,
+      toolStatus: rawStatus === 'success' ? 'success' : rawStatus === 'failed' ? 'failed' : 'pending',
+      toolCallId,
+      dataJson,
+    }
+  }
+  return {
+    id: dto.message_id,
+    type: 'assistant',
+    content: dto.content,
+    timestamp,
+    sources: historySources(metadata),
+  }
+}
+
+/** 合并历史消息与现有消息：按 id 去重，用户消息额外按内容去重，最终按时间正序。 */
+export function mergeHistoryMessages(existing: UIMessage[], incoming: UIMessage[]): UIMessage[] {
+  if (incoming.length === 0) return existing
+  const ids = new Set(existing.map(message => message.id))
+  const added: UIMessage[] = []
+  for (const message of incoming) {
+    if (ids.has(message.id)) continue
+    if (message.type === 'user' && existing.some(m => m.type === 'user' && m.content === message.content)) continue
+    ids.add(message.id)
+    added.push(message)
+  }
+  if (added.length === 0) return existing
+  return [...existing, ...added].sort((a, b) => a.timestamp - b.timestamp)
+}
+
+function localSession(id: string): ConversationSummary {
+  return { id, title: '新会话', updated_at: new Date().toISOString(), message_count: 0 }
+}
+
+interface HistoryEntry {
+  page: number
+  hasMore: boolean
+  loading: boolean
+}
+
+interface ActiveHistoryState {
+  hasMore: boolean
+  loading: boolean
 }
 
 export function applyAgentEvent(
@@ -199,9 +296,9 @@ export function applyAgentEvent(
     case 'assistant_message': {
       const sIdx = nextAssistantMessageId ? msgs.findIndex(m => m.id === nextAssistantMessageId) : msgs.findIndex(m => m.type === 'assistant' && m.streaming)
       if (sIdx >= 0) {
-        msgs[sIdx] = { ...msgs[sIdx], content: event.content || msgs[sIdx].content, streaming: false, trace: [...traceBuffer] }
+        msgs[sIdx] = { ...msgs[sIdx], content: event.content || msgs[sIdx].content, sources: eventSources(event), streaming: false, trace: [...traceBuffer] }
       } else {
-        msgs.push({ id: event.message_id || `ai_${timestamp}`, type: 'assistant', content: event.content || '', timestamp, trace: [...traceBuffer] })
+        msgs.push({ id: event.message_id || `ai_${timestamp}`, type: 'assistant', content: event.content || '', sources: eventSources(event), timestamp, trace: [...traceBuffer] })
       }
       break
     }
@@ -224,11 +321,20 @@ export function useAgent() {
   const abortRef = useRef<AbortController | null>(null)
   const [activeId, setActiveId] = useState<string>(uid('local_conv'))
   const [messages, setMessages] = useState<UIMessage[]>([])
-  const [sessions, setSessions] = useState<ConversationSummary[]>(() => [{
-    id: activeId, title: '新会话', last_message_preview: '', updated_at: new Date().toISOString(), message_count: 0,
-  }])
+  const [sessions, setSessions] = useState<ConversationSummary[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sessionsTotal, setSessionsTotal] = useState(0)
+  const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [activeHistory, setActiveHistory] = useState<ActiveHistoryState>({ hasMore: false, loading: false })
+  const activeIdRef = useRef(activeId)
+  const isStreamingRef = useRef(isStreaming)
+  const sessionsPageRef = useRef(0)
+  const sessionsLoadingRef = useRef(false)
+  const historyRef = useRef<Map<string, HistoryEntry>>(new Map())
+
+  useEffect(() => { activeIdRef.current = activeId }, [activeId])
+  useEffect(() => { isStreamingRef.current = isStreaming }, [isStreaming])
 
   const syncConversationId = useCallback((fromId: string, toId?: string) => {
     if (!toId || toId === fromId) return fromId
@@ -238,19 +344,110 @@ export function useAgent() {
       streamingCache.current.set(toId, { ...existing, conversationId: toId })
     }
     setSessions(prev => prev.map(s => s.id === fromId ? { ...s, id: toId } : s))
+    activeIdRef.current = toId
     setActiveId(toId)
     return toId
   }, [])
 
+  const loadMessages = useCallback(async (conversationId: string, page: number) => {
+    if (!token || !serverConversationId(conversationId)) return
+    const entry = historyRef.current.get(conversationId)
+    if (page <= (entry?.page || 0) || entry?.loading) return
+    const previous: HistoryEntry = entry || { page: 0, hasMore: true, loading: false }
+    historyRef.current.set(conversationId, { ...previous, loading: true })
+    if (conversationId === activeIdRef.current) {
+      setActiveHistory({ hasMore: previous.hasMore, loading: true })
+    }
+    try {
+      const result = await listMessages(token, conversationId, page, MESSAGES_PAGE_SIZE)
+      const incoming = (result.messages || []).map(historyMessageToUIMessage)
+      const current = streamingCache.current.get(conversationId)?.messages || []
+      const merged = mergeHistoryMessages(current, incoming)
+      streamingCache.current.set(conversationId, { conversationId, messages: merged, isStreaming: isStreamingRef.current })
+      if (conversationId === activeIdRef.current) {
+        setMessages(merged)
+      }
+      const hasMore = result.total > page * MESSAGES_PAGE_SIZE
+      historyRef.current.set(conversationId, { page, hasMore, loading: false })
+      if (conversationId === activeIdRef.current) {
+        setActiveHistory({ hasMore, loading: false })
+      }
+    } catch {
+      historyRef.current.set(conversationId, { page: previous.page, hasMore: previous.hasMore, loading: false })
+      if (conversationId === activeIdRef.current) {
+        setActiveHistory({ hasMore: previous.hasMore, loading: false })
+      }
+      setError('历史消息加载失败，请稍后重试')
+    }
+  }, [token])
+
+  const loadSessions = useCallback(async (page: number) => {
+    if (!token || sessionsLoadingRef.current || page <= sessionsPageRef.current) return
+    sessionsLoadingRef.current = true
+    setSessionsLoading(true)
+    try {
+      const result = await listSessions(token, page, CONVERSATIONS_PAGE_SIZE)
+      const incoming = (result.conversations || []).map(conversationSummaryFromDTO)
+      setSessions(prev => {
+        const seen = new Set(prev.map(s => s.id))
+        return [...prev, ...incoming.filter(s => !seen.has(s.id))]
+      })
+      setSessionsTotal(result.total)
+      sessionsPageRef.current = page
+      if (page === 1) {
+        if (incoming.length > 0) {
+          const first = incoming[0]
+          activeIdRef.current = first.id
+          setActiveId(first.id)
+          loadMessages(first.id, 1)
+        } else {
+          // 无历史会话时保留一个本地"新会话"，保持可直接发消息的体验
+          setSessions(prev => prev.length > 0 ? prev : [localSession(activeIdRef.current)])
+        }
+      }
+    } catch {
+      setError('历史会话加载失败，请稍后重试')
+    } finally {
+      sessionsLoadingRef.current = false
+      setSessionsLoading(false)
+    }
+  }, [token, loadMessages])
+
+  const loadMoreSessions = useCallback(() => {
+    loadSessions(sessionsPageRef.current + 1)
+  }, [loadSessions])
+
+  const loadOlderMessages = useCallback((conversationId: string) => {
+    if (isStreamingRef.current) return
+    const entry = historyRef.current.get(conversationId)
+    if (!entry) {
+      loadMessages(conversationId, 1)
+      return
+    }
+    if (!entry.hasMore || entry.loading) return
+    loadMessages(conversationId, entry.page + 1)
+  }, [loadMessages])
+
+  // 页面刷新/登录后：先拉会话列表，再自动拉最近会话的第一页消息
+  useEffect(() => {
+    if (!token) return
+    loadSessions(1)
+  }, [token, loadSessions])
+
   const updateSessionSummary = useCallback((conversationId: string, fallback: string) => {
     const cached = streamingCache.current.get(conversationId)
     const lastMsg = cached?.messages.filter(m => m.type === 'assistant').pop()
-    setSessions(prev => prev.map(s => s.id === conversationId ? {
-      ...s,
-      last_message_preview: lastMsg?.content?.slice(0, 50) || fallback,
-      updated_at: new Date().toISOString(),
-      message_count: cached?.messages.length,
-    } : s))
+    setSessions(prev => {
+      const existing = prev.find(s => s.id === conversationId)
+      const summary: ConversationSummary = {
+        id: conversationId,
+        title: existing?.title || '新会话',
+        last_message_preview: lastMsg?.content?.slice(0, 50) || fallback,
+        updated_at: new Date().toISOString(),
+        message_count: cached?.messages.length,
+      }
+      return [summary, ...prev.filter(s => s.id !== conversationId)]
+    })
   }, [])
 
   const sendMessage = useCallback(async (content: string) => {
@@ -368,6 +565,8 @@ export function useAgent() {
   }, [isStreaming, syncConversationId, token, updateSessionSummary])
 
   const selectSession = useCallback((id: string) => {
+    activeIdRef.current = id
+    setActiveId(id)
     const cached = streamingCache.current.get(id)
     if (cached) {
       setMessages(cached.messages)
@@ -376,16 +575,21 @@ export function useAgent() {
       setMessages([])
       setIsStreaming(false)
     }
-    setActiveId(id)
-  }, [])
+    const entry = historyRef.current.get(id)
+    setActiveHistory({ hasMore: entry?.hasMore ?? false, loading: false })
+    if (!entry && serverConversationId(id)) {
+      loadMessages(id, 1)
+    }
+  }, [loadMessages])
 
   const newSession = useCallback(() => {
     const id = uid('local_conv')
-    const newConv: ConversationSummary = { id, title: '新会话', updated_at: new Date().toISOString(), message_count: 0 }
-    setSessions(prev => [newConv, ...prev])
+    setSessions(prev => [localSession(id), ...prev])
+    activeIdRef.current = id
     setActiveId(id)
     setMessages([])
     setError(null)
+    setActiveHistory({ hasMore: false, loading: false })
     streamingCache.current.set(id, { conversationId: id, messages: [], isStreaming: false })
   }, [])
 
@@ -393,5 +597,26 @@ export function useAgent() {
     abortRef.current?.abort()
   }, [])
 
-  return { activeId, messages, sessions, isStreaming, error, sendMessage, confirmAction, selectSession, newSession, stopGeneration }
+  const hasMoreSessions = sessionsTotal > sessions.length
+  const hasOlderMessages = activeHistory.hasMore && serverConversationId(activeId) !== undefined
+
+  return {
+    activeId,
+    messages,
+    sessions,
+    isStreaming,
+    error,
+    sessionsTotal,
+    sessionsLoading,
+    hasMoreSessions,
+    loadMoreSessions,
+    hasOlderMessages,
+    loadingHistory: activeHistory.loading,
+    loadOlderMessages,
+    sendMessage,
+    confirmAction,
+    selectSession,
+    newSession,
+    stopGeneration,
+  }
 }

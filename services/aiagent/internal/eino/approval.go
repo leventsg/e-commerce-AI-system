@@ -11,6 +11,9 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
+	core "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
+	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type ApprovalInfo struct {
@@ -51,15 +54,43 @@ func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, en
 	if m == nil || m.approvalManager == nil || tCtx == nil || !m.approvalManager.RequiresConfirmation(tCtx.Name) {
 		return endpoint, nil
 	}
+	logx.Infow("ai high risk tool intercepted",
+		logx.Field("component", "approval_middleware"),
+		logx.Field("stage", "high_risk_tool_intercepted"),
+		logx.Field("tool", tCtx.Name),
+		logx.Field("tool_call_id", tCtx.CallID),
+	)
 	return func(ctx context.Context, argumentsInJSON string, opts ...einotool.Option) (string, error) {
+		ctx = withToolCallID(ctx, tCtx.CallID)
 		// 检查是否已经中断过
 		wasInterrupted, _, storedArgs := einotool.GetInterruptState[string](ctx)
 		if !wasInterrupted {
 			// 首次调用，创建确认请求并中断执行
+			logx.Infow("ai high risk tool confirmation creating",
+				logx.Field("component", "approval_middleware"),
+				logx.Field("stage", "confirmation_creating"),
+				logx.Field("tool", tCtx.Name),
+				logx.Field("tool_call_id", tCtx.CallID),
+				logx.Field("arguments", argumentsInJSON),
+			)
 			info, err := m.createApprovalInfo(ctx, tCtx.Name, argumentsInJSON)
 			if err != nil {
+				logx.Errorw("ai high risk tool confirmation create failed",
+					logx.Field("component", "approval_middleware"),
+					logx.Field("stage", "confirmation_creating"),
+					logx.Field("tool", tCtx.Name),
+					logx.Field("tool_call_id", tCtx.CallID),
+					logx.Field("err", err),
+				)
 				return "", err
 			}
+			logx.Infow("ai high risk tool confirmation created",
+				logx.Field("component", "approval_middleware"),
+				logx.Field("stage", "confirmation_created"),
+				logx.Field("tool", tCtx.Name),
+				logx.Field("tool_call_id", tCtx.CallID),
+				logx.Field("confirmation_id", info.ConfirmationID),
+			)
 			return "", einotool.StatefulInterrupt(ctx, info, argumentsInJSON)
 		}
 
@@ -67,8 +98,22 @@ func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, en
 		isTarget, hasData, data := einotool.GetResumeContext[*ApprovalResult](ctx)
 		if isTarget && hasData {
 			if data != nil && data.Approved {
+				logx.Infow("ai high risk tool approved resume",
+					logx.Field("component", "approval_middleware"),
+					logx.Field("stage", "approval_resume"),
+					logx.Field("tool", tCtx.Name),
+					logx.Field("tool_call_id", tCtx.CallID),
+					logx.Field("approved", true),
+				)
 				return endpoint(ctx, storedArgs, opts...)
 			}
+			logx.Infow("ai high risk tool rejected resume",
+				logx.Field("component", "approval_middleware"),
+				logx.Field("stage", "approval_resume"),
+				logx.Field("tool", tCtx.Name),
+				logx.Field("tool_call_id", tCtx.CallID),
+				logx.Field("approved", false),
+			)
 			return marshalApprovalToolResult(tCtx.Name, "rejected", "操作已取消。"), nil
 		}
 
@@ -78,6 +123,14 @@ func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, en
 			if err != nil {
 				return "", err
 			}
+			logx.Infow("ai high risk tool confirmation created on retry",
+				logx.Field("component", "approval_middleware"),
+				logx.Field("stage", "confirmation_created"),
+				logx.Field("tool", tCtx.Name),
+				logx.Field("tool_call_id", tCtx.CallID),
+				logx.Field("confirmation_id", info.ConfirmationID),
+				logx.Field("arguments", storedArgs),
+			)
 			return "", einotool.StatefulInterrupt(ctx, info, storedArgs)
 		}
 
@@ -87,21 +140,22 @@ func (m *highRiskApprovalMiddleware) WrapInvokableToolCall(_ context.Context, en
 
 // createApprovalInfo 创建确认请求并返回确认信息
 func (m *highRiskApprovalMiddleware) createApprovalInfo(ctx context.Context, toolName, argumentsInJSON string) (*ApprovalInfo, error) {
-	execution, ok := aitools.ToolExecutionFromContext(ctx)
+	execution, ok := helper.ToolExecutionFromContext(ctx)
 	if !ok || execution.UserID == 0 {
-		return nil, aitools.ErrToolExecutionContext
+		return nil, helper.ErrToolExecutionContext
 	}
 	args := make(map[string]any)
 	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
-		return nil, fmt.Errorf("%w: invalid JSON arguments: %v", aitools.ErrInvalidToolArguments, err)
+		return nil, fmt.Errorf("%w: invalid JSON arguments: %v", helper.ErrInvalidToolArguments, err)
 	}
-	event := m.approvalManager.RequestConfirmation(ctx, aitools.ExecuteRequest{
+	event := m.approvalManager.RequestConfirmation(ctx, core.ExecuteRequest{
 		UserID:         execution.UserID,
 		ConversationID: execution.ConversationID,
 		MessageID:      execution.MessageID,
 		ClientIP:       execution.ClientIP,
 		RunID:          execution.RunID,
 		CheckpointID:   execution.CheckpointID,
+		ToolCallID:     execution.ToolCallID,
 		ToolName:       toolName,
 		Arguments:      args,
 	})

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"regexp"
 	"strings"
-	"time"
 
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
 )
 
 const (
@@ -26,17 +26,10 @@ var (
 	ErrInvalidEvent      = errors.New("invalid profile update event")
 	ErrRejectedCandidate = errors.New("profile candidate rejected")
 
-	sensitiveProfilePattern = regexp.MustCompile(`(?i)(user_id|token|session_id|auth|password|passwd|secret|api[_-]?key|cookie|支付密码|验证码|身份证|银行卡|完整地址|详细地址|收货地址)`)
+	sensitiveProfilePattern = regexp.MustCompile(`(?i)(user_id|token|auth|password|passwd|secret|api[_-]?key|cookie|支付密码|验证码|身份证|银行卡|完整地址|详细地址|收货地址)`)
 )
 
-// 更新事件
-type UpdateEvent struct {
-	EventID        string    `json:"event_id"`
-	UserID         uint64    `json:"user_id"`
-	ConversationID string    `json:"conversation_id"`
-	MessageIDs     []string  `json:"message_ids"`
-	CreatedAt      time.Time `json:"created_at"`
-}
+type UpdateEvent = memoryupdate.UpdateEvent
 
 // AI 模型输出的候选更新
 type Candidate struct {
@@ -67,7 +60,6 @@ type ExtractRequest struct {
 	Event    UpdateEvent
 	Messages []*aimessages.AiMessages
 	Profile  *domain.UserProfile
-	Memories []domain.UserMemory
 }
 
 type MessageStore interface {
@@ -79,10 +71,6 @@ type ProfileStore interface {
 	Upsert(ctx context.Context, profile *domain.UserProfile, userID uint64) (*domain.UserProfile, error)
 }
 
-type MemoryStore interface {
-	ListActive(ctx context.Context, userID uint64, limit int) ([]domain.UserMemory, error)
-}
-
 type Model interface {
 	// Extract 从用户消息和上下文中提取用户画像更新候选
 	Extract(ctx context.Context, req ExtractRequest) (Candidate, error)
@@ -91,12 +79,11 @@ type Model interface {
 type Extractor struct {
 	messages MessageStore
 	profiles ProfileStore
-	memories MemoryStore
 	model    Model
 }
 
-func NewExtractor(messages MessageStore, profiles ProfileStore, memories MemoryStore, model Model) *Extractor {
-	return &Extractor{messages: messages, profiles: profiles, memories: memories, model: model}
+func NewExtractor(messages MessageStore, profiles ProfileStore, model Model) *Extractor {
+	return &Extractor{messages: messages, profiles: profiles, model: model}
 }
 
 func (e *Extractor) Handle(ctx context.Context, event UpdateEvent) error {
@@ -115,13 +102,8 @@ func (e *Extractor) Handle(ctx context.Context, event UpdateEvent) error {
 	if err != nil {
 		return err
 	}
-	var memories []domain.UserMemory
-	// 获取用户近期记忆
-	if e.memories != nil {
-		memories, _ = e.memories.ListActive(ctx, event.UserID, 12)
-	}
 	candidate, err := e.model.Extract(ctx, ExtractRequest{
-		Event: event, Messages: messages, Profile: profile, Memories: memories,
+		Event: event, Messages: messages, Profile: profile,
 	})
 	if err != nil {
 		return err

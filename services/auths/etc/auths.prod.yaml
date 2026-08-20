@@ -17,6 +17,7 @@ MysqlConfig:
   datasource: ${MYSQL_DATA_SOURCE}
 
 Log:
+  Stat: false
   ServiceName: "auths-rpc"
   Mode: 'file'
   Encoding: "json"

@@ -45,7 +45,50 @@ message ConfirmActionResponse {
   repeated AgentEvent events = 3;
 }
 
+message ListConversationsRequest {
+  uint32 user_id = 1;
+  int64 page = 2;
+  int64 page_size = 3;
+}
+
+message ConversationSummary {
+  string conversation_id = 1;
+  string title = 2;
+  string last_message_preview = 3;
+  string updated_at = 4;
+  int64 message_count = 5;
+}
+
+message ListConversationsResponse {
+  int64 total = 1;
+  repeated ConversationSummary conversations = 2;
+}
+
+message ListMessagesRequest {
+  uint32 user_id = 1;
+  string conversation_id = 2;
+  int64 page = 3;
+  int64 page_size = 4;
+}
+
+message HistoryMessage {
+  string message_id = 1;
+  string role = 2;
+  string content = 3;
+  string metadata_json = 4;
+  string client_message_id = 5;
+  string created_at = 6;
+}
+
+message ListMessagesResponse {
+  string conversation_id = 1;
+  int64 total = 2;
+  repeated HistoryMessage messages = 3;
+}
+
 service AiAgent {
   rpc Chat(ChatRequest) returns (stream AgentEvent);
   rpc ConfirmAction(ConfirmActionRequest) returns (stream AgentEvent);
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsResponse);
+  rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
 }

@@ -18,8 +18,9 @@ Telemetry:
 # localhost
 
 Log:
+  Stat: false
   ServiceName: "auths-rpc"
-  Mode: 'console'
+  Mode: 'file'
   Encoding: "json"
   Path: "./logs/auths-rpc"
 

@@ -25,12 +25,26 @@ export interface AgentEvent {
   status?: string
   data?: unknown
   data_json?: string
+  sources?: RAGSource[]
   confirmation_id?: string
   action?: string
   summary?: string
   expires_at?: number
   done: boolean
   business_executed?: boolean
+}
+
+export interface RAGSource {
+  document_id: string
+  title: string
+  document_url?: string
+  chunks: RAGSourceChunk[]
+}
+
+export interface RAGSourceChunk {
+  chunk_id: string
+  content: string
+  score: number
 }
 
 /** 旧 mock 类型兼容；真实后端使用 ClientMessage。 */

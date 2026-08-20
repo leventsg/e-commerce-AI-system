@@ -20,6 +20,7 @@ Cache:
   Type: node   
 
 Log:
+  Stat: false
   ServiceName: "users-rpc"
   Mode: 'file'
   Encoding: "json"

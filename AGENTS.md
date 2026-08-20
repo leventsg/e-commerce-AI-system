@@ -108,7 +108,8 @@ AI 智能客服数据放在 `dal/model/ai/**` 下。
 - `ai_messages`
 - `ai_tool_calls`
 - `ai_confirmations`
-- `ai_user_memories`
+- `ai_user_profiles`
+- `ai_user_memory_events`
 
 每次工具调用都要记录：
 
@@ -117,7 +118,7 @@ AI 智能客服数据放在 `dal/model/ai/**` 下。
 - tool name
 - 脱敏后的 arguments
 - status
-- result summary 或 error message
+- 真实工具返回 result JSON 或 error message
 - latency
 
 对于写操作，还必须通过 audit 服务或本仓库既有审计路径记录审计事件。

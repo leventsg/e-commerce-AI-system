@@ -25,11 +25,11 @@ type (
 		CountUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string) (int64, error)
 		FindUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
 		FindRecentUnsummarizedContextMessages(ctx context.Context, userID uint64, conversationID string, afterCreatedAt string, afterMessageID string, limit int) ([]*AiMessages, error)
-		FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error)
-		FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error)
 		FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error)
 		FindUserMessageByClientMessageID(ctx context.Context, userID uint64, clientMessageID string) (*AiMessages, error)
 		FindAssistantMessagesByClientMessageID(ctx context.Context, userID uint64, conversationID, clientMessageID string) ([]*AiMessages, error)
+		FindByUserAndConversation(ctx context.Context, userID uint64, conversationID string, limit, offset int) ([]*AiMessages, error)
+		CountByUserAndConversation(ctx context.Context, userID uint64, conversationID string) (int64, error)
 		InsertBatch(ctx context.Context, messages []*AiMessages) error
 	}
 
@@ -215,28 +215,6 @@ func (m *customAiMessagesModel) FindRecentUnsummarizedContextMessages(ctx contex
 	return rows, nil
 }
 
-// FindRecentToolMessages 查询最近的工具消息记录
-func (m *customAiMessagesModel) FindRecentToolMessages(ctx context.Context, userID uint64, conversationID string, limit int) ([]*AiMessages, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-
-	var rows []*AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? and `role` = ? order by `id` desc limit ?"
-	err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, "tool", limit)
-	return rows, err
-}
-
-// FindToolMessageByID 根据ID查询工具消息
-func (m *customAiMessagesModel) FindToolMessageByID(ctx context.Context, userID uint64, conversationID, messageID string) (*AiMessages, error) {
-	var row AiMessages
-	query := "select " + aiMessagesRows + " from " + m.table + " where `msg_id` = ? and `user_id` = ? and `conversation_id` = ? and `role` = ? limit 1"
-	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &row, query, messageID, userID, conversationID, "tool"); err != nil {
-		return nil, err
-	}
-	return &row, nil
-}
-
 func (m *customAiMessagesModel) FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error) {
 	if len(messageIDs) == 0 {
 		return nil, nil
@@ -272,4 +250,32 @@ func (m *customAiMessagesModel) FindAssistantMessagesByClientMessageID(ctx conte
 		return nil, err
 	}
 	return rows, nil
+}
+
+// FindByUserAndConversation 分页查询当前用户指定会话的全部消息，按消息自增序号正序返回。
+// 包含 user/assistant/tool 三种角色；查询强制携带 user_id，杜绝跨用户读取。
+func (m *customAiMessagesModel) FindByUserAndConversation(ctx context.Context, userID uint64, conversationID string, limit, offset int) ([]*AiMessages, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var rows []*AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? order by `id` asc limit ? offset ?"
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, limit, offset); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// CountByUserAndConversation 统计当前用户指定会话的消息总数。
+func (m *customAiMessagesModel) CountByUserAndConversation(ctx context.Context, userID uint64, conversationID string) (int64, error) {
+	var count int64
+	query := "select count(1) from " + m.table + " where `user_id` = ? and `conversation_id` = ?"
+	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &count, query, userID, conversationID); err != nil {
+		return 0, err
+	}
+	return count, nil
 }

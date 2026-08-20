@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Bot, Search, ShoppingCart, Ticket, Package } from 'lucide-react'
-import type { UIMessage } from '@/types'
+import { Bot, FileText, Search, ShoppingCart, Ticket, Package, X } from 'lucide-react'
+import type { RAGSource, UIMessage } from '@/types'
 import { AgentMessageBubble } from './AgentMessageBubble'
 import { AssistantResponseGroup } from './AssistantResponseGroup'
 import { buildChatRenderItems } from './chatRenderItems'
@@ -10,6 +10,9 @@ interface AgentChatWindowProps {
   isStreaming: boolean
   onSuggestionClick?: (text: string) => void
   onConfirmAction?: (conversationId: string, confirmationId: string, approved: boolean) => Promise<void> | void
+  hasOlderMessages?: boolean
+  loadingHistory?: boolean
+  onLoadOlder?: () => void
 }
 
 const SUGGESTIONS = [
@@ -24,11 +27,22 @@ function scrollToBottom(el: HTMLDivElement | null) {
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
 }
 
-export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggestionClick, onConfirmAction }: AgentChatWindowProps) {
+export function AgentChatWindow({
+  messages,
+  isStreaming,
+  onSuggestionClick,
+  onConfirmAction,
+  hasOlderMessages = false,
+  loadingHistory = false,
+  onLoadOlder,
+}: AgentChatWindowProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [nearBottom, setNearBottom] = useState(true)
   const [userScrolling, setUserScrolling] = useState(false)
+  const [sourcePanel, setSourcePanel] = useState<RAGSource[] | null>(null)
   const prevLen = useRef(messages.length)
+  const prevScrollHeightRef = useRef(0)
+  const wasLoadingHistoryRef = useRef(false)
 
   const checkNearBottom = useCallback(() => {
     const el = scrollRef.current; if (!el) return true
@@ -38,7 +52,11 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
   const handleScroll = useCallback(() => {
     if (!userScrolling) { setUserScrolling(true); setTimeout(() => setUserScrolling(false), 1000) }
     setNearBottom(checkNearBottom())
-  }, [userScrolling, checkNearBottom])
+    const el = scrollRef.current
+    if (el && el.scrollTop < 80 && hasOlderMessages && !loadingHistory && !isStreaming) {
+      onLoadOlder?.()
+    }
+  }, [userScrolling, checkNearBottom, hasOlderMessages, loadingHistory, isStreaming, onLoadOlder])
 
   // Force scroll on new user message
   useEffect(() => {
@@ -55,6 +73,25 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
     }
   }, [messages, nearBottom, userScrolling])
 
+  // 记录加载历史前的滚动高度，加载完成后恢复滚动位置，避免内容跳动
+  useEffect(() => {
+    if (loadingHistory) {
+      prevScrollHeightRef.current = scrollRef.current?.scrollHeight || 0
+      wasLoadingHistoryRef.current = true
+    }
+  }, [loadingHistory])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && wasLoadingHistoryRef.current && !loadingHistory) {
+      const diff = el.scrollHeight - prevScrollHeightRef.current
+      if (diff > 0) {
+        el.scrollTop += diff
+      }
+      wasLoadingHistoryRef.current = false
+    }
+  }, [messages, loadingHistory])
+
   useEffect(() => {
     const el = scrollRef.current; if (!el) return
     el.addEventListener('scroll', handleScroll, { passive: true })
@@ -70,14 +107,61 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
         <EmptyState onSuggestionClick={onSuggestionClick} />
       ) : (
         <div className="max-w-3xl mx-auto w-full">
+          {loadingHistory && (
+            <div className="py-2 text-center text-xs text-gray-600">加载历史消息中...</div>
+          )}
           {renderItems.map((item, i) => (
             item.kind === 'user'
               ? <AgentMessageBubble key={item.message.id} message={item.message} isLast={i === renderItems.length - 1} onConfirmAction={onConfirmAction} />
-              : <AssistantResponseGroup key={item.id} item={item} onConfirmAction={onConfirmAction} />
+              : <AssistantResponseGroup key={item.id} item={item} onConfirmAction={onConfirmAction} onOpenSources={setSourcePanel} />
           ))}
         </div>
       )}
       <div className="h-4" />
+      {sourcePanel && sourcePanel.length > 0 && (
+        <SourcePanel sources={sourcePanel} onClose={() => setSourcePanel(null)} />
+      )}
+    </div>
+  )
+}
+
+function SourcePanel({ sources, onClose }: { sources: RAGSource[]; onClose: () => void }) {
+  return (
+    <div className="fixed inset-y-0 right-0 z-50 w-[360px] max-w-full border-l border-gray-800 bg-gray-950/95 backdrop-blur shadow-2xl flex flex-col">
+      <div className="flex items-center gap-2 border-b border-gray-800 px-4 py-3">
+        <FileText className="w-4 h-4 text-orange-400 shrink-0" />
+        <span className="text-sm font-medium text-gray-200">参考来源（{sources.length}篇）</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-auto p-1 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+          aria-label="关闭参考来源"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {sources.map(source => (
+          <div key={source.document_id} className="rounded-xl border border-gray-800 bg-gray-900/60 p-3">
+            <div className="text-xs font-medium text-gray-300 mb-2">{source.title}</div>
+            <div className="space-y-2">
+              {source.chunks.map(chunk => (
+                <button
+                  key={chunk.chunk_id}
+                  type="button"
+                  onClick={() => {
+                    if (source.document_url) window.open(source.document_url, '_blank')
+                  }}
+                  className="block w-full text-left rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2 text-xs text-gray-400 hover:border-orange-500/30 hover:text-gray-300 transition-colors"
+                >
+                  <span className="line-clamp-4 whitespace-pre-wrap break-words leading-relaxed">{chunk.content}</span>
+                  <span className="mt-1 block text-[10px] text-orange-400/80">查看完整文档 →</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

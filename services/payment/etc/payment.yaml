@@ -16,8 +16,9 @@ Telemetry:
   Sampler: 1.0
 
 Log:
+  Stat: false
   ServiceName: payment-rpc
-  Mode: console
+  Mode: file
   Encoding: json
   Path: ./logs/payment-rpc
 

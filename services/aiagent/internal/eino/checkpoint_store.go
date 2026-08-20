@@ -11,7 +11,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	aiagentruns "github.com/leventsg/e-commerce-AI-system/dal/model/ai/agent_runs"
-	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
+	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
@@ -95,7 +95,7 @@ func (s *persistentCheckpointStore) Set(ctx context.Context, checkPointID string
 	if s.model == nil {
 		return nil
 	}
-	execution, _ := aitools.ToolExecutionFromContext(ctx)
+	execution, _ := helper.ToolExecutionFromContext(ctx)
 	runID := strings.TrimSpace(execution.RunID)
 	if runID == "" {
 		runID = checkPointID

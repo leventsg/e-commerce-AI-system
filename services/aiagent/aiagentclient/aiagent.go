@@ -14,15 +14,23 @@ import (
 )
 
 type (
-	AgentEvent            = aiagent.AgentEvent
-	ChatRequest           = aiagent.ChatRequest
-	ChatResponse          = aiagent.ChatResponse
-	ConfirmActionRequest  = aiagent.ConfirmActionRequest
-	ConfirmActionResponse = aiagent.ConfirmActionResponse
+	AgentEvent                = aiagent.AgentEvent
+	ChatRequest               = aiagent.ChatRequest
+	ChatResponse              = aiagent.ChatResponse
+	ConfirmActionRequest      = aiagent.ConfirmActionRequest
+	ConfirmActionResponse     = aiagent.ConfirmActionResponse
+	ConversationSummary       = aiagent.ConversationSummary
+	HistoryMessage            = aiagent.HistoryMessage
+	ListConversationsRequest  = aiagent.ListConversationsRequest
+	ListConversationsResponse = aiagent.ListConversationsResponse
+	ListMessagesRequest       = aiagent.ListMessagesRequest
+	ListMessagesResponse      = aiagent.ListMessagesResponse
 
 	AiAgent interface {
 		Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ChatClient, error)
 		ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ConfirmActionClient, error)
+		ListConversations(ctx context.Context, in *ListConversationsRequest, opts ...grpc.CallOption) (*ListConversationsResponse, error)
+		ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error)
 	}
 
 	defaultAiAgent struct {
@@ -44,4 +52,14 @@ func (m *defaultAiAgent) Chat(ctx context.Context, in *ChatRequest, opts ...grpc
 func (m *defaultAiAgent) ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (aiagent.AiAgent_ConfirmActionClient, error) {
 	client := aiagent.NewAiAgentClient(m.cli.Conn())
 	return client.ConfirmAction(ctx, in, opts...)
+}
+
+func (m *defaultAiAgent) ListConversations(ctx context.Context, in *ListConversationsRequest, opts ...grpc.CallOption) (*ListConversationsResponse, error) {
+	client := aiagent.NewAiAgentClient(m.cli.Conn())
+	return client.ListConversations(ctx, in, opts...)
+}
+
+func (m *defaultAiAgent) ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error) {
+	client := aiagent.NewAiAgentClient(m.cli.Conn())
+	return client.ListMessages(ctx, in, opts...)
 }

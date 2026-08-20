@@ -21,7 +21,7 @@ import (
 var (
 	aiToolCallsFieldNames          = builder.RawFieldNames(&AiToolCalls{})
 	aiToolCallsRows                = strings.Join(aiToolCallsFieldNames, ",")
-	aiToolCallsRowsExpectAutoSet   = strings.Join(stringx.Remove(aiToolCallsFieldNames, "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), ",")
+	aiToolCallsRowsExpectAutoSet   = strings.Join(stringx.Remove(aiToolCallsFieldNames, "`id`", "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), ",")
 	aiToolCallsRowsWithPlaceHolder = strings.Join(stringx.Remove(aiToolCallsFieldNames, "`id`", "`create_at`", "`create_time`", "`created_at`", "`update_at`", "`update_time`", "`updated_at`"), "=?,") + "=?"
 
 	cacheAiToolCallsIdPrefix = "cache:aiToolCalls:id:"
@@ -30,9 +30,9 @@ var (
 type (
 	aiToolCallsModel interface {
 		Insert(ctx context.Context, data *AiToolCalls) (sql.Result, error)
-		FindOne(ctx context.Context, id string) (*AiToolCalls, error)
+		FindOne(ctx context.Context, id uint64) (*AiToolCalls, error)
 		Update(ctx context.Context, data *AiToolCalls) error
-		Delete(ctx context.Context, id string) error
+		Delete(ctx context.Context, id uint64) error
 	}
 
 	defaultAiToolCallsModel struct {
@@ -41,16 +41,17 @@ type (
 	}
 
 	AiToolCalls struct {
-		Id             string         `db:"id"`              // 调用ID
-		ConversationId string         `db:"conversation_id"` // 会话ID
-		UserId         uint64         `db:"user_id"`         // 用户ID
-		ToolName       string         `db:"tool_name"`       // 工具名称
-		Arguments      string         `db:"arguments"`       // 工具参数
-		ResultSummary  sql.NullString `db:"result_summary"`  // 结果摘要
-		Status         string         `db:"status"`          // success/failed
-		ErrorMessage   string         `db:"error_message"`
-		LatencyMs      int64          `db:"latency_ms"`
-		CreatedAt      time.Time      `db:"created_at"`
+		Id             uint64    `db:"id"`              // 自增主键
+		ConversationId string    `db:"conversation_id"` // 会话ID
+		ToolCallId     string    `db:"tool_call_id"`    // 模型工具调用ID
+		UserId         uint64    `db:"user_id"`         // 用户ID
+		ToolName       string    `db:"tool_name"`       // 工具名称
+		Arguments      string    `db:"arguments"`       // 工具参数
+		Result         string    `db:"result"`          // 真实工具返回JSON
+		Status         string    `db:"status"`          // success/failed
+		ErrorMessage   string    `db:"error_message"`
+		LatencyMs      int64     `db:"latency_ms"`
+		CreatedAt      time.Time `db:"created_at"`
 	}
 )
 
@@ -61,7 +62,7 @@ func newAiToolCallsModel(conn sqlx.SqlConn, c cache.CacheConf, opts ...cache.Opt
 	}
 }
 
-func (m *defaultAiToolCallsModel) Delete(ctx context.Context, id string) error {
+func (m *defaultAiToolCallsModel) Delete(ctx context.Context, id uint64) error {
 	aiToolCallsIdKey := fmt.Sprintf("%s%v", cacheAiToolCallsIdPrefix, id)
 	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
 		query := fmt.Sprintf("delete from %s where `id` = ?", m.table)
@@ -70,7 +71,7 @@ func (m *defaultAiToolCallsModel) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-func (m *defaultAiToolCallsModel) FindOne(ctx context.Context, id string) (*AiToolCalls, error) {
+func (m *defaultAiToolCallsModel) FindOne(ctx context.Context, id uint64) (*AiToolCalls, error) {
 	aiToolCallsIdKey := fmt.Sprintf("%s%v", cacheAiToolCallsIdPrefix, id)
 	var resp AiToolCalls
 	err := m.QueryRowCtx(ctx, &resp, aiToolCallsIdKey, func(ctx context.Context, conn sqlx.SqlConn, v any) error {
@@ -91,7 +92,7 @@ func (m *defaultAiToolCallsModel) Insert(ctx context.Context, data *AiToolCalls)
 	aiToolCallsIdKey := fmt.Sprintf("%s%v", cacheAiToolCallsIdPrefix, data.Id)
 	ret, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
 		query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", m.table, aiToolCallsRowsExpectAutoSet)
-		return conn.ExecCtx(ctx, query, data.Id, data.ConversationId, data.UserId, data.ToolName, data.Arguments, data.ResultSummary, data.Status, data.ErrorMessage, data.LatencyMs)
+		return conn.ExecCtx(ctx, query, data.ConversationId, data.ToolCallId, data.UserId, data.ToolName, data.Arguments, data.Result, data.Status, data.ErrorMessage, data.LatencyMs)
 	}, aiToolCallsIdKey)
 	return ret, err
 }
@@ -100,7 +101,7 @@ func (m *defaultAiToolCallsModel) Update(ctx context.Context, data *AiToolCalls)
 	aiToolCallsIdKey := fmt.Sprintf("%s%v", cacheAiToolCallsIdPrefix, data.Id)
 	_, err := m.ExecCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) (result sql.Result, err error) {
 		query := fmt.Sprintf("update %s set %s where `id` = ?", m.table, aiToolCallsRowsWithPlaceHolder)
-		return conn.ExecCtx(ctx, query, data.ConversationId, data.UserId, data.ToolName, data.Arguments, data.ResultSummary, data.Status, data.ErrorMessage, data.LatencyMs, data.Id)
+		return conn.ExecCtx(ctx, query, data.ConversationId, data.ToolCallId, data.UserId, data.ToolName, data.Arguments, data.Result, data.Status, data.ErrorMessage, data.LatencyMs, data.Id)
 	}, aiToolCallsIdKey)
 	return err
 }

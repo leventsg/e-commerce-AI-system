@@ -21,6 +21,16 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 					Path:    "/chat",
 					Handler: ChatHandler(serverCtx),
 				},
+				{
+					Method:  http.MethodGet,
+					Path:    "/sessions",
+					Handler: ListSessionsHandler(serverCtx),
+				},
+				{
+					Method:  http.MethodGet,
+					Path:    "/sessions/messages",
+					Handler: ListMessagesHandler(serverCtx),
+				},
 			}...,
 		),
 		rest.WithPrefix("/douyin/ai"),

@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	tool_prompts "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/tools"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 )
 
 const (
@@ -24,15 +25,15 @@ var (
 
 type Registry struct {
 	metadata map[string]domain.Metadata
-	tools    map[string]Tool
+	tools    map[string]core.Tool
 	executor *Executor
 }
 
 // 将工具注册到Registry表中
-func NewRegistry(provided ...[]Tool) *Registry {
+func NewRegistry(provided ...[]core.Tool) *Registry {
 	registry := &Registry{
 		metadata: make(map[string]domain.Metadata),
-		tools:    make(map[string]Tool),
+		tools:    make(map[string]core.Tool),
 	}
 	if len(provided) > 0 {
 		for _, tool := range provided[0] {
@@ -96,6 +97,24 @@ func (r *Registry) ToolsByNames(names ...string) ([]einotool.InvokableTool, erro
 	return result, nil
 }
 
+func (r *Registry) RootAgentTools() []einotool.InvokableTool {
+	return r.toolsByKindAndVisibility(core.ToolKindCapability, core.ToolVisibilityRoot)
+}
+
+func (r *Registry) AllAgentTools() []einotool.InvokableTool {
+	return r.toolsByKindAndVisibility(core.ToolKindCapability, core.ToolVisibilityAllAgents)
+}
+
+func (r *Registry) SubAgentTools(names ...string) ([]einotool.InvokableTool, error) {
+	result, err := r.ToolsByNames(names...)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, r.AllAgentTools()...)
+	result = append(result, r.toolsByKindAndVisibility(core.ToolKindCapability, core.ToolVisibilitySubAgents)...)
+	return result, nil
+}
+
 // ToolInfosByNames returns tool schemas in the order requested by names.
 func (r *Registry) ToolInfosByNames(ctx context.Context, names ...string) ([]*schema.ToolInfo, error) {
 	tools, err := r.ToolsByNames(names...)
@@ -113,6 +132,19 @@ func (r *Registry) ToolInfosByNames(ctx context.Context, names ...string) ([]*sc
 	return result, nil
 }
 
+func (r *Registry) RootAgentToolInfos(ctx context.Context) ([]*schema.ToolInfo, error) {
+	tools := append(r.RootAgentTools(), r.AllAgentTools()...)
+	return invokableToolInfos(ctx, tools)
+}
+
+func (r *Registry) SubAgentToolInfos(ctx context.Context, names ...string) ([]*schema.ToolInfo, error) {
+	tools, err := r.SubAgentTools(names...)
+	if err != nil {
+		return nil, err
+	}
+	return invokableToolInfos(ctx, tools)
+}
+
 // 获取所有工具的元数据
 func (r *Registry) AllMetadata() []domain.Metadata {
 	names := r.sortedNames()
@@ -123,7 +155,7 @@ func (r *Registry) AllMetadata() []domain.Metadata {
 	return result
 }
 
-func (r *Registry) Handler(name string) (HandlerFunc, bool) {
+func (r *Registry) Handler(name string) (core.HandlerFunc, bool) {
 	tool, ok := r.tools[name]
 	if !ok || tool.Handler == nil {
 		return nil, false
@@ -142,7 +174,7 @@ func (r *Registry) RequiresConfirmation(name string) bool {
 		tool.ConfirmationSummary != nil
 }
 
-func (r *Registry) ConfirmationSummary(ctx context.Context, req ExecuteRequest) (string, error) {
+func (r *Registry) ConfirmationSummary(ctx context.Context, req core.ExecuteRequest) (string, error) {
 	tool, ok := r.tools[req.ToolName]
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrToolNotFound, req.ToolName)
@@ -153,7 +185,13 @@ func (r *Registry) ConfirmationSummary(ctx context.Context, req ExecuteRequest) 
 	return tool.ConfirmationSummary(ctx, req)
 }
 
-func (r *Registry) registerTool(tool Tool) {
+func (r *Registry) registerTool(tool core.Tool) {
+	if tool.Kind == core.ToolKindCapability {
+		tool.Metadata.Name = tool.Name
+		tool.Metadata.Risk = domain.RiskLow
+		tool.Metadata.RequireConfirmation = false
+		tool.Metadata.WriteOperation = false
+	}
 	r.metadata[tool.Name] = tool.Metadata
 	r.tools[tool.Name] = tool
 }
@@ -172,9 +210,36 @@ func (r *Registry) sortedNames() []string {
 	return names
 }
 
+func (r *Registry) toolsByKindAndVisibility(kind core.ToolKind, visibility core.ToolVisibility) []einotool.InvokableTool {
+	names := r.sortedNames()
+	result := make([]einotool.InvokableTool, 0, len(names))
+	for _, name := range names {
+		tool := r.tools[name]
+		if tool.Kind == kind && tool.Visibility == visibility {
+			result = append(result, &invokableToolAdapter{tool: tool, executor: r.executor})
+		}
+	}
+	return result
+}
+
+func invokableToolInfos(ctx context.Context, tools []einotool.InvokableTool) ([]*schema.ToolInfo, error) {
+	result := make([]*schema.ToolInfo, 0, len(tools))
+	for _, tool := range tools {
+		if tool == nil {
+			continue
+		}
+		info, err := tool.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, info)
+	}
+	return result, nil
+}
+
 // 注册tool工具信息列表
-func defaultSchemaTools(queryTimeout, writeTimeout int64) []Tool {
-	return []Tool{
+func defaultSchemaTools(queryTimeout, writeTimeout int64) []core.Tool {
+	return []core.Tool{
 		queryTool(domain.ToolProductSearch, tool_prompts.ProductSearchDesc, queryTimeout, "ProductService", "QueryProduct", tool_prompts.ProductSearchParameters),
 		queryTool(domain.ToolProductDetail, tool_prompts.ProductDetailDesc, queryTimeout, "ProductCatalogService", "GetProduct", tool_prompts.ProductDetailParameters),
 		queryTool(domain.ToolProductRecommend, tool_prompts.ProductRecommendDesc, queryTimeout, "ProductCatalogService", "RecommendProduct", tool_prompts.ProductRecommendParameters),
@@ -193,16 +258,19 @@ func defaultSchemaTools(queryTimeout, writeTimeout int64) []Tool {
 		queryTool(domain.ToolCouponMyList, tool_prompts.CouponMyListDesc, queryTimeout, "Coupons", "ListUserCoupons", tool_prompts.CouponMyListParameters),
 		queryTool(domain.ToolCouponUsageList, tool_prompts.CouponUsageListDesc, queryTimeout, "Coupons", "ListCouponUsages", tool_prompts.CouponUsageListParameters),
 		queryTool(domain.ToolCouponCalculate, tool_prompts.CouponCalculateDesc, queryTimeout, "Coupons", "CalculateCoupon", tool_prompts.CouponCalculateParameters),
-		writeTool(domain.ToolOrderCreate, tool_prompts.OrderCreateDesc, domain.RiskHigh, true, writeTimeout, "OrderService", "CreateOrder", tool_prompts.OrderCreateParameters),
+		writeTool(domain.ToolOrderCreate, tool_prompts.OrderCreateDesc, domain.RiskHigh, true, writeTimeout, "OrderAPI", "CreateOrder", tool_prompts.OrderCreateParameters),
 		writeTool(domain.ToolOrderCancel, tool_prompts.OrderCancelDesc, domain.RiskHigh, true, writeTimeout, "OrderService", "CancelOrder", tool_prompts.OrderCancelParameters),
 	}
 }
 
-func queryTool(name, desc string, timeout int64, service, method string, params map[string]*schema.ParameterInfo) Tool {
-	return Tool{
-		Name:   name,
-		Desc:   desc,
-		Params: params,
+func queryTool(name, desc string, timeout int64, service, method string, params map[string]*schema.ParameterInfo) core.Tool {
+	return core.Tool{
+		Name:        name,
+		Desc:        desc,
+		Params:      params,
+		Kind:        core.ToolKindBusiness,
+		Visibility:  core.ToolVisibilitySubAgents,
+		RetryPolicy: defaultQueryRetryPolicy(),
 		Metadata: domain.Metadata{
 			Name:           name,
 			Risk:           domain.RiskLow,
@@ -213,11 +281,13 @@ func queryTool(name, desc string, timeout int64, service, method string, params 
 	}
 }
 
-func writeTool(name, desc, risk string, requireConfirmation bool, timeout int64, service, method string, params map[string]*schema.ParameterInfo) Tool {
-	return Tool{
-		Name:   name,
-		Desc:   desc,
-		Params: params,
+func writeTool(name, desc, risk string, requireConfirmation bool, timeout int64, service, method string, params map[string]*schema.ParameterInfo) core.Tool {
+	return core.Tool{
+		Name:       name,
+		Desc:       desc,
+		Params:     params,
+		Kind:       core.ToolKindBusiness,
+		Visibility: core.ToolVisibilitySubAgents,
 		Metadata: domain.Metadata{
 			Name:                name,
 			Risk:                risk,
@@ -227,5 +297,15 @@ func writeTool(name, desc, risk string, requireConfirmation bool, timeout int64,
 			RPCService:          service,
 			RPCMethod:           method,
 		},
+	}
+}
+
+func defaultQueryRetryPolicy() core.RetryPolicy {
+	return core.RetryPolicy{
+		MaxRetries:        defaultQueryMaxRetries,
+		InitialDelay:      defaultRetryInitialDelay,
+		MaxDelay:          defaultRetryMaxDelay,
+		BackoffMultiplier: defaultRetryBackoffMultiplier,
+		MaxElapsed:        defaultRetryMaxElapsed,
 	}
 }

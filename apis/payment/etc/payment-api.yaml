@@ -1,4 +1,9 @@
 Name: payment-api
+Log:
+  Stat: false
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/payment-api"
 Host: 0.0.0.0
 Port: 8006
 Timeout: 0
@@ -25,4 +30,3 @@ Telemetry:
   Endpoint: http://localhost:14268/api/traces
   Batcher: jaeger
   Sampler: 0.1
-

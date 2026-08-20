@@ -4,9 +4,11 @@ import (
 	"flag"
 	"fmt"
 
+	"github.com/leventsg/e-commerce-AI-system/common/logfmt"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/consumer"
+	_ "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/consumer/memory_event_update"
 	_ "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/consumer/profile_update"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/server"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
@@ -37,6 +39,7 @@ func main() {
 		}
 	})
 	defer s.Stop()
+	logx.AddWriter(logfmt.NewTerminalWriter())
 
 	if err := consul.RegisterService(c.ListenOn, c.Consul); err != nil {
 		logx.Errorw("register service error", logx.Field("err", err))

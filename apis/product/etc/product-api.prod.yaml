@@ -16,6 +16,7 @@ ProductRpc:
 
 
 Log:
+  Stat: false
   ServiceName: "product-api"
   Mode: 'file'
   Encoding: "json"
@@ -39,5 +40,4 @@ DevServer:
 OptionPathList:
   - /douyin/product/list
   - /douyin/product
-
 

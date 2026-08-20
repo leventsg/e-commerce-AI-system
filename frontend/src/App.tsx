@@ -23,7 +23,12 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function AgentConsole() {
-  const { activeId, messages, sessions, isStreaming, sendMessage, confirmAction, selectSession, newSession, stopGeneration } = useAgent()
+  const {
+    activeId, messages, sessions, isStreaming, sendMessage, confirmAction,
+    selectSession, newSession, stopGeneration,
+    hasMoreSessions, sessionsLoading, loadMoreSessions,
+    hasOlderMessages, loadingHistory, loadOlderMessages,
+  } = useAgent()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const handleSend = useCallback((content: string) => {
@@ -51,6 +56,9 @@ function AgentConsole() {
           onNew={newSession}
           onDelete={handleDelete}
           onRename={handleRename}
+          hasMore={hasMoreSessions}
+          loadingMore={sessionsLoading}
+          onLoadMore={loadMoreSessions}
         />
         <div className="flex-1 min-w-0 flex flex-col">
           <button
@@ -60,10 +68,14 @@ function AgentConsole() {
             ☰
           </button>
           <AgentChatWindow
+            key={activeId}
             messages={messages}
             isStreaming={isStreaming}
             onSuggestionClick={handleSend}
             onConfirmAction={confirmAction}
+            hasOlderMessages={hasOlderMessages}
+            loadingHistory={loadingHistory}
+            onLoadOlder={() => loadOlderMessages(activeId)}
           />
           <AgentChatInput
             onSend={handleSend}

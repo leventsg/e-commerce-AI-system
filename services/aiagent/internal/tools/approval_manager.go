@@ -8,6 +8,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 )
 
 var ErrConfirmationCreatorRequired = errors.New("confirmation creator required")
@@ -36,21 +37,21 @@ func (m *ApprovalManager) RequiresConfirmation(toolName string) bool {
 }
 
 // 用于创建高风险操作的确认请求
-func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req ExecuteRequest) (event domain.AgentEvent) {
+func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req core.ExecuteRequest) (event domain.AgentEvent) {
 	startedAt := time.Now()
 	// 前置检查
 	if m == nil || m.registry == nil {
-		return failedToolEvent(req, req.ToolName, "确认请求暂不可用，请稍后重试。", ErrConfirmationCreatorRequired)
+		return failedToolEventFromError(req, req.ToolName, "确认请求暂不可用，请稍后重试。", ErrConfirmationCreatorRequired)
 	}
 	metadata, err := m.registry.Metadata(req.ToolName)
 	if err != nil || !m.registry.RequiresConfirmation(req.ToolName) {
 		if err == nil {
 			err = confirmation.ErrConfirmationToolNotAllowed
 		}
-		return failedToolEvent(req, req.ToolName, "该操作不能进入确认流程。", err)
+		return failedToolEventFromError(req, req.ToolName, "该操作不能进入确认流程。", err)
 	}
 	if m.creator == nil {
-		return failedToolEvent(req, metadata.Name, "确认请求暂不可用，请稍后重试。", ErrConfirmationCreatorRequired)
+		return failedToolEventFromError(req, metadata.Name, "确认请求暂不可用，请稍后重试。", ErrConfirmationCreatorRequired)
 	}
 	// 参数清理
 	args := argx.SanitizeMapKeys(req.Arguments, sensitiveToolArgumentKeys)
@@ -69,12 +70,12 @@ func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req ExecuteRe
 		} else if status == toolStatusFailed {
 			errMessage = event.Content
 		}
-		_ = m.executor.record(ctx, req, recordMetadata, args, status, event.Content, errMessage, event.DataJSON, time.Since(startedAt))
+		_ = m.executor.record(ctx, req, recordMetadata, args, status, errMessage, event.DataJSON, nil, time.Since(startedAt))
 	}()
 	// 确认摘要
 	summary, err := m.registry.ConfirmationSummary(ctx, req)
 	if err != nil {
-		return failedToolEvent(req, metadata.Name, "无法创建确认请求，请检查操作参数。", err)
+		return failedToolEventFromError(req, metadata.Name, "无法创建确认请求，请检查操作参数。", err)
 	}
 	// 创建确认记录，存储到数据库
 	created, err := m.creator.Create(ctx, confirmation.CreateRequest{
@@ -90,7 +91,7 @@ func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req ExecuteRe
 		if err == nil {
 			err = ErrConfirmationCreatorRequired
 		}
-		return failedToolEvent(req, metadata.Name, "确认请求创建失败，请稍后重试。", err)
+		return failedToolEventFromError(req, metadata.Name, "确认请求创建失败，请稍后重试。", err)
 	}
 	payload := map[string]any{
 		"type":              domain.EventConfirmationRequired,

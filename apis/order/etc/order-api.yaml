@@ -1,4 +1,9 @@
 Name: order-api
+Log:
+  Stat: false
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/order-api"
 Host: 0.0.0.0
 Port: 8004
 Timeout: 0

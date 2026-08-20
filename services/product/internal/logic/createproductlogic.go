@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/qiniu/go-sdk/v7/storage"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
+	esproduct "github.com/leventsg/e-commerce-AI-system/dal/es/product"
 	product2 "github.com/leventsg/e-commerce-AI-system/dal/model/products/product"
 	pc "github.com/leventsg/e-commerce-AI-system/dal/model/products/product_categories"
 	"github.com/leventsg/e-commerce-AI-system/services/product/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/product/product"
+	"github.com/qiniu/go-sdk/v7/storage"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"strconv"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -94,11 +95,12 @@ func (l *CreateProductLogic) CreateProduct(in *product.CreateProductReq) (*produ
 			logx.Field("err", err))
 		return nil, err
 	}
+	productRes.Id = productId
 	// 创建文档（自动JSON序列化）
 	if _, err := l.svcCtx.EsClient.Index().
 		Index(biz.ProductEsIndexName).
 		Id(strconv.FormatInt(productId, 10)).
-		BodyJson(productRes).
+		BodyJson(esproduct.BuildESProductDocument(productRes, in.Categories)).
 		Refresh("true").
 		Do(l.ctx); err != nil {
 		l.Logger.Errorw("product es creation failed",

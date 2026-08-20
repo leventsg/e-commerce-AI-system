@@ -59,6 +59,50 @@ func TestInsertBatchExecutesOneMultiValueInsert(t *testing.T) {
 	}
 }
 
+func TestFindByUserAndConversationScopesByUserAndConversation(t *testing.T) {
+	model, mock, cleanup := newBatchTestModel(t)
+	defer cleanup()
+	now := time.Now()
+	cols := []string{
+		"id", "msg_id", "conversation_id", "user_id", "role", "content",
+		"metadata", "client_message_id", "dedupe_client_message_id", "created_at",
+	}
+	rows := sqlmock.NewRows(cols).
+		AddRow(uint64(1), "msg-1", "conv-1", uint64(42), "user", "hi", nil, "client-1", nil, now).
+		AddRow(uint64(2), "msg-2", "conv-1", uint64(42), "assistant", "hello", nil, "client-1", nil, now.Add(time.Second))
+	query := "select " + aiMessagesRows + " from `ai_messages` where `user_id` = ? and `conversation_id` = ? order by `id` asc limit ? offset ?"
+	mock.ExpectQuery(query).WithArgs(uint64(42), "conv-1", 50, 100).WillReturnRows(rows)
+
+	got, err := model.FindByUserAndConversation(context.Background(), 42, "conv-1", 50, 100)
+	if err != nil {
+		t.Fatalf("FindByUserAndConversation: %v", err)
+	}
+	if len(got) != 2 || got[0].MsgId != "msg-1" || got[1].MsgId != "msg-2" || got[0].Role != "user" || got[1].Role != "assistant" {
+		t.Fatalf("rows = %+v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestCountByUserAndConversation(t *testing.T) {
+	model, mock, cleanup := newBatchTestModel(t)
+	defer cleanup()
+	query := "select count(1) from `ai_messages` where `user_id` = ? and `conversation_id` = ?"
+	mock.ExpectQuery(query).WithArgs(uint64(42), "conv-1").WillReturnRows(sqlmock.NewRows([]string{"count(1)"}).AddRow(int64(7)))
+
+	count, err := model.CountByUserAndConversation(context.Background(), 42, "conv-1")
+	if err != nil {
+		t.Fatalf("CountByUserAndConversation: %v", err)
+	}
+	if count != 7 {
+		t.Fatalf("count = %d, want 7", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func TestInsertBatchReturnsDatabaseError(t *testing.T) {
 	model, mock, cleanup := newBatchTestModel(t)
 	defer cleanup()
