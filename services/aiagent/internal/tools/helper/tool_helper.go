@@ -23,6 +23,25 @@ const (
 var ErrInvalidToolArguments = errors.New("invalid ai tool arguments")
 var ErrQueryRPCUnavailable = errors.New("query rpc unavailable")
 var ErrToolExecutionContext = errors.New("trusted tool execution context missing")
+var ErrRPCBusinessStatus = errors.New("rpc business status failed")
+
+type RPCStatusError struct {
+	Operation  string
+	StatusCode int64
+	StatusMsg  string
+}
+
+func (e *RPCStatusError) Error() string {
+	message := strings.TrimSpace(e.StatusMsg)
+	if message == "" {
+		message = "business request failed"
+	}
+	return fmt.Sprintf("%s failed: %s", e.Operation, message)
+}
+
+func (e *RPCStatusError) Unwrap() error {
+	return ErrRPCBusinessStatus
+}
 
 type ToolExecutionContext struct {
 	UserID         uint64
@@ -30,6 +49,8 @@ type ToolExecutionContext struct {
 	MessageID      string
 	ToolCallID     string
 	ClientIP       string
+	AccessToken    string
+	RefreshToken   string
 	RunID          string
 	CheckpointID   string
 }
@@ -52,6 +73,8 @@ func ExecuteRequestFromContext(execution ToolExecutionContext, toolName string, 
 		MessageID:      execution.MessageID,
 		ToolCallID:     execution.ToolCallID,
 		ClientIP:       execution.ClientIP,
+		RunID:          execution.RunID,
+		CheckpointID:   execution.CheckpointID,
 		ToolName:       toolName,
 		Arguments:      arguments,
 	}
@@ -245,7 +268,7 @@ func ValidateRPCResponse(operation string, response any, statusCode int64, statu
 		if message == "" {
 			message = "business request failed"
 		}
-		return fmt.Errorf("%s failed: %s", operation, message)
+		return &RPCStatusError{Operation: operation, StatusCode: statusCode, StatusMsg: message}
 	}
 	return nil
 }

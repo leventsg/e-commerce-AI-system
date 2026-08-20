@@ -24,6 +24,7 @@ DevServer:
   EnablePprof: false
 
 Log:
+  Stat: false
   ServiceName: "aiagent-rpc"
   Mode: 'file'
   Encoding: "json"
@@ -94,6 +95,26 @@ KafkaMQ:
 ToolTimeout:
   QuerySeconds: 3
   WriteSeconds: 5
+
+OrderAPI:
+  BaseURL: ${AI_ORDER_API_BASE_URL}
+  Timeout: 5000
+
+RAG:
+  Enabled: true
+  BaseURL: ${RAGENT_BASE_URL}
+  APIKey: ${RAGENT_API_KEY}
+  RetrievePath: "/api/ragent/open-api/v1/retrieve"
+  EmbeddingPath: "/api/ragent/open-api/v1/embedding"
+  Timeout: 3000
+  TopK: 5
+  ConfidenceThreshold: 0.6
+  VectorSimilarityThreshold: 0.95
+  CacheTTLSeconds: 86400
+  EmbeddingDimension: 1536
+  PreviewBaseURL: ${RAGENT_PREVIEW_BASE_URL}
+  SourcePreviewChars: 200
+  RecentMessages: 6
 
 Confirmation:
   ExpireSeconds: 300

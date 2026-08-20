@@ -29,8 +29,9 @@ AuditRpc:
   NonBlock: true 
 
 Log:
+  Stat: false
   ServiceName: "users-rpc"
-  Mode: 'console'
+  Mode: 'file'
   Encoding: "json"
   Path: "./logs/users-rpc"
 

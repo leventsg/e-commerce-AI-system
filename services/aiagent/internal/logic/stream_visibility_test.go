@@ -61,7 +61,7 @@ func TestRunSupervisorPersistsDurableEventsAndForwardsAssistantMessage(t *testin
 		ConversationID:  "conv-1",
 		ClientMessageID: "client-1",
 		UserMessageID:   "msg-user",
-	}, nil, stream)
+	}, nil, stream, nil, nil)
 	if err != nil {
 		t.Fatalf("runSupervisor returned error: %v", err)
 	}

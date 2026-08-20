@@ -17,6 +17,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/rag"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -49,6 +50,7 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 	}
 	// 参数校验
 	if err := l.validateRequest(in); err != nil {
+		l.Errorw("ai chat request invalid", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "validate_request"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("err", err))
 		return sendErrorEvent(stream, "", err)
 	}
 	if l.svcCtx == nil || l.svcCtx.ConversationManager == nil || l.svcCtx.AgentRunner == nil || l.svcCtx.MessagesModel == nil {
@@ -68,15 +70,40 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 		if err == nil {
 			err = errors.New("会话初始化失败")
 		}
+		l.Errorw("ai conversation prepare failed", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "conversation_prepare"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("client_message_id", in.ClientMessageId), logx.Field("err", err))
 		return sendErrorEvent(stream, in.ConversationId, err)
 	}
 	if prepared.Duplicate {
+		l.Infow("ai chat duplicate replay", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "duplicate_replay"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("client_message_id", prepared.ClientMessageID))
 		return l.replayDuplicateResponse(stream, prepared, uint64(in.UserId))
+	}
+	var ragContext []domain.ContextMessage
+	var ragSources []domain.AgentSource
+	if l.svcCtx.RAGService != nil {
+		ragResult, ragErr := l.svcCtx.RAGService.Prepare(l.ctx, rag.PrepareRequest{
+			UserID:           uint64(in.UserId),
+			ConversationID:   prepared.ConversationID,
+			CurrentMessageID: prepared.UserMessageID,
+			ClientMessageID:  prepared.ClientMessageID,
+			Content:          rag.EmbeddingRequest{Query: strings.TrimSpace(in.Content), EmbeddingModel: l.svcCtx.RAGService.Config().EmbeddingModel},
+		})
+		if ragErr != nil {
+			l.Errorw("rag prepare failed, skip rag", logx.Field("component", "rag"), logx.Field("stage", "prepare"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", ragErr))
+		} else if ragResult != nil {
+			ragContext = ragResult.ContextMessages
+			ragSources = ragResult.Sources
+			l.Infow("rag 检索结果",
+				logx.Field("query", in.Content),
+				logx.Field("rag_result", ragResult),
+				logx.Field("conversation_id", prepared.ConversationID),
+				logx.Field("user_id", in.UserId))
+		}
 	}
 	_, err = l.runSupervisor(in, prepared, []domain.ContextMessage{
 		{Role: domain.ContextRoleUser, Content: strings.TrimSpace(in.Content)},
-	}, stream)
+	}, stream, ragContext, ragSources)
 	if err != nil {
+		l.Errorw("ai supervisor run failed", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "supervisor_run"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", err))
 		return err
 	}
 	go l.updateConversationMemory(prepared, uint64(in.UserId))
@@ -146,6 +173,7 @@ func (l *ChatLogic) replayDuplicateResponse(stream agentEventSender, prepared *c
 			ConversationId: row.ConversationId,
 			MessageId:      row.MsgId,
 			Content:        row.Content,
+			DataJson:       row.Metadata.String,
 			Done:           true,
 		}); err != nil {
 			return err
@@ -165,13 +193,18 @@ func persistenceErrorEvent(conversationID string, businessExecuted bool) *aiagen
 	return agentEventToProto(domain.AgentEvent{Type: domain.EventError, ConversationID: conversationID, MessageID: newChatMessageID(), Content: content, Status: "failed", DataJSON: dataJSON, Done: true})
 }
 
-func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversation.PreparedConversation, agentMessages []domain.ContextMessage, stream agentEventSender) ([]*aimessages.AiMessages, error) {
+func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversation.PreparedConversation, agentMessages []domain.ContextMessage, stream agentEventSender, ragContext []domain.ContextMessage, ragSources []domain.AgentSource) ([]*aimessages.AiMessages, error) {
+	startedAt := time.Now()
 	persistedMessages := make([]*aimessages.AiMessages, 0, 2)
 	eventStream, err := l.svcCtx.AgentRunner.Stream(l.ctx, eino.RunRequest{
 		UserID:           uint64(in.UserId),
 		ConversationID:   prepared.ConversationID,
 		MessageID:        newChatMessageID(),
 		ClientIP:         clientIPFromContext(l.ctx),
+		AccessToken:      accessTokenFromContext(l.ctx),
+		RefreshToken:     refreshTokenFromContext(l.ctx),
+		RAGContext:       ragContext,
+		RAGSources:       ragSources,
 		Messages:         agentMessages,
 		CurrentMessageID: prepared.UserMessageID,
 		ClientMessageID:  prepared.ClientMessageID,
@@ -188,10 +221,16 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 	// 消费run stream通道
 	for event := range eventStream {
 		events++
+		l.Infow("事件流处理",
+			logx.Field("conversation_id", prepared.ConversationID),
+			logx.Field("user_id", in.UserId),
+			logx.Field("event", event),
+		)
 		// 处理需要持久化的事件
 		if shouldPersistAgentEvent(event.Type) {
 			message, err := agentEventToMessage(uint64(in.UserId), prepared.ClientMessageID, event)
 			if err != nil {
+				l.Errorw("ai supervisor event persist failed", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "persist_event"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("event_type", event.Type), logx.Field("err", err))
 				return persistedMessages, err
 			}
 			if event.BusinessExecuted {
@@ -209,9 +248,17 @@ func (l *ChatLogic) runSupervisor(in *aiagent.ChatRequest, prepared *conversatio
 			persistedMessages = append(persistedMessages, message)
 		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
+			l.Errorw("ai supervisor event send failed", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "supervisor_stream"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("event_type", event.Type), logx.Field("err", err))
 			return persistedMessages, err
 		}
 	}
+	l.Infow("事件流处理结束",
+		logx.Field("conversation_id", prepared.ConversationID),
+		logx.Field("user_id", in.UserId),
+		logx.Field("event_count", events),
+		logx.Field("business_executed", businessExecuted),
+		logx.Field("latency_ms", time.Since(startedAt).Milliseconds()),
+	)
 	if events == 0 {
 		l.Errorw("ai supervisor returned no events", logx.Field("component", "supervisor_agent"), logx.Field("stage", "execute"), logx.Field("reason", "model_empty_response"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId))
 		if sendErr := stream.Send(&aiagent.AgentEvent{Type: domain.EventError, ConversationId: prepared.ConversationID, MessageId: newChatMessageID(), Content: "AI 服务暂时不可用，请稍后重试", Done: true}); sendErr != nil {
@@ -252,6 +299,8 @@ func agentEventToMessage(userID uint64, clientMessageID string, event domain.Age
 			return nil, err
 		}
 		metadata = sql.NullString{String: raw, Valid: true}
+	} else if event.Type == domain.EventAssistantMessage && strings.TrimSpace(event.DataJSON) != "" {
+		metadata = sql.NullString{String: event.DataJSON, Valid: true}
 	}
 	return &aimessages.AiMessages{
 		MsgId:           event.MessageID,
@@ -308,6 +357,20 @@ func clientIPFromContext(ctx context.Context) string {
 		return value
 	}
 	if values := metadata.ValueFromIncomingContext(ctx, "x-client-ip"); len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+func accessTokenFromContext(ctx context.Context) string {
+	if values := metadata.ValueFromIncomingContext(ctx, "x-access-token"); len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+func refreshTokenFromContext(ctx context.Context) string {
+	if values := metadata.ValueFromIncomingContext(ctx, "x-refresh-token"); len(values) > 0 {
 		return values[0]
 	}
 	return ""

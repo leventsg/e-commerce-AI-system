@@ -17,6 +17,7 @@ CouponRpc:
 
 # 日志配置
 Log:
+  Stat: false
   ServiceName: "coupon-api"
   Mode: 'file'
   Encoding: "json"

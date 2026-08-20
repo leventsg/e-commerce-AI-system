@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { UIMessage, ConversationSummary, StreamingState, TraceStep } from '@/types'
-import type { AgentEvent, ClientMessage } from '@/types'
+import type { AgentEvent, ClientMessage, RAGSource } from '@/types'
 import { streamAgentChat, streamConfirmAction } from '@/services/api/agent'
 import { useAuth } from '@/contexts'
 
@@ -54,6 +54,15 @@ function eventToolCallId(event: AgentEvent) {
   if (event.data && typeof event.data === 'object' && 'tool_call_id' in event.data) {
     const toolCallId = (event.data as { tool_call_id?: unknown }).tool_call_id
     if (typeof toolCallId === 'string' && toolCallId.trim()) return toolCallId
+  }
+  return undefined
+}
+
+function eventSources(event: AgentEvent): RAGSource[] | undefined {
+  if (event.sources && event.sources.length > 0) return event.sources
+  if (event.data && typeof event.data === 'object' && 'sources' in event.data) {
+    const sources = (event.data as { sources?: unknown }).sources
+    if (Array.isArray(sources)) return sources as RAGSource[]
   }
   return undefined
 }
@@ -199,9 +208,9 @@ export function applyAgentEvent(
     case 'assistant_message': {
       const sIdx = nextAssistantMessageId ? msgs.findIndex(m => m.id === nextAssistantMessageId) : msgs.findIndex(m => m.type === 'assistant' && m.streaming)
       if (sIdx >= 0) {
-        msgs[sIdx] = { ...msgs[sIdx], content: event.content || msgs[sIdx].content, streaming: false, trace: [...traceBuffer] }
+        msgs[sIdx] = { ...msgs[sIdx], content: event.content || msgs[sIdx].content, sources: eventSources(event), streaming: false, trace: [...traceBuffer] }
       } else {
-        msgs.push({ id: event.message_id || `ai_${timestamp}`, type: 'assistant', content: event.content || '', timestamp, trace: [...traceBuffer] })
+        msgs.push({ id: event.message_id || `ai_${timestamp}`, type: 'assistant', content: event.content || '', sources: eventSources(event), timestamp, trace: [...traceBuffer] })
       }
       break
     }

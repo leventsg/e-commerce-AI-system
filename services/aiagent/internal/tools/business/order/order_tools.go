@@ -19,8 +19,11 @@ type OrderQueryRPC interface {
 }
 
 type OrderHighRiskRPC interface {
-	CreateOrder(ctx context.Context, in *orderservice.CreateOrderRequest, opts ...grpc.CallOption) (*orderservice.OrderDetailResponse, error)
 	CancelOrder(ctx context.Context, in *orderservice.CancelOrderRequest, opts ...grpc.CallOption) (*orderservice.EmptyRes, error)
+}
+
+type OrderCreateAPI interface {
+	CreateOrder(ctx context.Context, req CreateOrderHTTPRequest) (*CreateOrderHTTPResponse, error)
 }
 
 func OrderQueryHandlers(rpc OrderQueryRPC) map[string]core.HandlerFunc {
@@ -33,21 +36,24 @@ func OrderQueryHandlers(rpc OrderQueryRPC) map[string]core.HandlerFunc {
 	}
 }
 
-func OrderHighRiskHandlers(rpc OrderHighRiskRPC) map[string]core.HandlerFunc {
-	if rpc == nil {
+func OrderHighRiskHandlers(createAPI OrderCreateAPI, cancelRPC OrderHighRiskRPC) map[string]core.HandlerFunc {
+	if createAPI == nil && cancelRPC == nil {
 		return nil
 	}
 	return map[string]core.HandlerFunc{
-		domain.ToolOrderCreate: orderCreateHandler(rpc),
-		domain.ToolOrderCancel: orderCancelHandler(rpc),
+		domain.ToolOrderCreate: orderCreateHandler(createAPI),
+		domain.ToolOrderCancel: orderCancelHandler(cancelRPC),
 	}
 }
 
 // 创建订单工具处理函数
-func orderCreateHandler(rpc OrderHighRiskRPC) core.HandlerFunc {
+func orderCreateHandler(api OrderCreateAPI) core.HandlerFunc {
 	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
+		if api == nil {
+			return core.HandlerResult{}, fmt.Errorf("order_create handler unavailable")
+		}
 		// 解析参数
-		userID, err := helper.AuthenticatedUserID32(req.UserID)
+		_, err := helper.AuthenticatedUserID32(req.UserID)
 		if err != nil {
 			return core.HandlerResult{}, err
 		}
@@ -67,40 +73,28 @@ func orderCreateHandler(rpc OrderHighRiskRPC) core.HandlerFunc {
 		if err != nil {
 			return core.HandlerResult{}, err
 		}
-		paymentValue, err := helper.RequiredInt64Argument(req.Arguments, "payment_method")
-		if err != nil {
-			return core.HandlerResult{}, err
-		}
-		paymentMethod := order.PaymentMethod(paymentValue)
-		if paymentMethod != order.PaymentMethod_WECHAT_PAY && paymentMethod != order.PaymentMethod_ALIPAY {
-			return core.HandlerResult{}, helper.InvalidArgument("payment_method", "must be 1 or 2")
-		}
-		// 调用 RPC 创建订单
-		resp, err := rpc.CreateOrder(ctx, &orderservice.CreateOrderRequest{
-			PreOrderId:    preOrderID,
-			UserId:        uint32(userID),
-			CouponId:      couponID,
-			AddressId:     addressID,
-			PaymentMethod: paymentMethod,
+		// 调用 order-api 创建订单，由 API 完成优惠券锁定、结算锁定和订单创建 saga。
+		resp, err := api.CreateOrder(ctx, CreateOrderHTTPRequest{
+			PreOrderID:    preOrderID,
+			CouponID:      couponID,
+			AddressID:     addressID,
+			PaymentMethod: PaymentMethodAlipay,
 		})
 		if err != nil {
-			return core.HandlerResult{}, fmt.Errorf("order_create rpc: %w", err)
+			return core.HandlerResult{}, fmt.Errorf("order_create http: %w", err)
 		}
 		if resp == nil {
 			return core.HandlerResult{}, fmt.Errorf("order_create returned nil response")
 		}
-		if err := helper.ValidateRPCResponse("order_create", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
-			return core.HandlerResult{}, err
-		}
-		if resp.Order == nil {
+		if strings.TrimSpace(resp.Order.OrderID) == "" {
 			return core.HandlerResult{}, fmt.Errorf("order_create returned empty order")
 		}
 		return core.HandlerResult{
 			Data: map[string]any{
-				"order": compactOrder(resp.Order),
-				"items": compactOrderItems(resp.Items),
+				"order": resp.Order,
+				"items": resp.Items,
 			},
-			Summary: fmt.Sprintf("订单 %s 已创建。", resp.Order.OrderId),
+			Summary: fmt.Sprintf("订单 %s 已创建，支付方式为支付宝。", resp.Order.OrderID),
 		}, nil
 	}
 }

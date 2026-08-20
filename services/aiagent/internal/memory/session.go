@@ -1,6 +1,10 @@
 package memory
 
-import "context"
+import (
+	"context"
+
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+)
 
 const (
 	ConversationValueKeyUserID           = "userID"
@@ -8,6 +12,7 @@ const (
 	ConversationValueKeyRunID            = "runID"
 	ConversationValueKeyCurrentMessageID = "currentMessageID"
 	ConversationValueKeyClientMessageID  = "clientMessageID"
+	ConversationValueKeyRAGContext       = "ragContextMessages"
 )
 
 type ConversationMetadata struct {
@@ -16,6 +21,7 @@ type ConversationMetadata struct {
 	RunID            string
 	CurrentMessageID string
 	ClientMessageID  string
+	RAGContext       []domain.ContextMessage
 }
 
 type conversationMetadataContextKey struct{}
@@ -27,6 +33,7 @@ func NewConversationValues(meta ConversationMetadata) map[string]any {
 		ConversationValueKeyRunID:            meta.RunID,
 		ConversationValueKeyCurrentMessageID: meta.CurrentMessageID,
 		ConversationValueKeyClientMessageID:  meta.ClientMessageID,
+		ConversationValueKeyRAGContext:       meta.RAGContext,
 	}
 }
 
@@ -51,7 +58,25 @@ func ConversationMetadataFromMap(values map[string]any) (ConversationMetadata, b
 		RunID:            runID,
 		CurrentMessageID: currentMessageID,
 		ClientMessageID:  clientMessageID,
+		RAGContext:       ragContextFromValue(values[ConversationValueKeyRAGContext]),
 	}, true
+}
+
+func ragContextFromValue(value any) []domain.ContextMessage {
+	items, ok := value.([]interface{})
+	if !ok {
+		if direct, ok := value.([]domain.ContextMessage); ok {
+			return direct
+		}
+		return nil
+	}
+	result := make([]domain.ContextMessage, 0, len(items))
+	for _, item := range items {
+		if message, ok := item.(domain.ContextMessage); ok {
+			result = append(result, message)
+		}
+	}
+	return result
 }
 
 func ContextWithConversationMetadata(ctx context.Context, meta ConversationMetadata) context.Context {

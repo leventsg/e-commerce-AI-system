@@ -1,4 +1,9 @@
 Name: checkout.rpc
+Log:
+  Stat: false
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/checkout-rpc"
 ListenOn: 0.0.0.0:10005
 Timeout: 0
 Consul:

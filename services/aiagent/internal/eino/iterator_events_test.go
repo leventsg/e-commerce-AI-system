@@ -116,6 +116,25 @@ func TestConsumeEventsConvertsIteratorToolMessageToResult(t *testing.T) {
 	}
 }
 
+func TestConsumeEventsKeepsFailedToolEnvelopeFailed(t *testing.T) {
+	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
+		toolIteratorEvent("product_agent", domain.ToolProductSearch, "call-1", `{"status":"failed","tool_name":"product_search","attempt_count":3,"retry_count":2,"error":{"kind":"transient","code":"rpc_unavailable","message":"商品查询暂时不可用","retryable_in_current_run":false},"business_outcome":"not_executed"}`),
+	})
+
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want tool_result only; events=%+v", len(events), events)
+	}
+	if events[0].Type != domain.EventToolResult || events[0].Status != "failed" {
+		t.Fatalf("event = %+v, want failed tool_result", events[0])
+	}
+	if events[0].BusinessExecuted {
+		t.Fatalf("event = %+v, failed not_executed envelope must not be business executed", events[0])
+	}
+	if !strings.Contains(events[0].Content, "商品查询暂时不可用") {
+		t.Fatalf("content = %q, want safe failure message", events[0].Content)
+	}
+}
+
 func TestConsumeEventsEmitsRootFinalAssistantOnly(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
 		assistantIteratorEvent("product_agent", schema.AssistantMessage("内部子 agent 回复", nil)),

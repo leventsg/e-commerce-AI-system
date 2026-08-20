@@ -1,4 +1,9 @@
 Name: products.rpc
+Log:
+  Stat: false
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/products-rpc"
 ListenOn: 0.0.0.0:10002
 Mode: dev
 Timeout: 0

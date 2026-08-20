@@ -10,6 +10,7 @@ export interface UIMessage {
   toolStatus?: 'pending' | 'running' | 'success' | 'failed'
   toolCallId?: string
   dataJson?: string
+  sources?: RAGSource[]
   /** 确认卡片 */
   conversationId?: string
   confirmationId?: string
@@ -31,6 +32,19 @@ export interface TraceStep {
   result?: Record<string, unknown>
   error?: string
   subagent_name?: string
+}
+
+export interface RAGSource {
+  document_id: string
+  title: string
+  document_url?: string
+  chunks: RAGSourceChunk[]
+}
+
+export interface RAGSourceChunk {
+  chunk_id: string
+  content: string
+  score: number
 }
 
 /** 会话列表摘要 */

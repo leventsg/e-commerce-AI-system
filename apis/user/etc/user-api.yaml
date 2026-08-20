@@ -25,6 +25,7 @@ OptionPathList:
   - /douyin/user/address 
 
 Log:
+  Stat: false
   ServiceName: "user-api"
   Mode: 'file'
   Encoding: "json"

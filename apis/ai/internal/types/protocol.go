@@ -27,6 +27,7 @@ type ServerEvent struct {
 	ConversationID string          `json:"conversation_id,omitempty"`
 	MessageID      string          `json:"message_id,omitempty"`
 	Content        string          `json:"content,omitempty"`
+	Sources        []SourceInfo    `json:"sources,omitempty"`
 	Tool           string          `json:"tool,omitempty"`
 	Status         string          `json:"status,omitempty"`
 	Data           json.RawMessage `json:"data,omitempty"`
@@ -35,4 +36,17 @@ type ServerEvent struct {
 	Summary        string          `json:"summary,omitempty"`
 	ExpiresAt      int64           `json:"expires_at,omitempty"`
 	Done           bool            `json:"done"`
+}
+
+type SourceInfo struct {
+	DocumentID  string        `json:"document_id"`
+	Title       string        `json:"title"`
+	DocumentURL string        `json:"document_url,omitempty"`
+	Chunks      []SourceChunk `json:"chunks"`
+}
+
+type SourceChunk struct {
+	ChunkID string  `json:"chunk_id"`
+	Content string  `json:"content"`
+	Score   float64 `json:"score"`
 }

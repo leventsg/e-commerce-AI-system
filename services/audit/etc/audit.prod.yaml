@@ -15,6 +15,7 @@ MysqlConfig:
   datasource: ${MYSQL_DATA_SOURCE}
 
 Log:
+  Stat: false
   ServiceName: "audit-rpc"
   Mode: 'file'
   Encoding: "json"

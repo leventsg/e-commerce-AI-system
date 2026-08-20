@@ -29,6 +29,29 @@ type ConfirmationConfig struct {
 	LockExpireSeconds int64
 }
 
+type OrderAPIConfig struct {
+	BaseURL string
+	Timeout int64
+}
+
+type RAGConfig struct {
+	Enabled                   bool
+	BaseURL                   string
+	APIKey                    string
+	RetrievePath              string
+	EmbeddingPath             string
+	Timeout                   int64
+	TopK                      int
+	ConfidenceThreshold       float64
+	VectorSimilarityThreshold float64
+	CacheTTLSeconds           int64
+	EmbeddingDimension        int
+	PreviewBaseURL            string
+	SourcePreviewChars        int
+	RecentMessages            int
+	EmbeddingModel            string
+}
+
 type Config struct {
 	zrpc.RpcServerConf
 	Consul       consul.Conf
@@ -41,6 +64,8 @@ type Config struct {
 	KafkaMQ      config.KafkaConfig
 	ToolTimeout  ToolTimeoutConfig
 	Confirmation ConfirmationConfig
+	OrderAPI     OrderAPIConfig
+	RAG          RAGConfig
 	ProductRpc   zrpc.RpcClientConf
 	InventoryRpc zrpc.RpcClientConf
 	OrderRpc     zrpc.RpcClientConf

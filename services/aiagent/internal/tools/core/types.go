@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
@@ -51,6 +52,14 @@ type HandlerResult struct {
 
 type HandlerFunc func(context.Context, HandlerRequest) (HandlerResult, error)
 
+type RetryPolicy struct {
+	MaxRetries        int
+	InitialDelay      time.Duration // 初始重试延迟
+	MaxDelay          time.Duration // 最大重试延迟
+	BackoffMultiplier float64       // 退避系数
+	MaxElapsed        time.Duration // 总超时时间
+}
+
 type Tool struct {
 	Name                string
 	Desc                string
@@ -58,6 +67,7 @@ type Tool struct {
 	Kind                ToolKind       // 工具类型，业务工具或能力工具
 	Visibility          ToolVisibility // 工具可见性，root智能体、所有智能体或子智能体
 	Metadata            domain.Metadata
+	RetryPolicy         RetryPolicy
 	Handler             HandlerFunc
 	ConfirmationSummary ConfirmationSummaryFunc
 }

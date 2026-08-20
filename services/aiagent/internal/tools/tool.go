@@ -36,11 +36,11 @@ func (t *invokableToolAdapter) InvokableRun(ctx context.Context, arguments strin
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		parseErr := fmt.Errorf("%w: invalid JSON arguments: %v", helper.ErrInvalidToolArguments, err)
 		event := t.executor.Reject(ctx, helper.ExecuteRequestFromContext(execution, t.tool.Name, nil), parseErr)
-		return event.DataJSON, fmt.Errorf("%w: %s", ErrToolExecution, event.Content)
+		return event.DataJSON, nil
 	}
 	event := t.executor.Execute(ctx, helper.ExecuteRequestFromContext(execution, t.tool.Name, args), t.tool.Handler)
 	if event.Status != toolStatusSuccess {
-		return event.DataJSON, fmt.Errorf("%w: %s", ErrToolExecution, event.Content)
+		return event.DataJSON, nil
 	}
 	return event.DataJSON, nil
 }

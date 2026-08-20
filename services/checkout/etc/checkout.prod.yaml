@@ -16,6 +16,7 @@ MysqlConfig:
   conntimeout: 5
 
 Log:
+  Stat: false
   ServiceName: "checkout-rpc"
   Mode: 'file'
   Encoding: "json"

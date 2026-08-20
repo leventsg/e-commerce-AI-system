@@ -7,8 +7,10 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/apis/ai/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/apis/ai/internal/handler"
 	"github.com/leventsg/e-commerce-AI-system/apis/ai/internal/svc"
+	"github.com/leventsg/e-commerce-AI-system/common/logfmt"
 
 	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	_ "github.com/zeromicro/zero-contrib/zrpc/registry/consul"
 )
@@ -23,6 +25,7 @@ func main() {
 
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
+	logx.AddWriter(logfmt.NewTerminalWriter())
 
 	ctx := svc.NewServiceContext(c)
 	handler.RegisterHandlers(server, ctx)

@@ -102,6 +102,45 @@ func wrappedToolSummary(toolName, raw string) string {
 	return defaultToolSummary(toolName)
 }
 
+type iteratorToolEnvelope struct {
+	Status          string             `json:"status"`
+	ToolName        string             `json:"tool_name"`
+	BusinessOutcome string             `json:"business_outcome"`
+	Error           *iteratorToolError `json:"error"`
+	Result          json.RawMessage    `json:"result"`
+}
+
+type iteratorToolError struct {
+	Message string `json:"message"`
+}
+
+func parseIteratorToolEnvelope(raw string) (*iteratorToolEnvelope, bool) {
+	var envelope iteratorToolEnvelope
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return nil, false
+	}
+	if strings.TrimSpace(envelope.Status) == "" || strings.TrimSpace(envelope.ToolName) == "" {
+		return nil, false
+	}
+	return &envelope, true
+}
+
+func iteratorToolResultSummary(toolName, raw string, envelope *iteratorToolEnvelope) string {
+	if envelope == nil {
+		return wrappedToolSummary(toolName, raw)
+	}
+	if envelope.Status == "failed" {
+		if envelope.Error != nil && strings.TrimSpace(envelope.Error.Message) != "" {
+			return strings.TrimSpace(envelope.Error.Message)
+		}
+		return "工具调用失败，请稍后重试。"
+	}
+	if len(envelope.Result) > 0 && string(envelope.Result) != "null" {
+		return wrappedToolSummary(toolName, string(envelope.Result))
+	}
+	return defaultToolSummary(toolName)
+}
+
 func defaultToolSummary(toolName string) string {
 	switch toolName {
 	case domain.ToolProductSearch, domain.ToolProductDetail, domain.ToolProductRecommend:
@@ -162,4 +201,15 @@ func ensureJSONObject(value string) string {
 		return value
 	}
 	return fmt.Sprintf(`{"result":%q}`, value)
+}
+
+func sourcesDataJSON(sources []domain.AgentSource) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(map[string]any{"sources": sources})
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }

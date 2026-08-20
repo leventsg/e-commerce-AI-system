@@ -151,7 +151,7 @@ SubAgent 只绑定本领域 `ToolInfo` 和可执行工具。缺参追问、参�
 
 `Executor` 是当前实现中的 Execution Guard。Handler 收到的 `UserID` 只能来自 `ExecuteRequest.UserID`，不会从模型 arguments 中读取。每个具体 Handler 负责参数类型、范围及 RPC 返回状态校验，并只返回生成用户摘要所需的紧凑字段。
 
-默认查询超时为 3 秒，写操作超时为 5 秒，可由 `ToolTimeout` 配置覆盖。超时或 RPC 错误统一生成 `status=failed` 的 `tool_result`。
+默认查询超时为 3 秒，写操作超时为 5 秒，可由 `ToolTimeout` 配置覆盖。超时或 RPC 错误统一生成 `status=failed` 的结构化 `tool_result`。当前阶段已落地工具层重试：查询工具和 Capability Tool 默认最多重试 2 次，写工具默认不自动重试。
 
 ## 7. 高风险确认流程
 
@@ -172,7 +172,7 @@ Supervisor 调用领域 AgentTool
   -> 返回 confirmation_required
 ```
 
-首次请求不会调用目标写 RPC。`order_create` 在创建确认前还会以可信用户查询预结算详情；使用优惠券时调用 `coupon_calculate` 验证可用性并计算最新应付金额。
+首次请求不会调用目标写操作。`order_create` 在创建确认前还会以可信用户查询预结算详情；使用优惠券时调用 `coupon_calculate` 验证可用性并计算最新应付金额。
 
 ### 7.2 用户批准或拒绝
 
@@ -233,18 +233,32 @@ WrapperAuthMiddleware
 
 ## 9. 记录、审计与失败语义
 
-所有进入 Executor 的工具调用都会尝试写入 `ai_tool_calls`，记录 conversation ID、真实模型 tool call ID、user ID、脱敏参数、工具名、状态、真实工具返回 JSON、错误和耗时。写操作还会调用 audit 服务写审计日志。
+所有进入 Executor 的工具调用都会尝试写入 `ai_tool_calls`，记录 conversation ID、真实模型 tool call ID、user ID、脱敏参数、工具名、状态、最终工具结果 envelope、错误和耗时。成功 envelope 的 `result` 子字段保存真实工具返回 JSON，失败 envelope 保存安全错误和 attempt trail。写操作还会调用 audit 服务写审计日志。
 
 Capability Tool 也经过同一个 Executor，并写入 `ai_tool_calls`。`get_tool_call_result` 按可信 user ID + conversation ID + `tool_call_id` 读取已有 `ai_tool_calls.result`，本次读取调用本身也会生成新的工具调用记录。
 
 失败处理遵守以下语义：
 
-- Handler/RPC 失败：返回 `tool_result.failed`，不会生成成功结果。
-- 超时：明确返回“工具调用超时，未完成操作”。
+- Handler/RPC 失败：返回 `tool_result.failed`，不会生成成功结果，也不会把可预期工具失败升级成“AI 服务不可用”。
+- tool message 使用统一 envelope：`status`、`tool_name`、`attempt_count`、`retry_count`、`error`、`business_outcome`、`result`、`attempt_trail`。
+- iterator 必须解析 envelope 的真实 `status`；失败结果不能硬编码成 `success`，`BusinessExecuted` 只能由 `business_outcome=executed` 得出。
+- 超时：查询工具可按策略重试；写工具超时或执行结果无法确认时返回 `business_outcome=unknown`，不得声称成功或未执行。
+- 参数错误、权限错误、业务拒绝、`bizerr.Aborted`、调用方取消和未知错误默认不重试。
+- `Unavailable`、attempt `DeadlineExceeded`、网络超时和依赖空响应可按工具策略重试；当前查询/Capability 默认最多 2 次 retry。
+- `error.message` 是安全提示，原始网络、数据库、连接串、token 等内部错误只进入日志和受控审计字段，不直接交给模型。
 - 查询审计记录失败：业务结果保持原状态，记录错误日志。
 - 写操作业务成功但审计失败：事件改为 failed，`data_json.business_executed=true`，提示操作已完成但审计失败，防止用户盲目重试。
 - 高风险业务已执行但后续记录失败：确认仍标为 `executed`，避免确认 ID 被重复使用。
 - 消息持久化失败且业务已执行：返回“业务结果已产生，请勿重复操作”。
+
+完整工具失败治理按四层设计：
+
+1. 工具层重试：`Executor` 内部按工具 retry policy 对瞬态失败做有限指数退避重试，并输出最终 envelope。
+2. Conversation 全局预算：后续用 Redis 按 `conversationID + runID` 管控本轮对话的总 retry 和 tool call 上限，防止模型循环调用。
+3. 熔断降级：后续按环境 + RPC service + method 维护依赖熔断状态，只累计依赖故障，使用 open / half-open / closed 状态和少量 probe 恢复。
+4. 可观测日志：最终 `ai_tool_calls.result` 保存 envelope，日志记录 retry、预算、熔断和治理降级事件。
+
+当前实现范围仅包含第一层工具层重试；全局预算、熔断和完整治理指标后续独立推进。
 
 ## 10. 已注册工具与 RPC 映射
 
@@ -268,7 +282,7 @@ Capability Tool 也经过同一个 Executor，并写入 `ai_tool_calls`。`get_t
 | `coupon_my_list` | 查询 | 否 | `Coupons.ListUserCoupons` |
 | `coupon_usage_list` | 查询 | 否 | `Coupons.ListCouponUsages` |
 | `coupon_calculate` | 查询 | 否 | `Coupons.CalculateCoupon` |
-| `order_create` | 高风险写 | 是 | `OrderService.CreateOrder` |
+| `order_create` | 高风险写 | 是 | `order-api POST /douyin/order/create` |
 | `order_cancel` | 高风险写 | 是 | `OrderService.CancelOrder` |
 
 ## 11. SSE 输出

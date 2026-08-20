@@ -108,13 +108,6 @@ func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req
 	if _, err := helper.PositiveInt32(addressValue, "address_id"); err != nil {
 		return "", err
 	}
-	paymentValue, err := helper.RequiredInt64Argument(req.Arguments, "payment_method")
-	if err != nil {
-		return "", err
-	}
-	if paymentValue != 1 && paymentValue != 2 {
-		return "", helper.InvalidArgument("payment_method", "must be 1 or 2")
-	}
 	if b.checkout == nil {
 		return "", ErrToolHandlerRequired
 	}
@@ -141,7 +134,7 @@ func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req
 			quantity += int64(item.Quantity)
 		}
 	}
-	summary := fmt.Sprintf("确认使用预订单 %s 创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, resp.Data.FinalAmount, quantity)
+	summary := fmt.Sprintf("确认使用预订单 %s 以支付宝创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, resp.Data.FinalAmount, quantity)
 	couponID, err := helper.OptionalStringArgument(req.Arguments, "coupon_id")
 	if err != nil {
 		return "", err
@@ -171,7 +164,7 @@ func (b *confirmationSummaryBuilder) orderCreateSummary(ctx context.Context, req
 		if !calculated.IsUsable {
 			return "", helper.InvalidArgument("coupon_id", "is not usable for the checkout items")
 		}
-		summary = fmt.Sprintf("确认使用预订单 %s 和优惠券 %s 创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, couponID, calculated.FinalAmount, quantity)
+		summary = fmt.Sprintf("确认使用预订单 %s 和优惠券 %s 以支付宝创建订单？应付金额 %d 分，商品数量 %d。", preOrderID, couponID, calculated.FinalAmount, quantity)
 	}
 	return summary, nil
 }

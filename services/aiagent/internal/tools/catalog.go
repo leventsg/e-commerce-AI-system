@@ -40,6 +40,7 @@ type DefaultToolClients struct {
 	Order           OrderRPC
 	OrderQuery      order.OrderQueryRPC
 	OrderHighRisk   order.OrderHighRiskRPC
+	OrderCreateAPI  order.OrderCreateAPI
 	Cart            CartRPC
 	CartQuery       cart.CartQueryRPC
 	CartWrite       cart.CartWriteRPC
@@ -97,7 +98,7 @@ func DefaultBusinessTools(clients DefaultToolClients, timeout config.ToolTimeout
 	mergeHandlers(handlers, product.ProductQueryHandlers(clients.Product))
 	mergeHandlers(handlers, inventory.InventoryQueryHandlers(clients.Inventory))
 	mergeHandlers(handlers, order.OrderQueryHandlers(orderQuery))
-	mergeHandlers(handlers, order.OrderHighRiskHandlers(orderHighRisk))
+	mergeHandlers(handlers, order.OrderHighRiskHandlers(clients.OrderCreateAPI, orderHighRisk))
 	mergeHandlers(handlers, cart.CartQueryHandlers(cartQuery))
 	mergeHandlers(handlers, cart.CartWriteHandlers(cartWrite))
 	mergeHandlers(handlers, cart.CartHighRiskHandlers(cartHighRisk))

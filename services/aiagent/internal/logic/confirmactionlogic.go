@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
@@ -34,7 +35,16 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 	if stream == nil {
 		return fmt.Errorf("stream 为空")
 	}
+	l.Infow("ai confirmation action start",
+		logx.Field("component", "confirm_action_logic"),
+		logx.Field("stage", "request_received"),
+		logx.Field("conversation_id", in.ConversationId),
+		logx.Field("user_id", in.UserId),
+		logx.Field("confirmation_id", in.ConfirmationId),
+		logx.Field("approved", in.Approved),
+	)
 	if err := l.validateRequest(in); err != nil {
+		l.Errorw("ai confirmation request invalid", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "validate_request"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", in.ConfirmationId), logx.Field("err", err))
 		return sendConfirmError(stream, "", err)
 	}
 	if l.svcCtx.AgentRunner == nil {
@@ -48,12 +58,27 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		Approved:       in.Approved,
 	})
 	if err != nil {
+		l.Errorw("ai confirmation decision failed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_decision"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", in.ConfirmationId), logx.Field("approved", in.Approved), logx.Field("err", err))
 		return sendConfirmError(stream, in.ConversationId, err)
 	}
 	if decided == nil {
+		l.Errorw("ai confirmation decision empty", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_decision"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", in.ConfirmationId))
 		return sendConfirmError(stream, in.ConversationId, fmt.Errorf("确认记录为空"))
 	}
+	l.Infow("ai confirmation decision",
+		logx.Field("component", "confirm_action_logic"),
+		logx.Field("stage", "confirmation_decision"),
+		logx.Field("conversation_id", decided.ConversationID),
+		logx.Field("user_id", in.UserId),
+		logx.Field("confirmation_id", decided.ID),
+		logx.Field("tool_name", decided.ToolName),
+		logx.Field("status", decided.Status),
+		logx.Field("run_id", decided.RunID),
+		logx.Field("checkpoint_id", decided.CheckpointID),
+		logx.Field("interrupt_id", decided.InterruptID),
+	)
 	if !in.Approved {
+		l.Infow("ai confirmation rejected", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_rejected"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("tool_name", decided.ToolName))
 		return l.rejectConfirmation(decided, uint64(in.UserId), stream)
 	}
 	if decided.CheckpointID == "" || decided.InterruptID == "" {
@@ -64,9 +89,21 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		})
 		return sendConfirmError(stream, decided.ConversationID, fmt.Errorf("确认恢复点不存在，请重新发起操作"))
 	}
+	l.Infow("ai confirmation resume start",
+		logx.Field("component", "confirm_action_logic"),
+		logx.Field("stage", "confirmation_resume"),
+		logx.Field("conversation_id", decided.ConversationID),
+		logx.Field("user_id", in.UserId),
+		logx.Field("confirmation_id", decided.ID),
+		logx.Field("tool_name", decided.ToolName),
+		logx.Field("run_id", decided.RunID),
+		logx.Field("checkpoint_id", decided.CheckpointID),
+		logx.Field("interrupt_id", decided.InterruptID),
+	)
 
 	businessExecuted := false
 	markExecuted := false
+	startedAt := time.Now()
 	eventStream, err := l.svcCtx.AgentRunner.ResumeStream(l.ctx, eino.ResumeRequest{
 		UserID:         uint64(in.UserId),
 		ConversationID: decided.ConversationID,
@@ -75,8 +112,12 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		CheckpointID:   decided.CheckpointID,
 		InterruptID:    decided.InterruptID,
 		Approved:       in.Approved,
+		AccessToken:    accessTokenFromContext(l.ctx),
+		RefreshToken:   refreshTokenFromContext(l.ctx),
+		ClientIP:       clientIPFromContext(l.ctx),
 	})
 	if err != nil {
+		l.Errorw("ai confirmation resume failed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_resume"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("err", err))
 		if in.Approved {
 			_, _ = l.svcCtx.ConfirmationManager.MarkFailed(l.ctx, confirmation.CompletionRequest{
 				UserID:         uint64(in.UserId),
@@ -89,6 +130,17 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 	eventCount := 0
 	for event := range eventStream {
 		eventCount++
+		l.Infow("ai confirmation resume event",
+			logx.Field("component", "confirm_action_logic"),
+			logx.Field("stage", "confirmation_resume"),
+			logx.Field("conversation_id", decided.ConversationID),
+			logx.Field("user_id", in.UserId),
+			logx.Field("confirmation_id", decided.ID),
+			logx.Field("event_type", event.Type),
+			logx.Field("tool", event.Tool),
+			logx.Field("status", event.Status),
+			logx.Field("business_executed", event.BusinessExecuted),
+		)
 		if event.BusinessExecuted || (event.Type == domain.EventToolResult && event.Status == "success" && event.Tool == decided.ToolName) {
 			businessExecuted = true
 		}
@@ -96,11 +148,13 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		if shouldPersistAgentEvent(event.Type) {
 			messages, msgErr := agentEventToMessage(uint64(in.UserId), "", event)
 			if msgErr != nil {
+				l.Errorw("ai confirmation event persist failed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "persist_event"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("event_type", event.Type), logx.Field("err", msgErr))
 				return msgErr
 			}
 			// 保存消息到数据库
 			result, err := l.svcCtx.MessagesModel.Insert(l.ctx, messages)
 			if err != nil {
+				l.Errorw("ai confirmation event insert failed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "persist_event"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("event_type", event.Type), logx.Field("err", err))
 				_ = stream.Send(persistenceErrorEvent(decided.ConversationID, businessExecuted))
 				return err
 			}
@@ -118,13 +172,27 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 			}); markErr != nil {
 				l.Errorw("mark confirmed tool executed failed", logx.Field("confirmation_id", decided.ID), logx.Field("err", markErr))
 				_ = stream.Send(completionErrorEvent(decided.ConversationID, "业务操作已完成，但确认状态保存失败", markErr))
+			} else {
+				l.Infow("ai confirmation executed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_executed"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("tool_name", decided.ToolName))
 			}
 			markExecuted = true
 		}
 		if err := stream.Send(agentEventToProto(event)); err != nil {
+			l.Errorw("ai confirmation event send failed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_resume"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("event_type", event.Type), logx.Field("err", err))
 			return err
 		}
 	}
+	l.Infow("ai confirmation resume finished",
+		logx.Field("component", "confirm_action_logic"),
+		logx.Field("stage", "confirmation_resume"),
+		logx.Field("conversation_id", decided.ConversationID),
+		logx.Field("user_id", in.UserId),
+		logx.Field("confirmation_id", decided.ID),
+		logx.Field("tool_name", decided.ToolName),
+		logx.Field("event_count", eventCount),
+		logx.Field("business_executed", businessExecuted),
+		logx.Field("latency_ms", time.Since(startedAt).Milliseconds()),
+	)
 	if in.Approved && !businessExecuted {
 		if _, markErr := l.svcCtx.ConfirmationManager.MarkFailed(l.ctx, confirmation.CompletionRequest{
 			UserID:         uint64(in.UserId),
@@ -134,6 +202,7 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 			l.Errorw("mark confirmed tool failed failed", logx.Field("confirmation_id", decided.ID), logx.Field("err", markErr))
 			return stream.Send(completionErrorEvent(decided.ConversationID, "业务操作失败，且确认失败状态保存失败", markErr))
 		}
+		l.Errorw("ai confirmation execution did not complete", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_failed"), logx.Field("conversation_id", decided.ConversationID), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", decided.ID), logx.Field("tool_name", decided.ToolName))
 	}
 	if eventCount == 0 {
 		l.Errorw("确认服务未返回有效事件", logx.Field("user_id", in.UserId), logx.Field("conversation_id", decided.ConversationID))

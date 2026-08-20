@@ -40,13 +40,25 @@ func productSearchHandler(rpc ProductQueryRPC) core.HandlerFunc {
 		if err != nil {
 			return core.HandlerResult{}, err
 		}
-		minPrice, err := helper.OptionalInt64Argument(req.Arguments, "min_price", 0)
-		if err != nil {
-			return core.HandlerResult{}, err
-		}
-		maxPrice, err := helper.OptionalInt64Argument(req.Arguments, "max_price", 0)
-		if err != nil {
-			return core.HandlerResult{}, err
+		var minPrice, maxPrice int64
+		if price, ok := req.Arguments["price"].(map[string]any); ok {
+			minPrice, err = helper.OptionalInt64Argument(price, "min", 0)
+			if err != nil {
+				return core.HandlerResult{}, err
+			}
+			maxPrice, err = helper.OptionalInt64Argument(price, "max", 0)
+			if err != nil {
+				return core.HandlerResult{}, err
+			}
+		} else {
+			minPrice, err = helper.OptionalInt64Argument(req.Arguments, "min_price", 0)
+			if err != nil {
+				return core.HandlerResult{}, err
+			}
+			maxPrice, err = helper.OptionalInt64Argument(req.Arguments, "max_price", 0)
+			if err != nil {
+				return core.HandlerResult{}, err
+			}
 		}
 		if minPrice < 0 || maxPrice < 0 || (maxPrice > 0 && minPrice > maxPrice) {
 			return core.HandlerResult{}, helper.InvalidArgument("price", "range is invalid")

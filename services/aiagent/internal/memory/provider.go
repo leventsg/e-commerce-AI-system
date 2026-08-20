@@ -22,6 +22,7 @@ type RetrieveRequest struct {
 	CurrentMessageID string
 	ClientMessageID  string
 	Messages         []domain.ContextMessage
+	RAGContext       []domain.ContextMessage
 	Limit            int
 }
 

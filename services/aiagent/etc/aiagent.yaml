@@ -22,8 +22,9 @@ DevServer:
   EnablePprof: false
 
 Log:
+  Stat: false
   ServiceName: "aiagent-rpc"
-  Mode: 'console'
+  Mode: 'file'
   Encoding: "json"
   Path: "./logs/aiagent-rpc"
 
@@ -88,6 +89,27 @@ KafkaMQ:
 ToolTimeout:
   QuerySeconds: 3
   WriteSeconds: 5
+
+OrderAPI:
+  BaseURL: "http://localhost:8004"
+  Timeout: 5000
+
+RAG:
+  Enabled: true
+  BaseURL: "http://localhost:5173"
+  APIKey: ${RAGENT_API_KEY}
+  RetrievePath: "/api/ragent/open-api/v1/retrieve"
+  EmbeddingPath: "/api/ragent/open-api/v1/embedding"
+  Timeout: 3000
+  TopK: 5
+  ConfidenceThreshold: 0.6
+  VectorSimilarityThreshold: 0.95
+  CacheTTLSeconds: 86400
+  EmbeddingDimension: 1536
+  PreviewBaseURL: "http://localhost:5173"
+  SourcePreviewChars: 200
+  RecentMessages: 6
+  EmbeddingModel: "qwen-emb-8b"
 
 Confirmation:
   ExpireSeconds: 300

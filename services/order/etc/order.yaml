@@ -24,8 +24,9 @@ DevServer:
   EnablePprof: false
 
 Log:
+  Stat: false
   ServiceName: "order-rpc"
-  Mode: 'console'
+  Mode: 'file'
   Encoding: "json"
   Path: "./logs/order-rpc"
 

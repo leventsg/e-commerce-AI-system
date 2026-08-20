@@ -8,6 +8,7 @@ Timeout: 20000 # 默认为0，表示不超时
 
 # 日志配置
 Log:
+  Stat: false
   ServiceName: "checkout-api"
   Mode: 'file'
   Encoding: "json"
@@ -41,4 +42,3 @@ CheckoutRpc:
 AuthsRpc:
   Target: consul://${CONSUL_HOST}/auths.rpc?wait=14s
   NonBlock: true
-

@@ -131,6 +131,12 @@ func (p *CustomerServiceProvider) Retrieve(ctx context.Context, req *RetrieveReq
 	p.appendEvents(ctx, req, &contextBlocks, result.Metadata)
 	// 用户画像
 	p.appendProfile(ctx, req, &contextBlocks, result.Metadata)
+	// 知识库检索结果（RAG）
+	for _, message := range req.RAGContext {
+		if strings.TrimSpace(message.Content) != "" {
+			contextBlocks = append(contextBlocks, message)
+		}
+	}
 	// 最终上下文块
 	result.ContextMessages = contextBlocks
 	return result, nil

@@ -258,18 +258,19 @@ func defaultSchemaTools(queryTimeout, writeTimeout int64) []core.Tool {
 		queryTool(domain.ToolCouponMyList, tool_prompts.CouponMyListDesc, queryTimeout, "Coupons", "ListUserCoupons", tool_prompts.CouponMyListParameters),
 		queryTool(domain.ToolCouponUsageList, tool_prompts.CouponUsageListDesc, queryTimeout, "Coupons", "ListCouponUsages", tool_prompts.CouponUsageListParameters),
 		queryTool(domain.ToolCouponCalculate, tool_prompts.CouponCalculateDesc, queryTimeout, "Coupons", "CalculateCoupon", tool_prompts.CouponCalculateParameters),
-		writeTool(domain.ToolOrderCreate, tool_prompts.OrderCreateDesc, domain.RiskHigh, true, writeTimeout, "OrderService", "CreateOrder", tool_prompts.OrderCreateParameters),
+		writeTool(domain.ToolOrderCreate, tool_prompts.OrderCreateDesc, domain.RiskHigh, true, writeTimeout, "OrderAPI", "CreateOrder", tool_prompts.OrderCreateParameters),
 		writeTool(domain.ToolOrderCancel, tool_prompts.OrderCancelDesc, domain.RiskHigh, true, writeTimeout, "OrderService", "CancelOrder", tool_prompts.OrderCancelParameters),
 	}
 }
 
 func queryTool(name, desc string, timeout int64, service, method string, params map[string]*schema.ParameterInfo) core.Tool {
 	return core.Tool{
-		Name:       name,
-		Desc:       desc,
-		Params:     params,
-		Kind:       core.ToolKindBusiness,
-		Visibility: core.ToolVisibilitySubAgents,
+		Name:        name,
+		Desc:        desc,
+		Params:      params,
+		Kind:        core.ToolKindBusiness,
+		Visibility:  core.ToolVisibilitySubAgents,
+		RetryPolicy: defaultQueryRetryPolicy(),
 		Metadata: domain.Metadata{
 			Name:           name,
 			Risk:           domain.RiskLow,
@@ -296,5 +297,15 @@ func writeTool(name, desc, risk string, requireConfirmation bool, timeout int64,
 			RPCService:          service,
 			RPCMethod:           method,
 		},
+	}
+}
+
+func defaultQueryRetryPolicy() core.RetryPolicy {
+	return core.RetryPolicy{
+		MaxRetries:        defaultQueryMaxRetries,
+		InitialDelay:      defaultRetryInitialDelay,
+		MaxDelay:          defaultRetryMaxDelay,
+		BackoffMultiplier: defaultRetryBackoffMultiplier,
+		MaxElapsed:        defaultRetryMaxElapsed,
 	}
 }

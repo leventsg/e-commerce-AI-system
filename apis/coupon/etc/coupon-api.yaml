@@ -1,4 +1,9 @@
 Name: coupon-api
+Log:
+  Stat: false
+  Mode: 'file'
+  Encoding: "json"
+  Path: "./logs/coupon-api"
 Host: 0.0.0.0
 Port: 8009
 

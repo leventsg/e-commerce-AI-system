@@ -24,8 +24,9 @@ DevServer:
   EnablePprof: false
 
 Log:
+  Stat: false
   ServiceName: "coupons-rpc"
-  Mode: 'console'
+  Mode: 'file'
   Encoding: "json"
   Path: "./logs/coupons-rpc"
 

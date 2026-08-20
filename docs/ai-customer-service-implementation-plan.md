@@ -818,7 +818,7 @@ Expected: pending、approved、rejected、expired、executed、failed 状态流�
 RPC 对应：
 
 - `cart_delete` -> `Cart.DeleteCartItem`
-- `order_create` -> `OrderService.CreateOrder`
+- `order_create` -> `order-api POST /douyin/order/create`
 - `order_cancel` -> `OrderService.CancelOrder`
 
 - [x] **Step 3: 创建订单前置结算**
@@ -832,8 +832,8 @@ RPC 对应：
 工具参数契约同步为真实 RPC 结构：
 
 - `checkout_prepare` 必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
-- `order_create` 必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选。
-- `payment_method` 使用 1（微信）或 2（支付宝）。
+- `order_create` 必填 `pre_order_id`、`address_id`，`coupon_id` 可选。
+- 支付方式固定为支付宝，不再由模型传入 `payment_method`。
 
 - [x] **Step 4: 使用优惠券下单必须确认**
 
@@ -1042,7 +1042,7 @@ Expected: 超限返回明确错误，未超限请求正常执行。
 
 - [ ] **Step 6: 创建订单**
 
-先创建预结算，再返回确认请求；确认后调用 `OrderService.CreateOrder`。
+先创建预结算，再返回确认请求；确认后调用 `order-api POST /douyin/order/create`，并固定支付宝。
 
 - [ ] **Step 7: 风控验证**
 
@@ -1297,6 +1297,28 @@ go test ./...
 ```
 
 Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部通过。
+
+### Task 22: 知识库检索（RAG）
+
+- [ ] **Step 1: 配置与客户端**
+
+新增 `RAG` 配置（BaseURL、APIKey、RetrievePath、EmbeddingPath、Timeout、TopK、阈值、TTL、PreviewBaseURL），实现知识库 Retrieve/Embedding HTTP 客户端，超时 3 秒、失败静默降级。
+
+- [ ] **Step 2: 分类与检索编排**
+
+新增 `internal/rag`：分类模型（复用 Eino ChatModel）判断 `need_rag && confidence>=0.6`；先调 Embedding API 生成 query 向量，再用 Redis Vector 缓存查相似度；未命中才调检索，并用响应中的 `queryEmbedding` 更新缓存；结果按文档去重并截断为前端展示片段。
+
+- [ ] **Step 3: 上下文注入与 SSE**
+
+通过 `RetrieveRequest.RAGContext` 合并进 MemoryProvider；`assistant_message` 的 `data.sources` 下发来源；sources 随 assistant 消息 metadata 持久化。
+
+- [ ] **Step 4: 前端来源面板**
+
+回答下方显示“n篇来源”按钮，点击打开右侧面板，展示全部文档片段，点击片段跳转 `document_url`。
+
+- [ ] **Step 5: 测试**
+
+覆盖分类输出解析、Retrieve/Embedding 客户端、sources 映射、RAGContext 注入、前端类型与事件解析。
 
 ## 12. 推荐实施顺序
 

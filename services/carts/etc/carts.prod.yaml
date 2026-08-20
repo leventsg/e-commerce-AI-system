@@ -17,6 +17,7 @@ MysqlConfig:
   conntimeout: 5
 
 Log:
+  Stat: false
   ServiceName: "carts-rpc"
   Mode: 'file'
   Encoding: "json"

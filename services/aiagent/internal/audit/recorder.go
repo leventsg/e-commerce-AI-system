@@ -132,9 +132,13 @@ func (r *Recorder) recordWriteAudit(ctx context.Context, record tools.ToolCallRe
 }
 
 func auditTarget(record tools.ToolCallRecord) (actionType, targetTable string, targetID int64) {
+	businessData := record.BusinessData
+	if businessData == nil {
+		businessData = record.ResultData
+	}
 	switch record.ToolName {
 	case domain.ToolCartAdd:
-		return biz.Create, "cart", firstPositiveInt64(record.ResultData, "cart_item_id", record.Arguments, "product_id", record.UserID)
+		return biz.Create, "cart", firstPositiveInt64(businessData, "cart_item_id", record.Arguments, "product_id", record.UserID)
 	case domain.ToolCartSub:
 		return biz.Update, "cart", firstPositiveInt64(record.Arguments, "cart_item_id", nil, "", record.UserID)
 	case domain.ToolCouponClaim:

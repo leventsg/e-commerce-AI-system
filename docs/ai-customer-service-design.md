@@ -238,7 +238,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 首期下单工具契约：
 
 - `checkout_prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
-- `order_create` 接收必填 `pre_order_id`、`address_id`、`payment_method`，`coupon_id` 可选；`payment_method` 使用现有 RPC 枚举值 1（微信）或 2（支付宝）。
+- `order_create` 接收必填 `pre_order_id`、`address_id`，`coupon_id` 可选；支付方式固定为支付宝，工具不接收 `payment_method`。
 - 高风险 Tool 的普通 Eino 调用在 ChatModelAgent middleware 中创建确认记录后调用官方 `tool.StatefulInterrupt` 中断，不调用业务 RPC。只有结构化 `ConfirmAction` 携带 `confirmation_id`，成功领取 `pending -> approved` 后，服务端才使用 `runner.ResumeWithParams` 恢复同一次工具调用，并通过同一个 Execution Guard 调用业务 RPC；`pending -> rejected` 是确定性终态，由后端直接返回取消结果，不恢复 checkpoint，不调用 LLM。
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
@@ -255,7 +255,53 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 
 Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器中。任何 Eino 工具实际调用 RPC 前，都必须先经过该 Guard。
 
-### 3.8 Confirmation Manager
+### 3.8 工具失败治理
+
+工具调用失败不能直接升级成“AI 服务不可用”，也不能在前端或模型侧伪造成成功。工具失败治理按四层设计，分阶段落地：
+
+第一层：工具层重试。
+
+- `Executor` 是唯一工具执行入口，负责将可预期工具失败转换为结构化 `tool_result`，而不是向 ADK 抛普通 Go error。
+- 工具结果统一使用 envelope：`status`、`tool_name`、`attempt_count`、`retry_count`、`error`、`business_outcome`、`result`、`attempt_trail`。
+- `status=failed` 时，`error` 只包含稳定错误码和安全提示，不向模型暴露底层网络、数据库、鉴权 token、连接串等原始错误。
+- 瞬态异常可按工具策略有限重试；`MaxRetries` 不包含首次调用，`attempt_count` 包含首次调用，`retry_count` 只统计额外重试。
+- 默认查询工具和 Capability Tool 最多重试 2 次，即最多 3 次总 attempt；默认退避为 150ms 起步、指数退避、full jitter、最大 1s、总耗时上限 5s。
+- 所有写工具默认不自动重试，包括 `checkout_prepare`。只有完成明确幂等状态机并能返回同一份成功结果后，才允许逐个开启写工具重试。
+- backoff 等待必须响应父 context 取消；如果下一次 delay 或 attempt 会超过父 deadline / 工具 `MaxElapsed`，立即停止重试。
+
+错误分类规则：
+
+- 参数错误、JSON 参数错误、权限/鉴权失败、工具未注册、业务拒绝、调用方 `context.Canceled`、未知错误默认永久失败，不重试。
+- `bizerr.Parse` 优先识别 gRPC `codes.Aborted` 中的业务错误；`Aborted` 默认不重试，避免库存不足、订单状态不允许等业务错误触发无效重试。
+- `Unavailable`、attempt `DeadlineExceeded`、网络超时、依赖空响应可按工具策略重试。
+- `ResourceExhausted` 暂不默认重试，除非后续工具明确声明安全且有可用的 retry 信息。
+- 写工具超时或结果无法确认时，`business_outcome=unknown`，不得声称成功或未执行；只有 `business_outcome=executed` 才能设置 `BusinessExecuted=true`。
+
+第二层：conversation 全局兜底预算。
+
+- 后续使用 Redis 按 `conversationID + runID` 管控本轮对话的总重试预算，防止多个工具连续瞬态失败导致资源被耗尽。
+- 真正安排 retry 前占用预算；Redis 操作用 Lua 原子完成检查、递增和 TTL 设置。
+- Redis 不可用时 fail-open 到单工具上限，并记录治理降级日志，不能让治理组件成为工具全面不可用的新单点。
+- 除 retry 预算外，还需要 `max_tool_calls_per_run` 和同工具同参数终态失败短期去重，避免模型收到失败后在同一 run 内循环调用。
+
+第三层：熔断降级。
+
+- 后续以环境 + RPC service + method 作为主熔断 key，必要时再细分到工具名。
+- 只累计依赖故障：网络错误、`Unavailable`、服务端超时；不累计参数、权限、业务拒绝、用户级限流和调用方取消。
+- Redis Lua 维护 `closed/open/half_open` 状态；open 到期后只允许少量带租约的 half-open probe。
+- probe 成功关闭熔断，失败重新打开并延长窗口；Redis 故障时 fail-open，并记录熔断治理降级指标。
+- 高流量场景优先采用“最小样本数 + 失败率”，例如至少 20 次调用且失败率超过 50%；低流量可保留短窗口连续失败阈值。
+
+第四层：可观测日志层。
+
+- 每次最终工具调用仍只写一条 `ai_tool_calls`，`result` 保存最终 envelope。
+- envelope 的 `attempt_trail` 记录每次 attempt 的状态、错误类别、错误码、耗时和是否发起 RPC。
+- retry scheduled、retry exhausted、permanent failure、budget exceeded、circuit open/half-open/closed、治理组件降级都要有结构化日志。
+- 日志字段至少包含 `conversation_id`、`run_id`、`tool_call_id`、`tool_name`、`attempt`、`retry_count`、`delay_ms`、`error_kind`、`error_code`。
+
+当前阶段只落地第一层工具层重试；conversation 全局预算、熔断和更完整的观测指标作为后续阶段推进。
+
+### 3.9 Confirmation Manager
 高风险操作必须进入确认流程。
 职责：
 - 创建确认记录。
@@ -318,7 +364,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 | user_id | 用户 ID |
 | tool_name | 工具名称 |
 | arguments | 工具参数 |
-| result | 真实工具返回 JSON |
+| result | 最终工具结果 envelope；成功时 `result` 子字段保存真实工具返回 JSON，失败时保存安全错误与 attempt trail |
 | status | success / failed |
 | error_message | 错误信息 |
 | latency_ms | 耗时 |
@@ -418,11 +464,11 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 
 ### 5.4 创建订单流程
 1. 用户表达购买意图。
-2. AI 确认商品、数量、优惠券、地址、支付方式；缺少参数时先追问，不猜测。
+2. AI 确认商品、数量、优惠券、地址；支付方式固定为支付宝，缺少参数时先追问，不猜测。
 3. 没有 `pre_order_id` 时调用 `checkout_prepare` 创建预结算。
 4. 使用当前用户身份查询预结算详情，取得应付金额和商品数量。
 5. 创建 `order_create` 确认请求并中断；使用优惠券时先调用 `coupon_calculate` 校验并取得对应应付金额，摘要同时展示优惠券 ID。
-6. 用户确认后，由确认状态机的唯一 winner 使用 checkpoint 恢复原工具调用，并通过 Execution Guard 调用 `order_create`。
+6. 用户确认后，由确认状态机的唯一 winner 使用 checkpoint 恢复原工具调用，并通过 Execution Guard 调用 `order-api POST /douyin/order/create`。
 7. 成功标记确认记录为 `executed`，失败标记为 `failed`，并返回真实订单结果。
 
 ### 5.5 上下文构建流程
@@ -437,7 +483,17 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 8. 摘要创建时只发布一个 `AiMemoryUpdates` 事件；Profile consumer 和 Memory Event consumer 用同一批消息分别更新画像和长期事件。
 9. 摘要、长期事件或画像不可用时使用近期消息降级；历史工具结果按需读取失败时，重新查询业务工具或向用户澄清。
 
-工具结果事实来源是 `ai_tool_calls.result`，保存真实工具返回 JSON，并通过 `tool_call_id` 与模型工具调用关联。`get_tool_call_result` 可按 `tool_call_id` 读取当前用户当前 conversation 的历史工具结果；`ai_messages` 仍可保存 role=tool 消息和展示 metadata，但 Context Manager / MemoryProvider 不再从 `ai_messages.metadata` 读取工具结果。
+工具结果事实来源是 `ai_tool_calls.result`，保存最终工具结果 envelope，并通过 `tool_call_id` 与模型工具调用关联；成功 envelope 的 `result` 子字段保存真实工具返回 JSON。`get_tool_call_result` 可按 `tool_call_id` 读取当前用户当前 conversation 的历史工具结果；`ai_messages` 仍可保存 role=tool 消息和展示 metadata，但 Context Manager / MemoryProvider 不再从 `ai_messages.metadata` 读取工具结果。
+
+### 5.6 知识库检索（RAG）
+
+- 触发：普通 `user_message` 进入 Supervisor 前，用轻量分类模型（复用现有 Eino ChatModel）判断是否需要 RAG；分类上下文为最近 6 条消息 + 会话摘要。
+- 判断：输出 `{need_rag, confidence, reason}`，`need_rag=true` 且 `confidence>=0.6` 才检索；分类失败、检索失败或结果为空时静默降级为正常回答。
+- 检索：调用知识库平台 `POST /api/ragent/open-api/v1/retrieve`，`topK=5`，超时 3 秒不重试。
+- 缓存：先调知识库 Embedding API 生成 query 向量，再使用 Redis Vector（HNSW cosine）按 0.95 相似度查缓存；未命中才调检索，检索响应中的 `queryEmbedding` 用于更新缓存；缓存 TTL 24 小时，完整保存 topK 片段。
+- 注入：检索片段通过 `RetrieveRequest.RAGContext` 合并进 MemoryProvider 的 `ContextMessages`，只影响当前轮，不写历史。
+- 输出：`assistant_message` 的 `data` 携带按文档去重的 `sources`（document_id/title/document_url/chunks），前端显示“n篇来源”按钮，点击片段跳转知识库 `preview/doc/{documentId}`。
+- 持久化：sources 随 assistant 消息 metadata 落库，历史会话回看仍可展示。
 
 ## 6. 测试方案
 ### 6.1 单元测试

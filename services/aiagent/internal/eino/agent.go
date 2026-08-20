@@ -17,6 +17,7 @@ import (
 	agentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/agent"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 const (
@@ -28,9 +29,15 @@ type RunRequest struct {
 	UserID           uint64
 	ConversationID   string
 	MessageID        string
+	RunID            string
+	CheckpointID     string
 	CurrentMessageID string
 	ClientMessageID  string
 	ClientIP         string
+	AccessToken      string
+	RefreshToken     string
+	RAGContext       []domain.ContextMessage
+	RAGSources       []domain.AgentSource
 	Messages         []domain.ContextMessage
 }
 
@@ -43,6 +50,8 @@ type ResumeRequest struct {
 	InterruptID    string
 	Approved       bool
 	ClientIP       string
+	AccessToken    string
+	RefreshToken   string
 }
 
 type Runner interface {
@@ -268,11 +277,15 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 	}
 	checkpointID := stableCheckpointID(req.MessageID, req.ConversationID)
 	runID := checkpointID
+	req.RunID = runID
+	req.CheckpointID = checkpointID
 	ctx = helper.WithToolExecutionContext(ctx, helper.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		MessageID:      req.MessageID,
 		ClientIP:       req.ClientIP,
+		AccessToken:    req.AccessToken,
+		RefreshToken:   req.RefreshToken,
 		RunID:          runID,
 		CheckpointID:   checkpointID,
 	})
@@ -296,6 +309,7 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 			RunID:            runID,
 			CurrentMessageID: req.CurrentMessageID,
 			ClientMessageID:  req.ClientMessageID,
+			RAGContext:       req.RAGContext,
 		})))
 	go func() {
 		defer close(out)
@@ -317,10 +331,15 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 	if runID == "" {
 		runID = checkpointID
 	}
+	req.RunID = runID
+	req.CheckpointID = checkpointID
+	logx.Infow("ai agent resume start", append(baseResumeLogFields(req), logx.Field("stage", "resume_start"))...)
 	ctx = helper.WithToolExecutionContext(ctx, helper.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		ClientIP:       req.ClientIP,
+		AccessToken:    req.AccessToken,
+		RefreshToken:   req.RefreshToken,
 		RunID:          runID,
 		CheckpointID:   checkpointID,
 	})
@@ -340,7 +359,11 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		MessageID:      req.ConfirmationID,
+		RunID:          runID,
+		CheckpointID:   checkpointID,
 		ClientIP:       req.ClientIP,
+		AccessToken:    req.AccessToken,
+		RefreshToken:   req.RefreshToken,
 	}
 	iter, err := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.root, EnableStreaming: true, CheckPointStore: store}).ResumeWithParams(ctx, checkpointID, &adk.ResumeParams{
 		Targets: map[string]any{
@@ -374,6 +397,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 	hasAssistant := false
 	hasAny := false
 	businessExecuted := false
+	previousAgentName := ""
 	toolMessageIDs := make(map[string]string)
 	send := func(event domain.AgentEvent) error {
 		hasAny = true
@@ -417,7 +441,13 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		if event == nil {
 			continue
 		}
+		agentName := agentNameForLog(event.AgentName)
+		if agentName != previousAgentName {
+			logx.Infow("agent 切换", append(baseAgentLogFields(req), logx.Field("stage", "agent_transition"), logx.Field("agent_name", agentName), logx.Field("previous_agent_name", previousAgentName))...)
+			previousAgentName = agentName
+		}
 		if event.Err != nil {
+			logx.Errorw("ai agent iterator error", append(baseAgentLogFields(req), logx.Field("agent_name", agentName), logx.Field("err", event.Err))...)
 			content := fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", event.Err)
 			dataJSON := ""
 			if businessExecuted {
@@ -441,6 +471,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			// 将中断事件转换为自定义AgentEvent事件
 			domainEvent, ok, err := interruptEventToDomainEvent(ctx, event.Action.Interrupted, req, r.approvalManager)
 			if err != nil {
+				logx.Errorw("ai agent confirmation creation failed", append(baseAgentLogFields(req), logx.Field("stage", "confirmation_required"), logx.Field("agent_name", agentName), logx.Field("err", err))...)
 				_ = send(domain.AgentEvent{
 					Type:           domain.EventError,
 					ConversationID: req.ConversationID,
@@ -452,6 +483,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 				return
 			}
 			if ok {
+				logx.Infow("触发中断", append(baseAgentLogFields(req), logx.Field("agent_name", agentName), logx.Field("confirmation_id", domainEvent.ConfirmationID), logx.Field("tool", domainEvent.Tool), logx.Field("confirmation_data", domainEvent.DataJSON))...)
 				_ = send(domainEvent)
 			}
 			return
@@ -517,6 +549,7 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 	}
 	if shouldExposeIteratorReasoning(event.AgentName) {
 		if reasoning := reasoningContent(message); reasoning != "" {
+			logx.Infow("ai agent reasoning event", append(baseAgentLogFields(req), logx.Field("stage", "assistant_thinking"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("reasoning_length", len(reasoning)))...)
 			_ = send(domain.AgentEvent{
 				Type:           domain.EventAssistantThinkingDelta,
 				ConversationID: req.ConversationID,
@@ -532,6 +565,14 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 			if toolName == "" || isAgentToolName(toolName) {
 				continue
 			}
+			logx.Infow("触发工具调用",
+				append(baseAgentLogFields(req),
+					logx.Field("agent_name", agentNameForLog(event.AgentName)),
+					logx.Field("tool_call_id", toolCall.ID),
+					logx.Field("tool", toolName),
+					logx.Field("arguments", toolCall.Function.Arguments),
+				)...,
+			)
 			messageID, started := startToolCall(toolCall.ID, toolName)
 			if !started {
 				continue
@@ -557,11 +598,13 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 	if event.AgentName != "" && event.AgentName != supervisorAgentName {
 		return handled, false
 	}
+	logx.Infow("发送最终助手消息", append(baseAgentLogFields(req), logx.Field("stage", "assistant_message"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("content_length", len(content)))...)
 	_ = send(domain.AgentEvent{
 		Type:           domain.EventAssistantMessage,
 		ConversationID: req.ConversationID,
 		MessageID:      newAgentMessageID(),
 		Content:        content,
+		DataJSON:       sourcesDataJSON(req.RAGSources),
 		Done:           true,
 	})
 	return true, false
@@ -579,8 +622,26 @@ func (r *agent) handleIteratorToolMessage(event *adk.AgentEvent, req RunRequest,
 		return false, false
 	}
 	content := message.Content
-	businessExecuted := isBusinessWriteTool(toolName) || (r.approvalManager != nil && r.approvalManager.RequiresConfirmation(toolName))
+	envelope, hasEnvelope := parseIteratorToolEnvelope(content)
+	status := "success"
+	businessExecuted := false
+	if hasEnvelope {
+		if envelope.ToolName != "" {
+			toolName = strings.TrimSpace(envelope.ToolName)
+		}
+		status = strings.TrimSpace(envelope.Status)
+		businessExecuted = envelope.BusinessOutcome == "executed"
+	} else {
+		businessExecuted = isBusinessWriteTool(toolName) || (r.approvalManager != nil && r.approvalManager.RequiresConfirmation(toolName))
+	}
 	messageID, _ := finishToolCall(message.ToolCallID, toolName)
+	logx.Infow("发送工具调用结果",
+		logx.Field("agent_name", agentNameForLog(event.AgentName)),
+		logx.Field("tool_call_id", message.ToolCallID),
+		logx.Field("tool", toolName),
+		logx.Field("status", status),
+		logx.Field("business_executed", businessExecuted),
+	)
 	if businessExecuted {
 		markBusinessExecuted()
 	}
@@ -589,8 +650,8 @@ func (r *agent) handleIteratorToolMessage(event *adk.AgentEvent, req RunRequest,
 		ConversationID:   req.ConversationID,
 		MessageID:        messageID,
 		Tool:             toolName,
-		Status:           "success",
-		Content:          wrappedToolSummary(toolName, content),
+		Status:           status,
+		Content:          iteratorToolResultSummary(toolName, content, envelope),
 		DataJSON:         ensureJSONObject(content),
 		Done:             true,
 		BusinessExecuted: businessExecuted,
@@ -638,6 +699,38 @@ func baseToolInfos(ctx context.Context, tools []einotool.BaseTool) ([]*schema.To
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func baseAgentLogFields(req RunRequest) []logx.LogField {
+	return []logx.LogField{
+		logx.Field("component", "supervisor_agent"),
+		logx.Field("conversation_id", req.ConversationID),
+		logx.Field("user_id", req.UserID),
+		logx.Field("run_id", req.RunID),
+		logx.Field("checkpoint_id", req.CheckpointID),
+		logx.Field("client_message_id", req.ClientMessageID),
+	}
+}
+
+func baseResumeLogFields(req ResumeRequest) []logx.LogField {
+	return []logx.LogField{
+		logx.Field("component", "supervisor_agent"),
+		logx.Field("conversation_id", req.ConversationID),
+		logx.Field("user_id", req.UserID),
+		logx.Field("confirmation_id", req.ConfirmationID),
+		logx.Field("run_id", req.RunID),
+		logx.Field("checkpoint_id", req.CheckpointID),
+		logx.Field("interrupt_id", req.InterruptID),
+		logx.Field("approved", req.Approved),
+	}
+}
+
+func agentNameForLog(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "unknown"
+	}
+	return name
 }
 
 func stableCheckpointID(messageID, conversationID string) string {

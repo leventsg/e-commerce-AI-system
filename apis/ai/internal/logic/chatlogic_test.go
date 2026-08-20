@@ -15,6 +15,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestChatSSEForwardsTrustedUserConversationAndEvents(t *testing.T) {
@@ -46,6 +47,52 @@ func TestChatSSEForwardsTrustedUserConversationAndEvents(t *testing.T) {
 	}
 	if event.Type != "assistant_message" || event.ConversationID != "conv-body" || event.Content != "你好" {
 		t.Fatalf("event=%+v", event)
+	}
+}
+
+func TestChatSSEForwardsAuthTokensToAgentRPC(t *testing.T) {
+	rpc := &fakeAiAgent{chatEvents: []*aiagent.AgentEvent{{
+		Type:           "assistant_message",
+		ConversationId: "conv-1",
+		MessageId:      "msg-1",
+		Content:        "ok",
+		Done:           true,
+	}}}
+	server := sseTestServer(rpc)
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/douyin/ai/chat", strings.NewReader(`{
+		"type":"user_message",
+		"conversation_id":"conv-1",
+		"content":"hello",
+		"client_message_id":"client-1"
+	}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set(biz.TokenKey, "access-token")
+	req.AddCookie(&http.Cookie{Name: biz.RefreshTokenKey, Value: "refresh-token"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	_ = readFirstDataEvent(t, resp.Body)
+
+	if rpc.chatCtx == nil {
+		t.Fatal("chat ctx not captured")
+	}
+	md, ok := metadata.FromOutgoingContext(rpc.chatCtx)
+	if !ok {
+		t.Fatal("outgoing metadata missing")
+	}
+	if got := md.Get("x-access-token"); len(got) != 1 || got[0] != "access-token" {
+		t.Fatalf("access token metadata=%v", got)
+	}
+	if got := md.Get("x-refresh-token"); len(got) != 1 || got[0] != "refresh-token" {
+		t.Fatalf("refresh token metadata=%v", got)
 	}
 }
 
@@ -119,6 +166,23 @@ func TestMapAgentEventKeepsConfirmationID(t *testing.T) {
 	}
 	if event.ConfirmationID != "confirm-1" || event.Action != "order_cancel" {
 		t.Fatalf("event=%+v, want confirmation_id mapped", event)
+	}
+}
+
+func TestMapAgentEventKeepsRAGSources(t *testing.T) {
+	event, err := mapAgentEvent(&aiagent.AgentEvent{
+		Type:           "assistant_message",
+		ConversationId: "conv-1",
+		MessageId:      "msg-1",
+		Content:        "根据知识库回答",
+		DataJson:       `{"sources":[{"document_id":"doc-1","title":"规范.md","document_url":"http://kb/preview/doc/doc-1","chunks":[{"chunk_id":"chunk-1","content":"知识内容","score":0.9}]}]}`,
+		Done:           true,
+	})
+	if err != nil {
+		t.Fatalf("mapAgentEvent: %v", err)
+	}
+	if len(event.Sources) != 1 || event.Sources[0].DocumentID != "doc-1" || len(event.Sources[0].Chunks) != 1 {
+		t.Fatalf("sources=%+v", event.Sources)
 	}
 }
 
@@ -223,17 +287,21 @@ func readFirstDataEvent(t *testing.T, body io.Reader) types.ServerEvent {
 type fakeAiAgent struct {
 	chatReq       *aiagent.ChatRequest
 	confirmReq    *aiagent.ConfirmActionRequest
+	chatCtx       context.Context
+	confirmCtx    context.Context
 	chatEvents    []*aiagent.AgentEvent
 	confirmEvents []*aiagent.AgentEvent
 }
 
-func (f *fakeAiAgent) Chat(_ context.Context, req *aiagent.ChatRequest, _ ...grpc.CallOption) (aiagent.AiAgent_ChatClient, error) {
+func (f *fakeAiAgent) Chat(ctx context.Context, req *aiagent.ChatRequest, _ ...grpc.CallOption) (aiagent.AiAgent_ChatClient, error) {
 	f.chatReq = req
+	f.chatCtx = ctx
 	return &fakeAgentEventClient{events: f.chatEvents}, nil
 }
 
-func (f *fakeAiAgent) ConfirmAction(_ context.Context, req *aiagent.ConfirmActionRequest, _ ...grpc.CallOption) (aiagent.AiAgent_ConfirmActionClient, error) {
+func (f *fakeAiAgent) ConfirmAction(ctx context.Context, req *aiagent.ConfirmActionRequest, _ ...grpc.CallOption) (aiagent.AiAgent_ConfirmActionClient, error) {
 	f.confirmReq = req
+	f.confirmCtx = ctx
 	return &fakeAgentEventClient{events: f.confirmEvents}, nil
 }
 

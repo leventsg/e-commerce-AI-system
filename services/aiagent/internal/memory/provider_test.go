@@ -45,6 +45,9 @@ func TestCustomerServiceProviderRetrieveSplitsHistoryAndRuntimeContext(t *testin
 		UserID:           42,
 		ConversationID:   "conv-1",
 		CurrentMessageID: "m-current",
+		RAGContext: []domain.ContextMessage{
+			{Role: domain.ContextRoleSystem, Content: "【知识库参考】退款政策"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Retrieve() error = %v", err)
@@ -66,6 +69,7 @@ func TestCustomerServiceProviderRetrieveSplitsHistoryAndRuntimeContext(t *testin
 		"call-old",
 		"<user_profile>",
 		`"categories":["手机"]`,
+		"【知识库参考】退款政策",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("runtime context missing %q: %s", want, joined)

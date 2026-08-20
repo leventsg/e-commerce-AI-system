@@ -17,6 +17,7 @@ Telemetry:
   Batcher: jaeger
   Sampler: 0.1  # 采样率，1.0表示全部采集, 0.1表示10%
 Log:
+  Stat: false
   ServiceName: "payment-rpc"
   Mode: 'file'
   Encoding: "json"

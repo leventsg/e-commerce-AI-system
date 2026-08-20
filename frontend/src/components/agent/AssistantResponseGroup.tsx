@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Cpu, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
-import type { UIMessage } from '@/types'
+import type { RAGSource, UIMessage } from '@/types'
 import { TOOL_DISPLAY_NAMES, TOOL_ICONS } from '@/constants'
 import { MarkdownRenderer, CopyButton } from '@/components/common'
 import { ConfirmationCard } from './ConfirmationCard'
@@ -10,9 +10,10 @@ import type { ChatRenderItem } from './chatRenderItems'
 interface AssistantResponseGroupProps {
   item: Extract<ChatRenderItem, { kind: 'assistant-group' }>
   onConfirmAction?: (conversationId: string, confirmationId: string, approved: boolean) => Promise<void> | void
+  onOpenSources?: (sources: RAGSource[]) => void
 }
 
-export function AssistantResponseGroup({ item, onConfirmAction }: AssistantResponseGroupProps) {
+export function AssistantResponseGroup({ item, onConfirmAction, onOpenSources }: AssistantResponseGroupProps) {
   const finalAnswer = item.assistantMessages[item.assistantMessages.length - 1]
 
   return (
@@ -54,7 +55,7 @@ export function AssistantResponseGroup({ item, onConfirmAction }: AssistantRespo
 
           {item.errorMessages.map(message => <ErrorInline key={message.id} message={message} />)}
 
-          {finalAnswer && <AssistantAnswer message={finalAnswer} />}
+          {finalAnswer && <AssistantAnswer message={finalAnswer} onOpenSources={onOpenSources} />}
         </div>
       </div>
     </div>
@@ -120,7 +121,7 @@ function ToolStatusRow({ message }: { message: UIMessage }) {
   )
 }
 
-function AssistantAnswer({ message }: { message: UIMessage }) {
+function AssistantAnswer({ message, onOpenSources }: { message: UIMessage; onOpenSources?: (sources: RAGSource[]) => void }) {
   const [expanded, setExpanded] = useState(false)
   const MAX_PREVIEW = 500
   const isLong = message.content.length > MAX_PREVIEW
@@ -141,6 +142,15 @@ function AssistantAnswer({ message }: { message: UIMessage }) {
         <div className="flex items-center gap-2 mt-2 opacity-0 hover:opacity-100 transition-opacity">
           <CopyButton text={message.content} />
         </div>
+      )}
+      {!message.streaming && message.sources && message.sources.length > 0 && (
+        <button
+          type="button"
+          onClick={() => onOpenSources?.(message.sources || [])}
+          className="mt-3 inline-flex items-center gap-1 rounded-lg border border-orange-500/25 bg-orange-500/5 px-3 py-1.5 text-xs text-orange-300 hover:bg-orange-500/10 transition-colors"
+        >
+          {message.sources.length}篇来源
+        </button>
       )}
     </div>
   )

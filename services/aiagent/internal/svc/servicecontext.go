@@ -22,7 +22,9 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryeventextractor"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/rag"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
+	order_tools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/order"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
 	"github.com/leventsg/e-commerce-AI-system/services/carts/cartsclient"
 	"github.com/leventsg/e-commerce-AI-system/services/checkout/checkoutservice"
@@ -30,6 +32,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventoryclient"
 	"github.com/leventsg/e-commerce-AI-system/services/order/orderservice"
 	"github.com/leventsg/e-commerce-AI-system/services/product/productcatalogservice"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
@@ -67,6 +70,7 @@ type ServiceContext struct {
 	ProfileExtractor      *profileextractor.Extractor
 	MemoryEventExtractor  *memoryeventextractor.Extractor
 	AgentRunner           eino.Runner
+	RAGService            *rag.Service
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -117,14 +121,28 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Profiles:  userProfileStore,
 		Events:    eventStore,
 	})
+	ragRedisClient := goredis.NewClient(&goredis.Options{
+		Addr:     c.RedisConf.Host,
+		Password: c.RedisConf.Pass,
+	})
+	ragService := rag.NewService(
+		c.RAG,
+		modelFactory,
+		contextmanager.NewMessageStore(messagesModel),
+		contextmanager.NewSummaryStore(summariesModel),
+		ragRedisClient,
+		c.Eino,
+	)
+	orderAPIClient := order_tools.NewOrderAPIClient(c.OrderAPI.BaseURL, time.Duration(c.OrderAPI.Timeout)*time.Millisecond)
 	// 业务工具实例集合
 	businessTools := aitools.DefaultBusinessTools(aitools.DefaultToolClients{
-		Product:   productRPC,
-		Inventory: inventoryRPC,
-		Order:     orderRPC,
-		Cart:      cartRPC,
-		Coupon:    couponRPC,
-		Checkout:  checkoutRPC,
+		Product:        productRPC,
+		Inventory:      inventoryRPC,
+		Order:          orderRPC,
+		OrderCreateAPI: orderAPIClient,
+		Cart:           cartRPC,
+		Coupon:         couponRPC,
+		Checkout:       checkoutRPC,
 	}, c.ToolTimeout)
 	// 非业务工具实例集合
 	capabilityTools := aitools.DefaultCapabilityTools(aitools.CapabilityDeps{
@@ -198,6 +216,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ProfileExtractor:      profileExtractor,
 		MemoryEventExtractor:  memoryEventExtractor,
 		AgentRunner:           agentRunner,
+		RAGService:            ragService,
 	}
 }
 
