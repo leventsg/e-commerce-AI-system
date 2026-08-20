@@ -285,12 +285,18 @@ func readFirstDataEvent(t *testing.T, body io.Reader) types.ServerEvent {
 }
 
 type fakeAiAgent struct {
-	chatReq       *aiagent.ChatRequest
-	confirmReq    *aiagent.ConfirmActionRequest
-	chatCtx       context.Context
-	confirmCtx    context.Context
-	chatEvents    []*aiagent.AgentEvent
-	confirmEvents []*aiagent.AgentEvent
+	chatReq               *aiagent.ChatRequest
+	confirmReq            *aiagent.ConfirmActionRequest
+	chatCtx               context.Context
+	confirmCtx            context.Context
+	chatEvents            []*aiagent.AgentEvent
+	confirmEvents         []*aiagent.AgentEvent
+	listConversationsReq  *aiagent.ListConversationsRequest
+	listMessagesReq       *aiagent.ListMessagesRequest
+	listConversationsResp *aiagent.ListConversationsResponse
+	listMessagesResp      *aiagent.ListMessagesResponse
+	listConversationsErr  error
+	listMessagesErr       error
 }
 
 func (f *fakeAiAgent) Chat(ctx context.Context, req *aiagent.ChatRequest, _ ...grpc.CallOption) (aiagent.AiAgent_ChatClient, error) {
@@ -303,6 +309,22 @@ func (f *fakeAiAgent) ConfirmAction(ctx context.Context, req *aiagent.ConfirmAct
 	f.confirmReq = req
 	f.confirmCtx = ctx
 	return &fakeAgentEventClient{events: f.confirmEvents}, nil
+}
+
+func (f *fakeAiAgent) ListConversations(ctx context.Context, req *aiagent.ListConversationsRequest, _ ...grpc.CallOption) (*aiagent.ListConversationsResponse, error) {
+	f.listConversationsReq = req
+	if f.listConversationsErr != nil {
+		return nil, f.listConversationsErr
+	}
+	return f.listConversationsResp, nil
+}
+
+func (f *fakeAiAgent) ListMessages(ctx context.Context, req *aiagent.ListMessagesRequest, _ ...grpc.CallOption) (*aiagent.ListMessagesResponse, error) {
+	f.listMessagesReq = req
+	if f.listMessagesErr != nil {
+		return nil, f.listMessagesErr
+	}
+	return f.listMessagesResp, nil
 }
 
 type fakeAgentEventClient struct {

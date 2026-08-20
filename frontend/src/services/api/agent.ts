@@ -1,6 +1,47 @@
-import { API_BASE } from '@/constants'
+import { API_BASE, CONVERSATIONS_PAGE_SIZE, MESSAGES_PAGE_SIZE } from '@/constants'
 import type { AgentEvent, ClientMessage } from '@/types'
-import { applyTokenRenewal, createAuthHeaders, type ApiResponse } from './client'
+import { applyTokenRenewal, apiGet, createAuthHeaders, type ApiResponse } from './client'
+
+export interface SessionSummaryDTO {
+  conversation_id: string
+  title: string
+  last_message_preview?: string
+  updated_at: string
+  message_count: number
+}
+
+export interface HistoryMessageDTO {
+  message_id: string
+  role: 'user' | 'assistant' | 'tool'
+  content: string
+  metadata?: Record<string, unknown> | null
+  client_message_id?: string
+  created_at: string
+}
+
+export interface ListSessionsResult {
+  total: number
+  conversations: SessionSummaryDTO[]
+}
+
+export interface ListMessagesResult {
+  conversation_id: string
+  total: number
+  messages: HistoryMessageDTO[]
+}
+
+/** 分页获取当前用户历史会话列表 */
+export async function listSessions(token: string, page = 1, pageSize = CONVERSATIONS_PAGE_SIZE): Promise<ListSessionsResult> {
+  return apiGet<ListSessionsResult>(`/douyin/ai/sessions?page=${page}&page_size=${pageSize}`, token)
+}
+
+/** 分页获取指定会话的历史消息（含 user/assistant/tool 三种角色） */
+export async function listMessages(token: string, conversationId: string, page = 1, pageSize = MESSAGES_PAGE_SIZE): Promise<ListMessagesResult> {
+  return apiGet<ListMessagesResult>(
+    `/douyin/ai/sessions/messages?conversation_id=${encodeURIComponent(conversationId)}&page=${page}&page_size=${pageSize}`,
+    token,
+  )
+}
 
 export function streamAgentChat(payload: ClientMessage, token: string, signal?: AbortSignal) {
   return streamAgent(payload, token, signal)

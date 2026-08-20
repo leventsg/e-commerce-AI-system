@@ -10,6 +10,9 @@ interface AgentChatWindowProps {
   isStreaming: boolean
   onSuggestionClick?: (text: string) => void
   onConfirmAction?: (conversationId: string, confirmationId: string, approved: boolean) => Promise<void> | void
+  hasOlderMessages?: boolean
+  loadingHistory?: boolean
+  onLoadOlder?: () => void
 }
 
 const SUGGESTIONS = [
@@ -24,12 +27,22 @@ function scrollToBottom(el: HTMLDivElement | null) {
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
 }
 
-export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggestionClick, onConfirmAction }: AgentChatWindowProps) {
+export function AgentChatWindow({
+  messages,
+  isStreaming,
+  onSuggestionClick,
+  onConfirmAction,
+  hasOlderMessages = false,
+  loadingHistory = false,
+  onLoadOlder,
+}: AgentChatWindowProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [nearBottom, setNearBottom] = useState(true)
   const [userScrolling, setUserScrolling] = useState(false)
   const [sourcePanel, setSourcePanel] = useState<RAGSource[] | null>(null)
   const prevLen = useRef(messages.length)
+  const prevScrollHeightRef = useRef(0)
+  const wasLoadingHistoryRef = useRef(false)
 
   const checkNearBottom = useCallback(() => {
     const el = scrollRef.current; if (!el) return true
@@ -39,7 +52,11 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
   const handleScroll = useCallback(() => {
     if (!userScrolling) { setUserScrolling(true); setTimeout(() => setUserScrolling(false), 1000) }
     setNearBottom(checkNearBottom())
-  }, [userScrolling, checkNearBottom])
+    const el = scrollRef.current
+    if (el && el.scrollTop < 80 && hasOlderMessages && !loadingHistory && !isStreaming) {
+      onLoadOlder?.()
+    }
+  }, [userScrolling, checkNearBottom, hasOlderMessages, loadingHistory, isStreaming, onLoadOlder])
 
   // Force scroll on new user message
   useEffect(() => {
@@ -56,6 +73,25 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
     }
   }, [messages, nearBottom, userScrolling])
 
+  // 记录加载历史前的滚动高度，加载完成后恢复滚动位置，避免内容跳动
+  useEffect(() => {
+    if (loadingHistory) {
+      prevScrollHeightRef.current = scrollRef.current?.scrollHeight || 0
+      wasLoadingHistoryRef.current = true
+    }
+  }, [loadingHistory])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && wasLoadingHistoryRef.current && !loadingHistory) {
+      const diff = el.scrollHeight - prevScrollHeightRef.current
+      if (diff > 0) {
+        el.scrollTop += diff
+      }
+      wasLoadingHistoryRef.current = false
+    }
+  }, [messages, loadingHistory])
+
   useEffect(() => {
     const el = scrollRef.current; if (!el) return
     el.addEventListener('scroll', handleScroll, { passive: true })
@@ -71,6 +107,9 @@ export function AgentChatWindow({ messages, isStreaming: _isStreaming, onSuggest
         <EmptyState onSuggestionClick={onSuggestionClick} />
       ) : (
         <div className="max-w-3xl mx-auto w-full">
+          {loadingHistory && (
+            <div className="py-2 text-center text-xs text-gray-600">加载历史消息中...</div>
+          )}
           {renderItems.map((item, i) => (
             item.kind === 'user'
               ? <AgentMessageBubble key={item.message.id} message={item.message} isLast={i === renderItems.length - 1} onConfirmAction={onConfirmAction} />

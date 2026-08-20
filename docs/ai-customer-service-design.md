@@ -93,6 +93,53 @@ AI 客服作为新的编排层接入现有电商系统，不侵入商品、库�
 
 服务端响应为 `text/event-stream`。每个事件使用 `event: <type>`、`id: <message_id>` 和 `data: <ServerEvent JSON>` 输出，并在事件产生后立即 flush；空闲连接每 10 秒发送 `: ping`，单次连接最长 5 分钟；当事件没有 `message_id` 时不输出 `id:` 行。前端使用 `fetch + ReadableStream` 发送 POST JSON 并消费 SSE。模型 reasoning 或工具调用前的中间过程按无消息 ID 的 `assistant_thinking_delta` 推送，前端按会话本地折叠展示，不与最终回答拼接，不落库。最终自然语言回答只来自 ADK iterator 中 supervisor 的 final assistant message，后端先持久化为 `assistant_message`，再在同一次 SSE 中下发给前端。工具调用前发送 `tool_progress`，工具完成后发送中文摘要 `tool_result`。
 
+### 2.1 历史会话查询接口
+
+接口：
+
+- `GET /douyin/ai/sessions`：当前用户历史会话列表，支持 `page`、`page_size` 分页，按最后活跃时间倒序。
+- `GET /douyin/ai/sessions/messages?conversation_id=<conversation_id>`：指定会话内全部历史消息，支持分页，按消息创建顺序正序。
+
+鉴权：沿用现有认证中间件，用户 ID 从请求上下文获取，客户端不得传入 `user_id`。
+
+RPC：`services/aiagent` 新增 `ListConversations` / `ListMessages`，负责归属校验、分页与数据组装；`apis/ai` 网关只做鉴权、协议转换和字段映射。
+
+会话列表项：
+
+```json
+{
+  "conversation_id": "conv_001",
+  "title": "订单咨询",
+  "last_message_preview": "你的订单已送达",
+  "updated_at": "2026-08-20T15:06:37+08:00",
+  "message_count": 6
+}
+```
+
+历史消息项：
+
+```json
+{
+  "message_id": "msg_001",
+  "role": "tool",
+  "content": "查询结果",
+  "metadata": {
+    "tool_name": "order_get",
+    "status": "success",
+    "tool_call_id": "call_001"
+  },
+  "client_message_id": "client_msg_0190f1f0e8a57000",
+  "created_at": "2026-08-20T15:00:02+08:00"
+}
+```
+
+说明：
+
+- `role` 取值 `user` / `assistant` / `tool`，`tool` 即 tool_result 消息。
+- `metadata` 透传 `ai_messages.metadata` 原始 JSON：工具消息包含 `tool_name`、`status`、`tool_call_id`、`data_json` 等；assistant 消息可能包含 RAG `sources`。
+- 会话最后活跃时间取会话内最新消息 `created_at`，无消息时回退到会话创建时间。
+- 消息查询强制按 `user_id + conversation_id` 过滤，会话归属校验在 `services/aiagent` 完成，跨用户访问直接拒绝。
+
 ## 3. 核心模块
 ### 3.1 Eino 模型接入
 AI Agent 使用 Eino 的 ChatModel 抽象接入模型，不在业务代码中自定义一套平行的 LLM Provider 接口。`services/aiagent` 只保留薄适配层，用于读取配置、创建 Eino ChatModel、按需通过 `WithTools` 绑定工具、统一错误降级和超时控制。

@@ -11,15 +11,36 @@ interface SidebarProps {
   onNew: () => void
   onDelete?: (id: string) => void
   onRename?: (id: string, title: string) => void
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
 }
 
-export function Sidebar({ isOpen, toggleSidebar, conversations, activeId, onSelect, onNew, onDelete, onRename }: SidebarProps) {
+export function Sidebar({
+  isOpen, toggleSidebar, conversations, activeId, onSelect, onNew, onDelete, onRename,
+  hasMore = false, loadingMore = false, onLoadMore,
+}: SidebarProps) {
   const { username, logout } = useAuth()
   const [search, setSearch] = useState('')
   const [menuId, setMenuId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // 会话列表滚动到底部时加载下一页
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    const onScroll = () => {
+      if (search || loadingMore || !hasMore || !onLoadMore) return
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
+        onLoadMore()
+      }
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [search, loadingMore, hasMore, onLoadMore])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuId(null) }
@@ -70,11 +91,11 @@ export function Sidebar({ isOpen, toggleSidebar, conversations, activeId, onSele
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto">
+        <div ref={listRef} className="flex-1 overflow-y-auto">
           {filtered.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
               <MessageSquare className="w-8 h-8 text-gray-700 mb-3" />
-              <p className="text-xs text-gray-600">暂无会话</p>
+              <p className="text-xs text-gray-600">{loadingMore ? '加载中...' : '暂无会话'}</p>
             </div>
           )}
           {filtered.map(c => (
@@ -97,7 +118,7 @@ export function Sidebar({ isOpen, toggleSidebar, conversations, activeId, onSele
                       autoFocus
                     />
                   ) : (
-                    <span className="text-sm text-gray-300 truncate flex-1">{c.title}</span>
+                    <span className="text-sm text-gray-300 truncate flex-1">{c.title || '新会话'}</span>
                   )}
                   <button
                     onClick={e => { e.stopPropagation(); setMenuId(menuId === c.id ? null : c.id) }}
@@ -123,6 +144,12 @@ export function Sidebar({ isOpen, toggleSidebar, conversations, activeId, onSele
               )}
             </div>
           ))}
+          {loadingMore && (
+            <div className="py-3 text-center text-xs text-gray-600">加载中...</div>
+          )}
+          {!loadingMore && !hasMore && conversations.length > 0 && (
+            <div className="py-3 text-center text-[10px] text-gray-700">已加载全部会话</div>
+          )}
         </div>
 
         {/* Footer */}

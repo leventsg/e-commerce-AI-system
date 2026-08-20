@@ -392,3 +392,11 @@ func (m *confirmActionFakeMessagesModel) FindUserMessageByClientMessageID(contex
 func (m *confirmActionFakeMessagesModel) FindAssistantMessagesByClientMessageID(context.Context, uint64, string, string) ([]*aimessages.AiMessages, error) {
 	panic("not used")
 }
+
+func (m *confirmActionFakeMessagesModel) FindByUserAndConversation(context.Context, uint64, string, int, int) ([]*aimessages.AiMessages, error) {
+	panic("not used")
+}
+
+func (m *confirmActionFakeMessagesModel) CountByUserAndConversation(context.Context, uint64, string) (int64, error) {
+	panic("not used")
+}

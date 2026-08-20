@@ -7,5 +7,10 @@ syntax = "v1"
 service ai-api {
 	@handler ChatHandler
 	post /chat
-}
 
+	@handler ListSessionsHandler
+	get /sessions
+
+	@handler ListMessagesHandler
+	get /sessions/messages
+}

@@ -1320,6 +1320,45 @@ Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部
 
 覆盖分类输出解析、Retrieve/Embedding 客户端、sources 映射、RAGContext 注入、前端类型与事件解析。
 
+### Task 23: 历史会话查询接口
+
+**Files:**
+
+- Modify: `services/aiagent/aiagent.proto`、`services/aiagent/aiagentclient/aiagent.go`、`services/aiagent/internal/server/aiagentserver.go`
+- Modify: `dal/model/ai/conversations/aiconversationsmodel.go`、`dal/model/ai/messages/aimessagesmodel.go`
+- Create: `services/aiagent/internal/logic/listconversationslogic.go`、`services/aiagent/internal/logic/listmessageslogic.go`
+- Modify: `apis/ai/ai.api`、`apis/ai/internal/handler/routes.go`
+- Create: `apis/ai/internal/handler/historyhandler.go`、`apis/ai/internal/logic/historylogic.go`、`apis/ai/internal/types/history.go`
+- Test: `services/aiagent/internal/logic/historylogic_test.go`、`apis/ai/internal/logic/historylogic_test.go`、`dal/model/ai/conversations/aiconversationsmodel_test.go`、`dal/model/ai/messages/aimessagesmodel_test.go`
+
+- [x] **Step 1: 定义 RPC 契约并重新生成 pb**
+
+新增 `ListConversations` / `ListMessages` 及 `ConversationSummary`、`HistoryMessage` 消息；使用 goctl 重新生成 pb/grpc 代码，手工补齐 client 与 server 胶水。
+
+- [x] **Step 2: model 查询方法**
+
+`ai_conversations` 新增按用户分页查询（附带最后活跃时间、最后消息预览、消息数）和总数统计；`ai_messages` 新增按 `user_id + conversation_id` 分页正序查询和总数统计。
+
+- [x] **Step 3: aiagent 历史 logic**
+
+`ListConversationsLogic` 返回当前用户会话列表；`ListMessagesLogic` 先做会话归属校验（不存在返回“会话不存在”，跨用户返回“无权访问该会话”），再按用户和会话查询全部 user/assistant/tool 消息，metadata 原样透传。
+
+- [x] **Step 4: API 网关**
+
+新增 `GET /douyin/ai/sessions` 与 `GET /douyin/ai/sessions/messages`，沿用现有认证中间件，用户 ID 只来自登录态上下文。
+
+- [x] **Step 5: 测试**
+
+覆盖：用户隔离（跨用户会话拒绝）、会话不存在、分页参数归一化、user/assistant/tool 三种角色返回、tool metadata 透传、SQL 查询作用域与排序。
+
+- [ ] **Step 6: 运行验收**
+
+```bash
+go test ./services/aiagent/... ./apis/ai/...
+```
+
+**实现状态（2026-08-20）：** 已完成 RPC 契约、model 查询、aiagent 与网关实现和单元测试，目标测试命令通过；最终全量 `go test ./...` 验收见完成标准。
+
 ## 12. 推荐实施顺序
 
 1. 数据库与 model：Task 1。
@@ -1335,6 +1374,7 @@ Expected: 上下文工程测试、原 AI 客服安全测试和全仓测试全部
 11. 滚动摘要、长期事件和用户画像：Task 19。
 12. Agent Run 与 Checkpoint：Task 20。
 13. 观测、清理和旧路径收敛：Task 21。
+14. 历史会话查询：Task 23。
 
 每完成一个阶段执行：
 

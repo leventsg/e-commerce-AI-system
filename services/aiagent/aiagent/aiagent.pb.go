@@ -425,6 +425,406 @@ func (x *ConfirmActionResponse) GetEvents() []*AgentEvent {
 	return nil
 }
 
+type ListConversationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Page          int64                  `protobuf:"varint,2,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int64                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConversationsRequest) Reset() {
+	*x = ListConversationsRequest{}
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConversationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConversationsRequest) ProtoMessage() {}
+
+func (x *ListConversationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConversationsRequest.ProtoReflect.Descriptor instead.
+func (*ListConversationsRequest) Descriptor() ([]byte, []int) {
+	return file_services_aiagent_aiagent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListConversationsRequest) GetUserId() uint32 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *ListConversationsRequest) GetPage() int64 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListConversationsRequest) GetPageSize() int64 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+type ConversationSummary struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ConversationId     string                 `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	Title              string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	LastMessagePreview string                 `protobuf:"bytes,3,opt,name=last_message_preview,json=lastMessagePreview,proto3" json:"last_message_preview,omitempty"`
+	UpdatedAt          string                 `protobuf:"bytes,4,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	MessageCount       int64                  `protobuf:"varint,5,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ConversationSummary) Reset() {
+	*x = ConversationSummary{}
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConversationSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConversationSummary) ProtoMessage() {}
+
+func (x *ConversationSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConversationSummary.ProtoReflect.Descriptor instead.
+func (*ConversationSummary) Descriptor() ([]byte, []int) {
+	return file_services_aiagent_aiagent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ConversationSummary) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *ConversationSummary) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *ConversationSummary) GetLastMessagePreview() string {
+	if x != nil {
+		return x.LastMessagePreview
+	}
+	return ""
+}
+
+func (x *ConversationSummary) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return ""
+}
+
+func (x *ConversationSummary) GetMessageCount() int64 {
+	if x != nil {
+		return x.MessageCount
+	}
+	return 0
+}
+
+type ListConversationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Total         int64                  `protobuf:"varint,1,opt,name=total,proto3" json:"total,omitempty"`
+	Conversations []*ConversationSummary `protobuf:"bytes,2,rep,name=conversations,proto3" json:"conversations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConversationsResponse) Reset() {
+	*x = ListConversationsResponse{}
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConversationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConversationsResponse) ProtoMessage() {}
+
+func (x *ListConversationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConversationsResponse.ProtoReflect.Descriptor instead.
+func (*ListConversationsResponse) Descriptor() ([]byte, []int) {
+	return file_services_aiagent_aiagent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListConversationsResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListConversationsResponse) GetConversations() []*ConversationSummary {
+	if x != nil {
+		return x.Conversations
+	}
+	return nil
+}
+
+type ListMessagesRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UserId         uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ConversationId string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	Page           int64                  `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize       int64                  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListMessagesRequest) Reset() {
+	*x = ListMessagesRequest{}
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMessagesRequest) ProtoMessage() {}
+
+func (x *ListMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMessagesRequest.ProtoReflect.Descriptor instead.
+func (*ListMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_services_aiagent_aiagent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ListMessagesRequest) GetUserId() uint32 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *ListMessagesRequest) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *ListMessagesRequest) GetPage() int64 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListMessagesRequest) GetPageSize() int64 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+type HistoryMessage struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	MessageId       string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Role            string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
+	Content         string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
+	MetadataJson    string                 `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	ClientMessageId string                 `protobuf:"bytes,5,opt,name=client_message_id,json=clientMessageId,proto3" json:"client_message_id,omitempty"`
+	CreatedAt       string                 `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *HistoryMessage) Reset() {
+	*x = HistoryMessage{}
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HistoryMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HistoryMessage) ProtoMessage() {}
+
+func (x *HistoryMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HistoryMessage.ProtoReflect.Descriptor instead.
+func (*HistoryMessage) Descriptor() ([]byte, []int) {
+	return file_services_aiagent_aiagent_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *HistoryMessage) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *HistoryMessage) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *HistoryMessage) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *HistoryMessage) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
+func (x *HistoryMessage) GetClientMessageId() string {
+	if x != nil {
+		return x.ClientMessageId
+	}
+	return ""
+}
+
+func (x *HistoryMessage) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+type ListMessagesResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ConversationId string                 `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	Total          int64                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Messages       []*HistoryMessage      `protobuf:"bytes,3,rep,name=messages,proto3" json:"messages,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListMessagesResponse) Reset() {
+	*x = ListMessagesResponse{}
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMessagesResponse) ProtoMessage() {}
+
+func (x *ListMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_services_aiagent_aiagent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMessagesResponse.ProtoReflect.Descriptor instead.
+func (*ListMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_services_aiagent_aiagent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ListMessagesResponse) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *ListMessagesResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListMessagesResponse) GetMessages() []*HistoryMessage {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
+}
+
 var File_services_aiagent_aiagent_proto protoreflect.FileDescriptor
 
 const file_services_aiagent_aiagent_proto_rawDesc = "" +
@@ -471,10 +871,44 @@ const file_services_aiagent_aiagent_proto_rawDesc = "" +
 	"statusCode\x12\x1d\n" +
 	"\n" +
 	"status_msg\x18\x02 \x01(\tR\tstatusMsg\x12+\n" +
-	"\x06events\x18\x03 \x03(\v2\x13.aiagent.AgentEventR\x06events2\x85\x01\n" +
+	"\x06events\x18\x03 \x03(\v2\x13.aiagent.AgentEventR\x06events\"d\n" +
+	"\x18ListConversationsRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\rR\x06userId\x12\x12\n" +
+	"\x04page\x18\x02 \x01(\x03R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x03 \x01(\x03R\bpageSize\"\xca\x01\n" +
+	"\x13ConversationSummary\x12'\n" +
+	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x120\n" +
+	"\x14last_message_preview\x18\x03 \x01(\tR\x12lastMessagePreview\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x04 \x01(\tR\tupdatedAt\x12#\n" +
+	"\rmessage_count\x18\x05 \x01(\x03R\fmessageCount\"u\n" +
+	"\x19ListConversationsResponse\x12\x14\n" +
+	"\x05total\x18\x01 \x01(\x03R\x05total\x12B\n" +
+	"\rconversations\x18\x02 \x03(\v2\x1c.aiagent.ConversationSummaryR\rconversations\"\x88\x01\n" +
+	"\x13ListMessagesRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\rR\x06userId\x12'\n" +
+	"\x0fconversation_id\x18\x02 \x01(\tR\x0econversationId\x12\x12\n" +
+	"\x04page\x18\x03 \x01(\x03R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x03R\bpageSize\"\xcd\x01\n" +
+	"\x0eHistoryMessage\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\x12\x12\n" +
+	"\x04role\x18\x02 \x01(\tR\x04role\x12\x18\n" +
+	"\acontent\x18\x03 \x01(\tR\acontent\x12#\n" +
+	"\rmetadata_json\x18\x04 \x01(\tR\fmetadataJson\x12*\n" +
+	"\x11client_message_id\x18\x05 \x01(\tR\x0fclientMessageId\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\tR\tcreatedAt\"\x8a\x01\n" +
+	"\x14ListMessagesResponse\x12'\n" +
+	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\x123\n" +
+	"\bmessages\x18\x03 \x03(\v2\x17.aiagent.HistoryMessageR\bmessages2\xae\x02\n" +
 	"\aAiAgent\x123\n" +
 	"\x04Chat\x12\x14.aiagent.ChatRequest\x1a\x13.aiagent.AgentEvent0\x01\x12E\n" +
-	"\rConfirmAction\x12\x1d.aiagent.ConfirmActionRequest\x1a\x13.aiagent.AgentEvent0\x01B\vZ\t./aiagentb\x06proto3"
+	"\rConfirmAction\x12\x1d.aiagent.ConfirmActionRequest\x1a\x13.aiagent.AgentEvent0\x01\x12Z\n" +
+	"\x11ListConversations\x12!.aiagent.ListConversationsRequest\x1a\".aiagent.ListConversationsResponse\x12K\n" +
+	"\fListMessages\x12\x1c.aiagent.ListMessagesRequest\x1a\x1d.aiagent.ListMessagesResponseB\vZ\t./aiagentb\x06proto3"
 
 var (
 	file_services_aiagent_aiagent_proto_rawDescOnce sync.Once
@@ -488,26 +922,38 @@ func file_services_aiagent_aiagent_proto_rawDescGZIP() []byte {
 	return file_services_aiagent_aiagent_proto_rawDescData
 }
 
-var file_services_aiagent_aiagent_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_services_aiagent_aiagent_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_services_aiagent_aiagent_proto_goTypes = []any{
-	(*ChatRequest)(nil),           // 0: aiagent.ChatRequest
-	(*AgentEvent)(nil),            // 1: aiagent.AgentEvent
-	(*ChatResponse)(nil),          // 2: aiagent.ChatResponse
-	(*ConfirmActionRequest)(nil),  // 3: aiagent.ConfirmActionRequest
-	(*ConfirmActionResponse)(nil), // 4: aiagent.ConfirmActionResponse
+	(*ChatRequest)(nil),               // 0: aiagent.ChatRequest
+	(*AgentEvent)(nil),                // 1: aiagent.AgentEvent
+	(*ChatResponse)(nil),              // 2: aiagent.ChatResponse
+	(*ConfirmActionRequest)(nil),      // 3: aiagent.ConfirmActionRequest
+	(*ConfirmActionResponse)(nil),     // 4: aiagent.ConfirmActionResponse
+	(*ListConversationsRequest)(nil),  // 5: aiagent.ListConversationsRequest
+	(*ConversationSummary)(nil),       // 6: aiagent.ConversationSummary
+	(*ListConversationsResponse)(nil), // 7: aiagent.ListConversationsResponse
+	(*ListMessagesRequest)(nil),       // 8: aiagent.ListMessagesRequest
+	(*HistoryMessage)(nil),            // 9: aiagent.HistoryMessage
+	(*ListMessagesResponse)(nil),      // 10: aiagent.ListMessagesResponse
 }
 var file_services_aiagent_aiagent_proto_depIdxs = []int32{
-	1, // 0: aiagent.ChatResponse.events:type_name -> aiagent.AgentEvent
-	1, // 1: aiagent.ConfirmActionResponse.events:type_name -> aiagent.AgentEvent
-	0, // 2: aiagent.AiAgent.Chat:input_type -> aiagent.ChatRequest
-	3, // 3: aiagent.AiAgent.ConfirmAction:input_type -> aiagent.ConfirmActionRequest
-	1, // 4: aiagent.AiAgent.Chat:output_type -> aiagent.AgentEvent
-	1, // 5: aiagent.AiAgent.ConfirmAction:output_type -> aiagent.AgentEvent
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	1,  // 0: aiagent.ChatResponse.events:type_name -> aiagent.AgentEvent
+	1,  // 1: aiagent.ConfirmActionResponse.events:type_name -> aiagent.AgentEvent
+	6,  // 2: aiagent.ListConversationsResponse.conversations:type_name -> aiagent.ConversationSummary
+	9,  // 3: aiagent.ListMessagesResponse.messages:type_name -> aiagent.HistoryMessage
+	0,  // 4: aiagent.AiAgent.Chat:input_type -> aiagent.ChatRequest
+	3,  // 5: aiagent.AiAgent.ConfirmAction:input_type -> aiagent.ConfirmActionRequest
+	5,  // 6: aiagent.AiAgent.ListConversations:input_type -> aiagent.ListConversationsRequest
+	8,  // 7: aiagent.AiAgent.ListMessages:input_type -> aiagent.ListMessagesRequest
+	1,  // 8: aiagent.AiAgent.Chat:output_type -> aiagent.AgentEvent
+	1,  // 9: aiagent.AiAgent.ConfirmAction:output_type -> aiagent.AgentEvent
+	7,  // 10: aiagent.AiAgent.ListConversations:output_type -> aiagent.ListConversationsResponse
+	10, // 11: aiagent.AiAgent.ListMessages:output_type -> aiagent.ListMessagesResponse
+	8,  // [8:12] is the sub-list for method output_type
+	4,  // [4:8] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_services_aiagent_aiagent_proto_init() }
@@ -521,7 +967,7 @@ func file_services_aiagent_aiagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_services_aiagent_aiagent_proto_rawDesc), len(file_services_aiagent_aiagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

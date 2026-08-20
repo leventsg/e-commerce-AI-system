@@ -19,8 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AiAgent_Chat_FullMethodName          = "/aiagent.AiAgent/Chat"
-	AiAgent_ConfirmAction_FullMethodName = "/aiagent.AiAgent/ConfirmAction"
+	AiAgent_Chat_FullMethodName              = "/aiagent.AiAgent/Chat"
+	AiAgent_ConfirmAction_FullMethodName     = "/aiagent.AiAgent/ConfirmAction"
+	AiAgent_ListConversations_FullMethodName = "/aiagent.AiAgent/ListConversations"
+	AiAgent_ListMessages_FullMethodName      = "/aiagent.AiAgent/ListMessages"
 )
 
 // AiAgentClient is the client API for AiAgent service.
@@ -29,6 +31,8 @@ const (
 type AiAgentClient interface {
 	Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentEvent], error)
 	ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentEvent], error)
+	ListConversations(ctx context.Context, in *ListConversationsRequest, opts ...grpc.CallOption) (*ListConversationsResponse, error)
+	ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error)
 }
 
 type aiAgentClient struct {
@@ -77,12 +81,34 @@ func (c *aiAgentClient) ConfirmAction(ctx context.Context, in *ConfirmActionRequ
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AiAgent_ConfirmActionClient = grpc.ServerStreamingClient[AgentEvent]
 
+func (c *aiAgentClient) ListConversations(ctx context.Context, in *ListConversationsRequest, opts ...grpc.CallOption) (*ListConversationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListConversationsResponse)
+	err := c.cc.Invoke(ctx, AiAgent_ListConversations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aiAgentClient) ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMessagesResponse)
+	err := c.cc.Invoke(ctx, AiAgent_ListMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AiAgentServer is the server API for AiAgent service.
 // All implementations must embed UnimplementedAiAgentServer
 // for forward compatibility.
 type AiAgentServer interface {
 	Chat(*ChatRequest, grpc.ServerStreamingServer[AgentEvent]) error
 	ConfirmAction(*ConfirmActionRequest, grpc.ServerStreamingServer[AgentEvent]) error
+	ListConversations(context.Context, *ListConversationsRequest) (*ListConversationsResponse, error)
+	ListMessages(context.Context, *ListMessagesRequest) (*ListMessagesResponse, error)
 	mustEmbedUnimplementedAiAgentServer()
 }
 
@@ -98,6 +124,12 @@ func (UnimplementedAiAgentServer) Chat(*ChatRequest, grpc.ServerStreamingServer[
 }
 func (UnimplementedAiAgentServer) ConfirmAction(*ConfirmActionRequest, grpc.ServerStreamingServer[AgentEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method ConfirmAction not implemented")
+}
+func (UnimplementedAiAgentServer) ListConversations(context.Context, *ListConversationsRequest) (*ListConversationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListConversations not implemented")
+}
+func (UnimplementedAiAgentServer) ListMessages(context.Context, *ListMessagesRequest) (*ListMessagesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListMessages not implemented")
 }
 func (UnimplementedAiAgentServer) mustEmbedUnimplementedAiAgentServer() {}
 func (UnimplementedAiAgentServer) testEmbeddedByValue()                 {}
@@ -142,13 +174,58 @@ func _AiAgent_ConfirmAction_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AiAgent_ConfirmActionServer = grpc.ServerStreamingServer[AgentEvent]
 
+func _AiAgent_ListConversations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListConversationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AiAgentServer).ListConversations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AiAgent_ListConversations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AiAgentServer).ListConversations(ctx, req.(*ListConversationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AiAgent_ListMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AiAgentServer).ListMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AiAgent_ListMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AiAgentServer).ListMessages(ctx, req.(*ListMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AiAgent_ServiceDesc is the grpc.ServiceDesc for AiAgent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var AiAgent_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "aiagent.AiAgent",
 	HandlerType: (*AiAgentServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListConversations",
+			Handler:    _AiAgent_ListConversations_Handler,
+		},
+		{
+			MethodName: "ListMessages",
+			Handler:    _AiAgent_ListMessages_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Chat",

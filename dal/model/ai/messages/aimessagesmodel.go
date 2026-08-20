@@ -28,6 +28,8 @@ type (
 		FindMessagesByIDs(ctx context.Context, userID uint64, conversationID string, messageIDs []string) ([]*AiMessages, error)
 		FindUserMessageByClientMessageID(ctx context.Context, userID uint64, clientMessageID string) (*AiMessages, error)
 		FindAssistantMessagesByClientMessageID(ctx context.Context, userID uint64, conversationID, clientMessageID string) ([]*AiMessages, error)
+		FindByUserAndConversation(ctx context.Context, userID uint64, conversationID string, limit, offset int) ([]*AiMessages, error)
+		CountByUserAndConversation(ctx context.Context, userID uint64, conversationID string) (int64, error)
 		InsertBatch(ctx context.Context, messages []*AiMessages) error
 	}
 
@@ -248,4 +250,32 @@ func (m *customAiMessagesModel) FindAssistantMessagesByClientMessageID(ctx conte
 		return nil, err
 	}
 	return rows, nil
+}
+
+// FindByUserAndConversation 分页查询当前用户指定会话的全部消息，按消息自增序号正序返回。
+// 包含 user/assistant/tool 三种角色；查询强制携带 user_id，杜绝跨用户读取。
+func (m *customAiMessagesModel) FindByUserAndConversation(ctx context.Context, userID uint64, conversationID string, limit, offset int) ([]*AiMessages, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var rows []*AiMessages
+	query := "select " + aiMessagesRows + " from " + m.table + " where `user_id` = ? and `conversation_id` = ? order by `id` asc limit ? offset ?"
+	if err := m.CachedConn.QueryRowsNoCacheCtx(ctx, &rows, query, userID, conversationID, limit, offset); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// CountByUserAndConversation 统计当前用户指定会话的消息总数。
+func (m *customAiMessagesModel) CountByUserAndConversation(ctx context.Context, userID uint64, conversationID string) (int64, error) {
+	var count int64
+	query := "select count(1) from " + m.table + " where `user_id` = ? and `conversation_id` = ?"
+	if err := m.CachedConn.QueryRowNoCacheCtx(ctx, &count, query, userID, conversationID); err != nil {
+		return 0, err
+	}
+	return count, nil
 }

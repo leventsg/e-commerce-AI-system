@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { streamAgentChat } from '../../../../frontend/src/services/api/agent'
+import { streamAgentChat, listSessions, listMessages } from '../../../../frontend/src/services/api/agent'
 import { setTokenRefreshHandler } from '../../../../frontend/src/services/api/client'
 
 function streamFrom(chunks: string[]) {
@@ -110,5 +110,75 @@ describe('agent SSE service', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[1][1].headers).toMatchObject({ 'Access-Token': 'new-access' })
     expect(events[0].content).toBe('你好')
+  })
+})
+
+describe('agent history service', () => {
+  it('listSessions builds pagination query and unwraps data', async () => {
+    const payload = {
+      code: 0,
+      msg: 'ok',
+      data: {
+        total: 2,
+        conversations: [
+          { conversation_id: 'conv-1', title: '订单咨询', last_message_preview: '已送达', updated_at: '2026-08-20T15:06:37+08:00', message_count: 6 },
+          { conversation_id: 'conv-2', title: '新会话', updated_at: '2026-08-20T11:00:00Z', message_count: 0 },
+        ],
+      },
+    }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await listSessions('access-token', 2, 30)
+    expect(result.total).toBe(2)
+    expect(result.conversations[0].conversation_id).toBe('conv-1')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/douyin/ai/sessions?page=2&page_size=30',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'Access-Token': 'access-token' }),
+      }),
+    )
+  })
+
+  it('listMessages builds conversation query and passes through tool metadata', async () => {
+    const payload = {
+      code: 0,
+      msg: 'ok',
+      data: {
+        conversation_id: 'conv-1',
+        total: 1,
+        messages: [{
+          message_id: 'msg-3',
+          role: 'tool',
+          content: '查询结果',
+          metadata: { tool_name: 'order_get', status: 'success', tool_call_id: 'call-1' },
+          client_message_id: 'client-1',
+          created_at: '2026-08-20T15:00:02+08:00',
+        }],
+      },
+    }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await listMessages('access-token', 'conv-1', 1, 50)
+    expect(result.total).toBe(1)
+    expect(result.messages[0].metadata?.tool_name).toBe('order_get')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/douyin/ai/sessions/messages?conversation_id=conv-1&page=1&page_size=50',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'Access-Token': 'access-token' }),
+      }),
+    )
+  })
+
+  it('listMessages encodes conversation id in the query string', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ code: 0, msg: 'ok', data: { conversation_id: 'conv a/b', total: 0, messages: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await listMessages('access-token', 'conv a/b')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/douyin/ai/sessions/messages?conversation_id=conv%20a%2Fb&page=1&page_size=50',
+      expect.anything(),
+    )
   })
 })
