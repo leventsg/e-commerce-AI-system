@@ -13,6 +13,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/contextmanager"
 	summaryprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/summary"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type summarySummarizer struct {
@@ -41,6 +42,8 @@ func (s *summarySummarizer) Summarize(ctx context.Context, req contextmanager.Su
 		schema.SystemMessage(summaryprompt.SystemPrompt),
 		schema.UserMessage(userPrompt),
 	})
+	// 记录模型输出
+	logx.Infof("对话压缩结果：%s, 用户id：%d, 会话id：%s", response.Content, req.UserID, req.ConversationID)
 	if err != nil {
 		return contextmanager.SummarizeResult{}, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
