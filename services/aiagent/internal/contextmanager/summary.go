@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	aimessages "github.com/leventsg/e-commerce-AI-system/dal/model/ai/messages"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 const (
@@ -110,6 +111,7 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 	if unsummarizedCount < summaryTriggerMessageCount {
 		return result, nil
 	}
+	logx.Infof("会话 %s 用户 %d 有 %d 条未压缩消息，触发摘要刷新", req.ConversationID, req.UserID, unsummarizedCount)
 
 	// 单次最多压缩 3 轮，每次压缩 10 条消息，最多压缩 30 条消息
 	for round := 0; round < maxSummaryRefreshRounds && unsummarizedCount >= summaryTriggerMessageCount; round++ {

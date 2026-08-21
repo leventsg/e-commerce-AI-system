@@ -30,7 +30,8 @@ services:
       - elasticsearch
     volumes:
       - ./conf/filebeat.yaml:/usr/share/filebeat/filebeat.yml:ro
-      - ../../dev_logs:/usr/share/filebeat/logs:ro
+      - ../../apis:/usr/share/filebeat/apis:ro
+      - ../../services:/usr/share/filebeat/services:ro
       - filebeat-data:/usr/share/filebeat/data
     networks:
       - go-mall
