@@ -29,9 +29,8 @@ services:
     depends_on:
       - elasticsearch
     volumes:
-      - ./conf/filebeat.yaml:/usr/share/filebeat/filebeat.yml:ro
-      - ../../apis:/usr/share/filebeat/apis:ro
-      - ../../services:/usr/share/filebeat/services:ro
+      - ./conf/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ../../devlog:/usr/share/filebeat/devlog:ro
       - filebeat-data:/usr/share/filebeat/data
     networks:
       - go-mall

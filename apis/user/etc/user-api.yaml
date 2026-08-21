@@ -29,7 +29,7 @@ Log:
   ServiceName: "user-api"
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/user-api"
+  Path: "../../devlog/gozero/user-api"
   KeepDays: 30    # 保留30天日志
   Compress: true  # 启用日志压缩
   Rotation: size  # 按大小切割日志

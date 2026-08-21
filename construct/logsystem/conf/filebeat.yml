@@ -1,24 +1,13 @@
 filebeat.inputs:
   - type: filestream
-    id: go-mall-api-logs
+    id: go-mall-devlog
     enabled: true
     paths:
-      - /usr/share/filebeat/apis/*/logs/*/*.log
+      - /usr/share/filebeat/devlog/**/*.log
     fields:
       project: go-mall
       env: dev
-      log_source: api_logs
-    fields_under_root: true
-
-  - type: filestream
-    id: go-mall-rpc-logs
-    enabled: true
-    paths:
-      - /usr/share/filebeat/services/*/logs/*/*.log
-    fields:
-      project: go-mall
-      env: dev
-      log_source: rpc_logs
+      log_source: devlog
     fields_under_root: true
 
 processors:
@@ -26,6 +15,7 @@ processors:
 
 output.elasticsearch:
   hosts: ["http://elasticsearch:9200"]
+  username: "elastic"
 
 setup.kibana:
   host: "http://kibana:5601"

@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/order-api"
+  Path: "../../devlog/gozero/order-api"
 Host: 0.0.0.0
 Port: 8004
 Timeout: 0

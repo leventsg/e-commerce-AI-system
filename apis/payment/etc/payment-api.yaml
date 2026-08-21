@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/payment-api"
+  Path: "../../devlog/gozero/payment-api"
 Host: 0.0.0.0
 Port: 8006
 Timeout: 0

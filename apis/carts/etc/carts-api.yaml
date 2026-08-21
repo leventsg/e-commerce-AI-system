@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/carts-api"
+  Path: "../../devlog/gozero/carts-api"
 Host: 0.0.0.0
 Port: 8003
 

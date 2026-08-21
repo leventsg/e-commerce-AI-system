@@ -8,7 +8,7 @@ x-common: &common
     - go-mall
   restart: unless-stopped
   volumes:
-    - ./logs:/app/logs
+    - ./devlog:/app/logs
   deploy:
     resources:
       limits:
@@ -107,7 +107,7 @@ services:
     container_name: go-mall-payment-service
     command: [ "/app/services/Payment", "-f", "/app/etc/payment.prod.yaml" ]
     volumes:
-      - ./logs:/app/logs
+      - ./devlog:/app/logs
       - ./services/payment/etc/payment.prod.yaml:/app/etc/payment.prod.yaml:ro
     ports:
       - "10006:10006"

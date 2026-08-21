@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/coupon-api"
+  Path: "../../devlog/gozero/coupon-api"
 Host: 0.0.0.0
 Port: 8009
 

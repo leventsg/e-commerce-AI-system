@@ -30,5 +30,7 @@ logs/
 **/logs/
 dev_logs/
 **/dev_logs/
+devlog/
+**/devlog/
 
 key/
