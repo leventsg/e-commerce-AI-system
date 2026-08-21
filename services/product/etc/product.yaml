@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/products-rpc"
+  Path: "../../devlog/gozero/products-rpc"
 ListenOn: 0.0.0.0:10002
 Mode: dev
 Timeout: 0
@@ -25,7 +25,7 @@ MysqlConfig:
   datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
   conntimeout: 5
 RedisConf:
-  Host: localhost:6379
+  Host: localhost:6380
   Type: node
   Pass: leventsg # 如果有密码则填写
   Tls: false

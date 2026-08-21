@@ -26,19 +26,19 @@ Log:
   ServiceName: "aiagent-rpc"
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/aiagent-rpc"
+  Path: "../../devlog/gozero/aiagent-rpc"
 
 MysqlConfig:
   datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
 
 RedisConf:
-  Host: localhost:6379
+  Host: localhost:6380
   Type: node
   Pass: leventsg
   Tls: false
 
 Cache:
-  - Host: localhost:6379
+  - Host: localhost:6380
     Type: node
     Pass: leventsg
 

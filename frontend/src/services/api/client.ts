@@ -89,26 +89,32 @@ export async function apiRequest<T>(
     },
   })
 
-  const payload = await parseJson<ApiResponse<T> | ApiResponse<AuthTokens>>(res)
+  const payload = await parseJson<unknown>(res)
   if (!res.ok) {
-    throw new ApiError(payload?.msg || `HTTP ${res.status}`, payload?.code ?? -1, res.status, payload?.data)
+    const errorPayload = asApiResponse<unknown>(payload)
+    throw new ApiError(errorPayload?.msg || `HTTP ${res.status}`, errorPayload?.code ?? -1, res.status, errorPayload?.data)
   }
 
-  if (payload.code === TOKEN_RENEWED_CODE && !hasRetried) {
-    const tokens = applyTokenRenewal(payload as ApiResponse<unknown>)
+  const apiPayload = asApiResponse<T>(payload)
+  if (!apiPayload) {
+    return payload as T
+  }
+
+  if (apiPayload.code === TOKEN_RENEWED_CODE && !hasRetried) {
+    const tokens = applyTokenRenewal(apiPayload as ApiResponse<unknown>)
     if (tokens) {
       return apiRequest<T>(path, init, tokens.access_token, true)
     }
   }
 
-  if (payload.code !== SUCCESS_CODE) {
-    if (isAuthCode(payload.code)) {
+  if (apiPayload.code !== SUCCESS_CODE) {
+    if (isAuthCode(apiPayload.code)) {
       window.dispatchEvent(new CustomEvent('auth-unauthorized'))
     }
-    throw new ApiError(payload.msg || '请求失败', payload.code, res.status, payload.data)
+    throw new ApiError(apiPayload.msg || '请求失败', apiPayload.code, res.status, apiPayload.data)
   }
 
-  return payload.data as T
+  return apiPayload.data as T
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
@@ -119,4 +125,11 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 function isAuthCode(code: number) {
   return code >= 10000 && code < 10010 && code !== TOKEN_RENEWED_CODE
+}
+
+function asApiResponse<T>(payload: unknown): ApiResponse<T> | null {
+  if (!payload || typeof payload !== 'object') return null
+  if (!('code' in payload)) return null
+  const response = payload as Partial<ApiResponse<T>>
+  return typeof response.code === 'number' ? response as ApiResponse<T> : null
 }

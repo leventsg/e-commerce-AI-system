@@ -65,12 +65,12 @@ func (sm *ServiceManager) startServices(dirName, ext string) error {
 		cmd.Dir = dir
 		setProcessGroup(cmd)
 
-		logDir := filepath.Join(sm.rootPath, "dev_logs")
+		logDir := filepath.Join(sm.rootPath, "devlog", "process")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			return err
 		}
 
-		logFile, err := os.Create(filepath.Join(logDir, fmt.Sprintf("%s.log", serviceName)))
+		logFile, err := os.OpenFile(filepath.Join(logDir, fmt.Sprintf("%s.log", serviceName)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			fmt.Printf("Error creating log file for %s: %v\n", serviceName, err)
 			continue
@@ -92,7 +92,7 @@ func (sm *ServiceManager) startServices(dirName, ext string) error {
 			sm.removeProcess(cmd)
 		}(serviceName, cmd, logFile)
 
-		fmt.Printf("Started %s, logs: dev_logs/%s.log\n", serviceName, serviceName)
+		fmt.Printf("Started %s, logs: devlog/process/%s.log\n", serviceName, serviceName)
 	}
 
 	return nil

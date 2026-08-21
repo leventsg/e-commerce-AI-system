@@ -33,7 +33,7 @@ Log:
   ServiceName: "users-rpc"
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/users-rpc"
+  Path: "../../devlog/gozero/users-rpc"
 
 MysqlConfig:
   datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
@@ -41,7 +41,7 @@ MysqlConfig:
 
 
 Cache:
-  - Host: 127.0.0.1:6379 #缓存地址
+  - Host: 127.0.0.1:6380 #缓存地址
     Pass: leventsg
     Type: node  
 
@@ -51,7 +51,7 @@ Prometheus:
   Path: /metrics   # 默认路径（可自定义）
 
 RedisConf:
-  Host: 127.0.0.1:6379
+  Host: 127.0.0.1:6380
   Pass: leventsg
   Tls: false
 GorseConfig:

@@ -28,14 +28,14 @@ Log:
   ServiceName: "coupons-rpc"
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/coupons-rpc"
+  Path: "../../devlog/gozero/coupons-rpc"
 
 MysqlConfig:
   datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
 
 
 RedisConf:
-  Host: localhost:6379
+  Host: localhost:6380
   Type: node
   Pass: leventsg # 如果有密码则填写
   Tls: false

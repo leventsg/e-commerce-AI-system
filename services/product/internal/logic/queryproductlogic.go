@@ -3,8 +3,11 @@ package logic
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+
 	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
 	esproduct "github.com/leventsg/e-commerce-AI-system/dal/es/product"
+	productmodel "github.com/leventsg/e-commerce-AI-system/dal/model/products/product"
 	"github.com/leventsg/e-commerce-AI-system/services/product/internal/svc"
 	"github.com/leventsg/e-commerce-AI-system/services/product/product"
 	"github.com/olivere/elastic/v7"
@@ -25,29 +28,27 @@ func NewQueryProductLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Quer
 	}
 }
 
-// QueryProduct 根据条件查询商品
+// QueryProduct searches products with Elasticsearch, then enriches matched
+// products from MySQL and inventory RPC so stock and sold stay realtime.
 func (l *QueryProductLogic) QueryProduct(in *product.QueryProductReq) (*product.GetAllProductsResp, error) {
-	// 1. 构建基础查询
 	boolQuery := l.buildESQuery(in)
-	// 分页参数
-	pageSize := biz.DefaultPageSize // 默认分页大小
+
+	pageSize := biz.DefaultPageSize
 	page := 1
-	from := 0
 	if in.Paginator != nil && in.Paginator.PageSize > 0 {
 		pageSize = int(in.Paginator.PageSize)
 	}
 	if in.Paginator != nil && in.Paginator.Page > 0 {
 		page = int(in.Paginator.Page)
 	}
-	from = (page - 1) * pageSize
-	// 构建搜索服务
+	from := (page - 1) * pageSize
+
 	searchService := l.svcCtx.EsClient.Search().
 		Index(biz.ProductEsIndexName).
 		Query(boolQuery).
 		From(from).
 		Size(pageSize)
 
-	// 新增排序逻辑
 	if in.New {
 		searchService.SortBy(
 			elastic.NewFieldSort("created_at").Desc(),
@@ -60,66 +61,84 @@ func (l *QueryProductLogic) QueryProduct(in *product.QueryProductReq) (*product.
 			elastic.NewScoreSort().Desc(),
 		)
 	}
+
 	searchResult, err := searchService.Do(l.ctx)
 	if err != nil {
-		logx.Errorw("elasticsearch query error", logx.Field("err", err))
+		l.Logger.Errorw("elasticsearch query error", logx.Field("err", err))
 		return nil, err
 	}
-	// 处理查询结果
-	var products []*product.Product
+
+	productIDs := make([]string, 0, len(searchResult.Hits.Hits))
 	for _, hit := range searchResult.Hits.Hits {
 		var doc esproduct.ESProductDocument
 		if err := json.Unmarshal(hit.Source, &doc); err != nil {
+			l.Logger.Errorw("unmarshal elasticsearch product document failed", logx.Field("err", err))
 			continue
 		}
-		products = append(products, &product.Product{
-			Id:          doc.ID,
-			Name:        doc.Name,
-			Description: doc.Description,
-			Picture:     doc.Picture,
-			Price:       doc.Price,
-			Categories:  doc.Categories,
-			CratedAt:    doc.CreatedAt,
-			UpdatedAt:   doc.UpdatedAt,
-		})
+		productIDs = append(productIDs, strconv.FormatUint(uint64(doc.ID), 10))
+	}
+	if len(productIDs) == 0 {
+		return &product.GetAllProductsResp{
+			Total:    searchResult.TotalHits(),
+			Products: []*product.Product{},
+		}, nil
+	}
+
+	productRows, err := productmodel.NewProductsModel(l.svcCtx.Mysql).GetProductByIDs(l.ctx, productIDs)
+	if err != nil {
+		l.Logger.Errorw("query products by elasticsearch result ids failed",
+			logx.Field("err", err),
+			logx.Field("product_ids", productIDs))
+		return nil, err
+	}
+
+	productByID := make(map[int64]*productmodel.Products, len(productRows))
+	for _, row := range productRows {
+		if row != nil {
+			productByID[row.Id] = row
+		}
+	}
+
+	orderedProducts := make([]*productmodel.Products, 0, len(productIDs))
+	for _, id := range productIDs {
+		productID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			continue
+		}
+		row, ok := productByID[productID]
+		if !ok {
+			l.Logger.Infow("product from elasticsearch not found in mysql", logx.Field("product_id", productID))
+			continue
+		}
+		orderedProducts = append(orderedProducts, row)
 	}
 
 	return &product.GetAllProductsResp{
 		Total:    searchResult.TotalHits(),
-		Products: products,
+		Products: populateProductDetails(l.ctx, l.svcCtx, orderedProducts),
 	}, nil
 }
+
 func (l *QueryProductLogic) buildESQuery(req *product.QueryProductReq) *elastic.BoolQuery {
 	boolQuery := elastic.NewBoolQuery()
 
-	// 商品名称模糊匹配
 	if req.Name != "" {
 		boolQuery.Must(elastic.NewMatchQuery("name", req.Name))
 	}
 	if req.Keyword != "" {
 		boolQuery.Should(
-			// 多字段匹配（description权重更高）
-			elastic.NewMultiMatchQuery(req.Keyword,
-				"name^1",        // name字段权重1（默认）
-				"description^2", // description字段权重2
-			).Operator("and"),
-			// 短语匹配（description权重更高）
-			elastic.NewMatchPhraseQuery("name", req.Keyword).Boost(1),        // 权重1
-			elastic.NewMatchPhraseQuery("description", req.Keyword).Boost(3), // 权重3
-			// 精确匹配
-			elastic.NewTermQuery("description.keyword", req.Keyword).Boost(5), // 最高权重
+			elastic.NewMultiMatchQuery(req.Keyword, "name^1", "description^2").Operator("and"),
+			elastic.NewMatchPhraseQuery("name", req.Keyword).Boost(1),
+			elastic.NewMatchPhraseQuery("description", req.Keyword).Boost(3),
+			elastic.NewTermQuery("description.keyword", req.Keyword).Boost(5),
 		)
-
-		// 设置最小匹配条件（至少满足一个should条件）
 		boolQuery.MinimumNumberShouldMatch(1)
 	}
 
-	// 分类筛选（数组匹配）
 	if len(req.Category) > 0 {
 		boolQuery.Filter(elastic.NewTermsQuery("category", stringSliceToInterface(req.Category)...))
 	}
 
-	// 价格区间筛选
 	if req.Price != nil {
 		rangeQuery := elastic.NewRangeQuery("price")
 		if req.Price.Min > 0 {
@@ -134,7 +153,6 @@ func (l *QueryProductLogic) buildESQuery(req *product.QueryProductReq) *elastic.
 	return boolQuery
 }
 
-// 确保存在该转换函数（建议放在公共工具类中）
 func stringSliceToInterface(s []string) []interface{} {
 	r := make([]interface{}, len(s))
 	for i, v := range s {

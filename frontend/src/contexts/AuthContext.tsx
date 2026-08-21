@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useState, type PropsWithChildren } from 'react'
 import { STORAGE_KEYS } from '@/constants'
-import { getUserInfo, login, logout as requestLogout } from '@/services/api/auth'
+import { getUserInfo, login, logout as requestLogout, register } from '@/services/api/auth'
 import { setTokenRefreshHandler, type AuthTokens } from '@/services/api/client'
 
 interface AuthUser {
@@ -17,6 +17,7 @@ interface AuthState {
   username: string | null
   isAuthenticated: boolean
   loginWithPassword: (email: string, password: string) => Promise<void>
+  registerWithPassword: (email: string, password: string, confirmPassword: string) => Promise<void>
   setTokens: (tokens: AuthTokens) => void
   logout: () => void
 }
@@ -69,20 +70,35 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (emitEvent) window.dispatchEvent(new CustomEvent('auth-unauthorized'))
   }, [])
 
-  const loginWithPassword = useCallback(async (email: string, password: string) => {
-    const tokens = await login({ email, password })
+  const completePasswordAuth = useCallback(async (email: string, tokens: AuthTokens) => {
     setTokens(tokens)
-    const info = await getUserInfo(tokens.access_token)
-    const nextUser: AuthUser = {
-      user_id: info.user_id,
-      email: info.email,
-      user_name: info.user_name,
-      avatar: info.avatar,
+    let nextUser: AuthUser = { email, user_name: email }
+    try {
+      const info = await getUserInfo(tokens.access_token)
+      nextUser = {
+        user_id: info.user_id,
+        email: info.email,
+        user_name: info.user_name,
+        avatar: info.avatar,
+      }
+    } catch {
+      // Token issuance already succeeded. Keep the user signed in and let later
+      // authenticated requests surface any real auth problem.
     }
     setUser(nextUser)
     localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(nextUser))
     localStorage.setItem(STORAGE_KEYS.USERNAME, nextUser.user_name || nextUser.email || email)
   }, [setTokens])
+
+  const loginWithPassword = useCallback(async (email: string, password: string) => {
+    const tokens = await login({ email, password })
+    await completePasswordAuth(email, tokens)
+  }, [completePasswordAuth])
+
+  const registerWithPassword = useCallback(async (email: string, password: string, confirmPassword: string) => {
+    const tokens = await register({ email, password, confirmPassword })
+    await completePasswordAuth(email, tokens)
+  }, [completePasswordAuth])
 
   const logout = useCallback(() => {
     if (token) {
@@ -103,7 +119,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [clearAuth])
 
   return (
-    <AuthContext.Provider value={{ token, refreshToken, user, username, isAuthenticated: !!token, loginWithPassword, setTokens, logout }}>
+    <AuthContext.Provider value={{ token, refreshToken, user, username, isAuthenticated: !!token, loginWithPassword, registerWithPassword, setTokens, logout }}>
       {children}
     </AuthContext.Provider>
   )

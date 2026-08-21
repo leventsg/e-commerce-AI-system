@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/checkout-rpc"
+  Path: "../../devlog/gozero/checkout-rpc"
 ListenOn: 0.0.0.0:10005
 Timeout: 0
 Consul:
@@ -29,7 +29,7 @@ CouponsRpc:
   NonBlock: true
   Timeout: 10000
 RedisConf:
-  Host: localhost:6379
+  Host: localhost:6380
   Type: node
   Pass: leventsg
   Tls: false

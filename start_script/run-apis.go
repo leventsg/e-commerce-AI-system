@@ -65,12 +65,12 @@ func (am *APIManager) startAPIs(dirName, ext string) error {
 		cmd.Dir = dir
 		setProcessGroup(cmd)
 
-		logDir := filepath.Join(am.rootPath, "dev_logs")
+		logDir := filepath.Join(am.rootPath, "devlog", "process")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			return err
 		}
 
-		logFile, err := os.Create(filepath.Join(logDir, fmt.Sprintf("%s-api.log", apiName)))
+		logFile, err := os.OpenFile(filepath.Join(logDir, fmt.Sprintf("%s-api.log", apiName)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			fmt.Printf("Error creating log file for %s: %v\n", apiName, err)
 			continue
@@ -92,7 +92,7 @@ func (am *APIManager) startAPIs(dirName, ext string) error {
 			am.removeProcess(cmd)
 		}(apiName, cmd, logFile)
 
-		fmt.Printf("Started %s API, logs: dev_logs/%s-api.log\n", apiName, apiName)
+		fmt.Printf("Started %s API, logs: devlog/process/%s-api.log\n", apiName, apiName)
 	}
 
 	return nil

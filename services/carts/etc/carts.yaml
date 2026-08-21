@@ -3,7 +3,7 @@ Log:
   Stat: false
   Mode: 'file'
   Encoding: "json"
-  Path: "./logs/carts-rpc"
+  Path: "../../devlog/gozero/carts-rpc"
 ListenOn: 0.0.0.0:10003
 
 Consul:

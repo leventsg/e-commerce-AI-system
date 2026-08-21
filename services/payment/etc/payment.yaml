@@ -20,13 +20,13 @@ Log:
   ServiceName: payment-rpc
   Mode: file
   Encoding: json
-  Path: ./logs/payment-rpc
+  Path: "../../devlog/gozero/payment-rpc"
 
 MysqlConfig:
   datasource: "root:root@tcp(localhost:33061)/mall?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai&time_zone=%27%2B08%3A00%27"
 
 RedisConf:
-  Host: localhost:6379
+  Host: localhost:6380
   Pass: leventsg
   Tls: false
 

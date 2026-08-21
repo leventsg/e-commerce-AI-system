@@ -49,6 +49,7 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 		Messages:         schemaMessagesToContext(state.Messages),
 		RAGContext:       meta.RAGContext,
 	})
+	logx.Infof("上下文组装结果：%s, userid: %d, conversation_id: %s", result, meta.UserID, meta.ConversationID)
 	if err != nil || result == nil {
 		return ctx, state, err
 	}
@@ -70,7 +71,6 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	enhanced = append(enhanced, systemMessages...)
 	enhanced = append(enhanced, history...)
 	enhanced = append(enhanced, nextRest...)
-	logx.Infow("上下文组装结果：", logx.Field("messages", enhanced), logx.Field("userid", meta.UserID), logx.Field("conversation_id", meta.ConversationID))
 	state.Messages = enhanced
 	ctx = context.WithValue(ctx, memoryPreparedContextKey{}, true)
 	return ctx, state, nil

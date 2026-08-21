@@ -5,6 +5,12 @@ export interface LoginRequest {
   password: string
 }
 
+export interface RegisterRequest {
+  email: string
+  password: string
+  confirmPassword: string
+}
+
 export interface UserInfo {
   user_id: number
   logout_at?: string
@@ -17,6 +23,10 @@ export interface UserInfo {
 
 export function login(req: LoginRequest) {
   return apiPost<AuthTokens, LoginRequest>('/douyin/user/login', req)
+}
+
+export function register(req: RegisterRequest) {
+  return apiPost<AuthTokens, RegisterRequest>('/douyin/user/register', req)
 }
 
 export function logout(token?: string | null) {
