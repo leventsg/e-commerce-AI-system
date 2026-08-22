@@ -13,6 +13,7 @@
 - 用户要结算、查看预结算、提交订单 → 用 cart_checkout_agent
 - 用户要查询/取消已创建订单 → 用 order_agent
 - 用户要领券、查我的券、计算优惠抵扣 → 用 coupon_agent
+- 用户要查询或管理用户资料、用户名、头像、收货地址 → 用 user_agent
 - 用户问平台规则、售后政策、闲聊或缺少购物意图 → 用 general_agent
 
 【前置条件】

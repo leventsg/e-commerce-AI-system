@@ -33,7 +33,7 @@ func NewRegisterLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Register
 func (l *RegisterLogic) Register(req *types.RegisterRequest) (resp *types.RegisterResponse, err error) {
 	// todo: add your logic here and delete this line
 
-	if req.Email == "" || req.Password == "" {
+	if req.Email == "" || req.Password == "" || req.Code == "" {
 		return nil, errors.New(code.LoginMessageEmpty, code.LoginMessageEmptyMsg)
 	}
 
@@ -57,6 +57,7 @@ func (l *RegisterLogic) Register(req *types.RegisterRequest) (resp *types.Regist
 		Email:           req.Email,
 		Password:        req.Password,
 		ConfirmPassword: req.ConfirmPassword,
+		Code:            req.Code,
 	})
 
 	if err != nil {

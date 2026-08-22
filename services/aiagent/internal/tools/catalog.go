@@ -9,6 +9,7 @@ import (
 	inventory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/inventory"
 	order "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/order"
 	product "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/product"
+	user "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/user"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 )
 
@@ -34,6 +35,11 @@ type CheckoutRPC interface {
 	checkout.CheckoutWriteRPC
 }
 
+type UserRPC interface {
+	user.UserQueryRPC
+	user.UserWriteRPC
+}
+
 type DefaultToolClients struct {
 	Product         product.ProductQueryRPC
 	Inventory       inventory.InventoryQueryRPC
@@ -52,6 +58,9 @@ type DefaultToolClients struct {
 	Checkout        CheckoutRPC
 	CheckoutQuery   checkout.CheckoutQueryRPC
 	CheckoutWrite   checkout.CheckoutWriteRPC
+	User            UserRPC
+	UserQuery       user.UserQueryRPC
+	UserWrite       user.UserWriteRPC
 }
 
 // 对工具注册表补充工具handler和确认摘要函数
@@ -95,6 +104,12 @@ func DefaultBusinessTools(clients DefaultToolClients, timeout config.ToolTimeout
 		checkoutQuery = clients.Checkout
 		checkoutWrite = clients.Checkout
 	}
+	userQuery := clients.UserQuery
+	userWrite := clients.UserWrite
+	if clients.User != nil {
+		userQuery = clients.User
+		userWrite = clients.User
+	}
 	mergeHandlers(handlers, product.ProductQueryHandlers(clients.Product))
 	mergeHandlers(handlers, inventory.InventoryQueryHandlers(clients.Inventory))
 	mergeHandlers(handlers, order.OrderQueryHandlers(orderQuery))
@@ -106,6 +121,8 @@ func DefaultBusinessTools(clients DefaultToolClients, timeout config.ToolTimeout
 	mergeHandlers(handlers, coupon.CouponWriteHandlers(couponWrite))
 	mergeHandlers(handlers, checkout.CheckoutQueryHandlers(checkoutQuery))
 	mergeHandlers(handlers, checkout.CheckoutWriteHandlers(checkoutWrite))
+	mergeHandlers(handlers, user.UserQueryHandlers(userQuery))
+	mergeHandlers(handlers, user.UserWriteHandlers(userWrite))
 
 	// 高风险操作的确认摘要函数
 	summaries := highRiskSummaryFuncs(clients, cartHighRisk, checkoutQuery, couponCalculate)

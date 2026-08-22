@@ -277,11 +277,15 @@ func rejectedAssistantContent(toolName string) string {
 	}
 }
 
-func completionErrorEvent(conversationID, message string, err error) *aiagent.AgentEvent {
+func completionErrorEvent(conversationID, message string, _ error) *aiagent.AgentEvent {
+	content := strings.TrimSpace(message)
+	if content == "" {
+		content = "确认服务暂时不可用，请稍后重试"
+	}
 	return &aiagent.AgentEvent{
 		Type:           domain.EventError,
 		ConversationId: conversationID,
-		Content:        fmt.Sprintf("%s：%v", message, err),
+		Content:        content,
 		Status:         "failed",
 		Done:           true,
 	}

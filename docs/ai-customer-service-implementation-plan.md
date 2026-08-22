@@ -21,9 +21,9 @@
 - SSE 实时聊天入口：`POST /douyin/ai/chat`
 - 多轮会话、消息持久化、工具调用记录。
 - 通过 Eino ChatModel 接入模型，首期配置兼容 OpenAI-compatible API 与 DeepSeek。
-- 查询工具：商品、库存、订单、优惠券、购物车、结算单。
+- 查询工具：商品、库存、订单、优惠券、购物车、结算单、当前用户资料、收货地址。
 - 推荐工具：商品推荐与商品搜索兜底。
-- 低风险写操作：添加购物车、减少购物车数量、领取优惠券。
+- 低风险写操作：添加购物车、减少购物车数量、领取优惠券、修改用户名/头像、添加收货地址、更新收货地址、删除收货地址。
 - 高风险写操作确认：删除购物车、创建订单、取消订单、使用优惠券下单。
 - 审计：工具调用、确认行为、所有写操作执行结果。
 - 降级：模型不可用、工具超时、业务 RPC 失败时返回明确失败，不伪造成功。
@@ -31,7 +31,7 @@
 不在首期强制交付：
 
 - 运营后台配置页面。
-- 支付、退款、地址修改等后续敏感操作。
+- 支付、退款、删除账号、登出、修改密码等后续敏感操作。
 - 复杂长期记忆推荐策略。长期用户上下文收敛为 `ai_user_profiles` 和 `ai_user_memory_events`。
 
 ## 2. 文件与模块规划
@@ -1375,6 +1375,44 @@ go test ./services/aiagent/... ./apis/ai/...
 12. Agent Run 与 Checkpoint：Task 20。
 13. 观测、清理和旧路径收敛：Task 21。
 14. 历史会话查询：Task 23。
+15. 用户资料与地址子 Agent：Task 24。
+
+### Task 24: user_agent 用户资料与地址管理
+
+**Files:**
+
+- Modify: `services/aiagent/internal/domain/tool.go`
+- Modify: `services/aiagent/internal/tools/catalog.go`
+- Modify: `services/aiagent/internal/tools/registry.go`
+- Create: `services/aiagent/internal/tools/business/user/user_tools.go`
+- Create: `services/aiagent/internal/prompts/tools/user.go`
+- Modify/Create: `services/aiagent/internal/prompts/agent/*user_agent*`
+- Modify: `services/aiagent/internal/eino/agent.go`
+- Modify: `services/aiagent/internal/config/config.go`
+- Modify: `services/aiagent/internal/svc/servicecontext.go`
+- Modify: `services/aiagent/etc/aiagent*.yaml`
+
+- [x] **Step 1: 注册用户域工具常量与 schema**
+
+新增 `user_get`、`user_update`、`address_list`、`address_get`、`address_add`、`address_update`、`address_delete`。工具 schema 不包含 `user_id`。
+
+- [x] **Step 2: 实现 users RPC handler**
+
+所有 handler 从 Execution Guard 注入的可信用户 ID 构造 `services/users` RPC 请求。账号删除、登出、改密码不暴露为 AI 工具。
+
+- [x] **Step 3: 注册 user_agent**
+
+新增 `user_agent` 描述和 system prompt，并将用户资料、用户名/头像、收货地址相关意图路由到该子 Agent。
+
+- [x] **Step 4: 风险策略**
+
+`user_get`、`address_list`、`address_get` 为只读；`user_update`、`address_add`、`address_update`、`address_delete` 为低风险写操作，无需 confirmation。工具失败不得总结为成功。
+
+- [x] **Step 5: 验证**
+
+```bash
+go test ./services/aiagent/...
+```
 
 每完成一个阶段执行：
 

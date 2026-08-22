@@ -47,6 +47,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 					Handler: DeleteHandler(serverCtx),
 				},
 				{
+					Method:  http.MethodPost,
+					Path:    "/email/code",
+					Handler: EmailCodeHandler(serverCtx),
+				},
+				{
 					Method:  http.MethodGet,
 					Path:    "/info",
 					Handler: GetInfoHandler(serverCtx),
@@ -60,6 +65,21 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 					Method:  http.MethodPost,
 					Path:    "/logout",
 					Handler: LogoutHandler(serverCtx),
+				},
+				{
+					Method:  http.MethodPut,
+					Path:    "/password",
+					Handler: UpdatePasswordHandler(serverCtx),
+				},
+				{
+					Method:  http.MethodPost,
+					Path:    "/password/code",
+					Handler: PasswordCodeHandler(serverCtx),
+				},
+				{
+					Method:  http.MethodPost,
+					Path:    "/password/reset",
+					Handler: ForgotPasswordHandler(serverCtx),
 				},
 				{
 					Method:  http.MethodPost,

@@ -6,6 +6,7 @@ type (
 		Email           string `json:"email"`
 		Password        string `json:"password"`
 		ConfirmPassword string `json:"confirmPassword"`
+		Code            string `json:"code"`
 	}
 	// 用户注册响应
 	RegisterResponse {
@@ -23,6 +24,26 @@ type (
 		RefreshToken string `json:"refresh_token"`
 	}
 	// 用户登出请求
+	EmailCodeRequest {
+		Email string `json:"email"`
+		Scene string `json:"scene"`
+	}
+	EmailCodeResponse  {}
+	ForgotPasswordRequest {
+		Email           string `json:"email"`
+		Code            string `json:"code"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirmPassword"`
+	}
+	ForgotPasswordResponse  {}
+	PasswordCodeRequest  {}
+	PasswordCodeResponse  {}
+	UpdatePasswordRequest {
+		Code            string `json:"code"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirmPassword"`
+	}
+	UpdatePasswordResponse  {}
 	LogoutRequest  {}
 	// 用户登出响应
 	LogoutResponse {
@@ -140,6 +161,18 @@ service user-api {
 
 	@handler LoginHandler
 	post /login (LoginRequest) returns (LoginResponse)
+
+	@handler EmailCodeHandler
+	post /email/code (EmailCodeRequest) returns (EmailCodeResponse)
+
+	@handler ForgotPasswordHandler
+	post /password/reset (ForgotPasswordRequest) returns (ForgotPasswordResponse)
+
+	@handler PasswordCodeHandler
+	post /password/code (PasswordCodeRequest) returns (PasswordCodeResponse)
+
+	@handler UpdatePasswordHandler
+	put /password (UpdatePasswordRequest) returns (UpdatePasswordResponse)
 
 	@handler LogoutHandler
 	post /logout (LogoutRequest) returns (LogoutResponse)

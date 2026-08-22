@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TraceStep, UIMessage } from '../../../frontend/src/types'
-import { applyAgentEvent, createClientMessageId, createConfirmActionPayload, finalizeStreamingMessages, serverConversationId } from '../../../frontend/src/hooks/useAgent'
+import { applyAgentEvent, createClientMessageId, createConfirmActionPayload, failRunningToolMessages, finalizeStreamingMessages, serverConversationId } from '../../../frontend/src/hooks/useAgent'
 
 describe('applyAgentEvent', () => {
   it('merges assistant deltas into one streaming assistant message', () => {
@@ -10,6 +10,145 @@ describe('applyAgentEvent', () => {
 
     expect(second.messages).toHaveLength(1)
     expect(second.messages[0]).toMatchObject({ type: 'assistant', content: '你好', streaming: true })
+  })
+
+  it('applies A2UI assistant data model updates as streaming content', () => {
+    const trace: TraceStep[] = []
+    const first = applyAgentEvent([], trace, {
+      type: 'a2ui',
+      conversation_id: 'conv-1',
+      data: {
+        version: 'a2ui.v1',
+        type: 'data_model_update',
+        component: 'assistant_answer',
+        component_id: 'msg-a2ui',
+        mode: 'append',
+        content: '你',
+      },
+      done: false,
+    }, 1, '', 'conv-1')
+    const second = applyAgentEvent(first.messages, trace, {
+      type: 'a2ui',
+      conversation_id: 'conv-1',
+      data: {
+        version: 'a2ui.v1',
+        type: 'data_model_update',
+        component: 'assistant_answer',
+        component_id: 'msg-a2ui',
+        mode: 'append',
+        content: '好',
+      },
+      done: false,
+    }, 2, first.assistantMessageId, 'conv-1')
+    const done = applyAgentEvent(second.messages, trace, {
+      type: 'a2ui',
+      conversation_id: 'conv-1',
+      data: {
+        version: 'a2ui.v1',
+        type: 'data_model_update',
+        component: 'assistant_answer',
+        component_id: 'msg-a2ui',
+        mode: 'done',
+        done: true,
+      },
+      done: true,
+    }, 3, second.assistantMessageId, 'conv-1')
+
+    expect(done.messages).toHaveLength(1)
+    expect(done.messages[0]).toMatchObject({ id: 'msg-a2ui', type: 'assistant', content: '你好', streaming: false })
+  })
+
+  it('applies A2UI tool updates with structured details', () => {
+    const trace: TraceStep[] = []
+    const progress = applyAgentEvent([], trace, {
+      type: 'a2ui',
+      conversation_id: 'conv-1',
+      data: {
+        version: 'a2ui.v1',
+        type: 'surface_update',
+        component: 'tool_call',
+        component_id: 'tool-1',
+        tool: 'product_search',
+        status: 'running',
+        content: '正在查询商品...',
+        data_json: '{"keyword":"耳机"}',
+      },
+      done: false,
+    }, 1)
+    const result = applyAgentEvent(progress.messages, trace, {
+      type: 'a2ui',
+      conversation_id: 'conv-1',
+      data: {
+        version: 'a2ui.v1',
+        type: 'surface_update',
+        component: 'tool_call',
+        component_id: 'tool-1',
+        tool: 'product_search',
+        status: 'success',
+        content: '找到 2 件商品。',
+        data_json: '{"total":2}',
+        done: true,
+      },
+      done: true,
+    }, 2)
+
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0]).toMatchObject({
+      id: 'tool_tool-1',
+      type: 'tool-result',
+      toolName: 'product_search',
+      toolStatus: 'success',
+      content: '找到 2 件商品。',
+      dataJson: '{"total":2}',
+    })
+  })
+
+  it('marks running A2UI tools as failed when an error event arrives', () => {
+    const trace: TraceStep[] = []
+    const progress = applyAgentEvent([], trace, {
+      type: 'a2ui',
+      conversation_id: 'conv-1',
+      data: {
+        version: 'a2ui.v1',
+        type: 'surface_update',
+        component: 'tool_call',
+        component_id: 'tool-1',
+        tool: 'address_add',
+        status: 'running',
+        content: '正在处理地址...',
+      },
+      done: false,
+    }, 1, '', 'conv-1')
+    const failed = applyAgentEvent(progress.messages, trace, {
+      type: 'error',
+      conversation_id: 'conv-1',
+      message_id: 'err-1',
+      content: '业务结果已产生，但模型总结失败，请勿重复操作',
+      done: true,
+    }, 2, progress.assistantMessageId, 'conv-1')
+
+    expect(failed.messages.find(message => message.id === 'tool_tool-1')).toMatchObject({
+      type: 'tool-result',
+      toolStatus: 'failed',
+    })
+    expect(failed.messages.find(message => message.id === 'err-1')).toMatchObject({
+      type: 'error',
+      content: '业务结果已产生，但模型总结失败，请勿重复操作',
+    })
+  })
+
+  it('fails running tool messages when a stream closes without a tool result', () => {
+    const finalized = failRunningToolMessages([{
+      id: 'tool-1',
+      type: 'tool-result',
+      content: '正在处理地址...',
+      timestamp: 1,
+      toolName: 'address_add',
+      toolStatus: 'running',
+      conversationId: 'conv-1',
+    }], 'conv-1')
+
+    expect(finalized[0]).toMatchObject({ toolStatus: 'failed', content: '工具调用中断，请稍后重试' })
   })
 
   it('keeps thinking deltas separate from final assistant content', () => {

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
@@ -33,7 +34,7 @@ func NewConversationValues(meta ConversationMetadata) map[string]any {
 		ConversationValueKeyRunID:            meta.RunID,
 		ConversationValueKeyCurrentMessageID: meta.CurrentMessageID,
 		ConversationValueKeyClientMessageID:  meta.ClientMessageID,
-		ConversationValueKeyRAGContext:       meta.RAGContext,
+		ConversationValueKeyRAGContext:       ragContextValue(meta.RAGContext),
 	}
 }
 
@@ -63,6 +64,17 @@ func ConversationMetadataFromMap(values map[string]any) (ConversationMetadata, b
 }
 
 func ragContextFromValue(value any) []domain.ContextMessage {
+	// 反序列化
+	if raw, ok := value.(string); ok {
+		if raw == "" {
+			return nil
+		}
+		var result []domain.ContextMessage
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			return nil
+		}
+		return result
+	}
 	items, ok := value.([]interface{})
 	if !ok {
 		if direct, ok := value.([]domain.ContextMessage); ok {
@@ -77,6 +89,18 @@ func ragContextFromValue(value any) []domain.ContextMessage {
 		}
 	}
 	return result
+}
+
+// 序列化 RAG Context
+func ragContextValue(messages []domain.ContextMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(messages)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func ContextWithConversationMetadata(ctx context.Context, meta ConversationMetadata) context.Context {

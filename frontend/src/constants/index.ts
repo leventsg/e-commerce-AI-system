@@ -32,6 +32,13 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   coupon_my_list: '我的优惠券',
   coupon_usage_list: '使用记录',
   coupon_calculate: '试算优惠',
+  user_get: '用户资料查询',
+  user_update: '用户资料更新',
+  address_list: '地址列表',
+  address_get: '地址详情',
+  address_add: '新增收货地址',
+  address_update: '更新收货地址',
+  address_delete: '删除收货地址',
 }
 
 /** 工具图标（emoji） */
@@ -43,6 +50,9 @@ export const TOOL_ICONS: Record<string, string> = {
   cart_list: '🛒', cart_add: '➕', cart_sub: '➖', cart_delete: '🗑️',
   coupon_list: '🎫', coupon_detail: '🎟️', coupon_claim: '🎁',
   coupon_my_list: '🎫', coupon_usage_list: '📜', coupon_calculate: '🧮',
+  user_get: '👤', user_update: '✏️',
+  address_list: '📍', address_get: '🏠', address_add: '➕',
+  address_update: '📝', address_delete: '🗑️',
 }
 
 /** 子 Agent 定义 */
@@ -51,6 +61,7 @@ export const SUB_AGENTS = [
   { name: 'order_agent', display: '订单 Agent', tools: ['order_get','order_list','order_cancel'] },
   { name: 'cart_checkout_agent', display: '购物车结算 Agent', tools: ['cart_list','cart_add','cart_sub','cart_delete','checkout_prepare','checkout_detail','order_create'] },
   { name: 'coupon_agent', display: '优惠券 Agent', tools: ['coupon_list','coupon_detail','coupon_claim','coupon_my_list','coupon_usage_list','coupon_calculate'] },
+  { name: 'user_agent', display: '用户 Agent', tools: ['user_get','user_update','address_list','address_get','address_add','address_update','address_delete'] },
 ]
 
 /** 高风险工具列表 */

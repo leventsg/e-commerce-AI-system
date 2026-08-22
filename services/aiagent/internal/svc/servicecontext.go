@@ -32,6 +32,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/inventory/inventoryclient"
 	"github.com/leventsg/e-commerce-AI-system/services/order/orderservice"
 	"github.com/leventsg/e-commerce-AI-system/services/product/productcatalogservice"
+	"github.com/leventsg/e-commerce-AI-system/services/users/usersclient"
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -57,6 +58,7 @@ type ServiceContext struct {
 	CheckoutRpc           checkoutservice.CheckoutService
 	CartRpc               cartsclient.Cart
 	CouponRpc             couponsclient.Coupons
+	UserRpc               usersclient.Users
 	AuditRpc              auditclient.Audit
 	ToolRegistry          *aitools.Registry
 	ToolExecutor          *aitools.Executor
@@ -81,6 +83,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	checkoutRPC := checkoutservice.NewCheckoutService(zrpc.MustNewClient(c.CheckoutRpc))
 	cartRPC := cartsclient.NewCart(zrpc.MustNewClient(c.CartRpc))
 	couponRPC := couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponRpc))
+	userRPC := usersclient.NewUsers(zrpc.MustNewClient(c.UserRpc))
 	auditRPC := auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc))
 	redisClient := redis.MustNewRedis(c.RedisConf)
 	toolCallsModel := aitoolcalls.NewAiToolCallsModel(mysql, c.Cache)
@@ -143,6 +146,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Cart:           cartRPC,
 		Coupon:         couponRPC,
 		Checkout:       checkoutRPC,
+		User:           userRPC,
 	}, c.ToolTimeout)
 	// 非业务工具实例集合
 	capabilityTools := aitools.DefaultCapabilityTools(aitools.CapabilityDeps{
@@ -203,6 +207,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CheckoutRpc:           checkoutRPC,
 		CartRpc:               cartRPC,
 		CouponRpc:             couponRPC,
+		UserRpc:               userRPC,
 		AuditRpc:              auditRPC,
 		ToolRegistry:          toolRegistry,
 		ToolExecutor:          toolExecutor,

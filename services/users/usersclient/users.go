@@ -23,6 +23,8 @@ type (
 	DeleteAddressResponse  = users.DeleteAddressResponse
 	DeleteUserRequest      = users.DeleteUserRequest
 	DeleteUserResponse     = users.DeleteUserResponse
+	EmailCodeRequest       = users.EmailCodeRequest
+	EmailCodeResponse      = users.EmailCodeResponse
 	GetAddressRequest      = users.GetAddressRequest
 	GetAddressResponse     = users.GetAddressResponse
 	GetUserRequest         = users.GetUserRequest
@@ -34,6 +36,8 @@ type (
 	RegisterRequest        = users.RegisterRequest
 	RegisterResponse       = users.RegisterResponse
 	Request                = users.Request
+	ResetPasswordRequest   = users.ResetPasswordRequest
+	ResetPasswordResponse  = users.ResetPasswordResponse
 	Response               = users.Response
 	UpdateAddressRequest   = users.UpdateAddressRequest
 	UpdateAddressResponse  = users.UpdateAddressResponse
@@ -63,6 +67,8 @@ type (
 		ListAddresses(ctx context.Context, in *AllAddressLitstRequest, opts ...grpc.CallOption) (*AddressListResponse, error)
 		// 获取单个收货地址
 		GetAddress(ctx context.Context, in *GetAddressRequest, opts ...grpc.CallOption) (*GetAddressResponse, error)
+		SendEmailCode(ctx context.Context, in *EmailCodeRequest, opts ...grpc.CallOption) (*EmailCodeResponse, error)
+		ResetPassword(ctx context.Context, in *ResetPasswordRequest, opts ...grpc.CallOption) (*ResetPasswordResponse, error)
 	}
 
 	defaultUsers struct {
@@ -144,4 +150,14 @@ func (m *defaultUsers) ListAddresses(ctx context.Context, in *AllAddressLitstReq
 func (m *defaultUsers) GetAddress(ctx context.Context, in *GetAddressRequest, opts ...grpc.CallOption) (*GetAddressResponse, error) {
 	client := users.NewUsersClient(m.cli.Conn())
 	return client.GetAddress(ctx, in, opts...)
+}
+
+func (m *defaultUsers) SendEmailCode(ctx context.Context, in *EmailCodeRequest, opts ...grpc.CallOption) (*EmailCodeResponse, error) {
+	client := users.NewUsersClient(m.cli.Conn())
+	return client.SendEmailCode(ctx, in, opts...)
+}
+
+func (m *defaultUsers) ResetPassword(ctx context.Context, in *ResetPasswordRequest, opts ...grpc.CallOption) (*ResetPasswordResponse, error) {
+	client := users.NewUsersClient(m.cli.Conn())
+	return client.ResetPassword(ctx, in, opts...)
 }

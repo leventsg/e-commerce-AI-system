@@ -17,7 +17,7 @@ interface AuthState {
   username: string | null
   isAuthenticated: boolean
   loginWithPassword: (email: string, password: string) => Promise<void>
-  registerWithPassword: (email: string, password: string, confirmPassword: string) => Promise<void>
+  registerWithPassword: (email: string, password: string, confirmPassword: string, code: string) => Promise<void>
   setTokens: (tokens: AuthTokens) => void
   logout: () => void
 }
@@ -95,8 +95,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     await completePasswordAuth(email, tokens)
   }, [completePasswordAuth])
 
-  const registerWithPassword = useCallback(async (email: string, password: string, confirmPassword: string) => {
-    const tokens = await register({ email, password, confirmPassword })
+  const registerWithPassword = useCallback(async (email: string, password: string, confirmPassword: string, code: string) => {
+    const tokens = await register({ email, password, confirmPassword, code })
     await completePasswordAuth(email, tokens)
   }, [completePasswordAuth])
 

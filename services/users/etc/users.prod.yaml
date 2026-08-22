@@ -51,6 +51,17 @@ RedisConf:
   Host: ${REDIS_HOST}
   Pass: ${REDIS_PASSWORD}
   Tls: false
+EmailCode:
+  TTLSeconds: 300
+  ResendCooldown: 60
+  Enabled: ${EMAIL_CODE_ENABLED}
+  SMTPHost: ${SMTP_HOST}
+  SMTPPort: ${SMTP_PORT}
+  SMTPUsername: ${SMTP_USERNAME}
+  SMTPPassword: ${SMTP_PASSWORD}
+  SMTPFrom: ${SMTP_FROM}
+  SMTPDisplayName: "go-mall"
+  SMTPTLS: ${SMTP_TLS}
 GorseConfig:
  GorseAddr: ${GORSE HOST}
  GorseApikey: ${GORSE_APIKEY}

@@ -63,7 +63,6 @@ func (am *APIManager) startAPIs(dirName, ext string) error {
 		fileName := fmt.Sprintf("%s.%s", apiName, ext)
 		cmd := exec.Command("go", "run", fileName)
 		cmd.Dir = dir
-		setProcessGroup(cmd)
 
 		logDir := filepath.Join(am.rootPath, "devlog", "process")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -135,9 +134,6 @@ func (am *APIManager) handleSignals() {
 		am.stopProcesses()
 		os.Exit(0)
 	}
-}
-
-func setProcessGroup(cmd *exec.Cmd) {
 }
 
 func killProcessTree(cmd *exec.Cmd) {

@@ -92,3 +92,13 @@ func (s *UsersServer) GetAddress(ctx context.Context, in *users.GetAddressReques
 	l := logic.NewGetAddressLogic(ctx, s.svcCtx)
 	return l.GetAddress(in)
 }
+
+func (s *UsersServer) SendEmailCode(ctx context.Context, in *users.EmailCodeRequest) (*users.EmailCodeResponse, error) {
+	l := logic.NewSendEmailCodeLogic(ctx, s.svcCtx)
+	return l.SendEmailCode(in)
+}
+
+func (s *UsersServer) ResetPassword(ctx context.Context, in *users.ResetPasswordRequest) (*users.ResetPasswordResponse, error) {
+	l := logic.NewResetPasswordLogic(ctx, s.svcCtx)
+	return l.ResetPassword(in)
+}

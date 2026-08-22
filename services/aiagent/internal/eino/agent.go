@@ -3,6 +3,7 @@ package eino
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -101,6 +102,11 @@ type agentSpec struct {
 	tools       []string
 }
 
+type pendingToolCall struct {
+	messageID string
+	toolName  string
+}
+
 var supervisorSubAgentSpecs = []agentSpec{
 	{
 		name:        "product_agent",
@@ -130,6 +136,15 @@ var supervisorSubAgentSpecs = []agentSpec{
 		tools: []string{
 			domain.ToolCouponList, domain.ToolCouponDetail, domain.ToolCouponClaim,
 			domain.ToolCouponMyList, domain.ToolCouponUsageList, domain.ToolCouponCalculate,
+		},
+	},
+	{
+		name:        "user_agent",
+		description: agentprompt.UserAgentDesc,
+		instruction: agentprompt.UserAgentSystemPrompt,
+		tools: []string{
+			domain.ToolUserGet, domain.ToolUserUpdate,
+			domain.ToolAddressList, domain.ToolAddressGet, domain.ToolAddressAdd, domain.ToolAddressUpdate, domain.ToolAddressDelete,
 		},
 	},
 	{
@@ -398,7 +413,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 	hasAny := false
 	businessExecuted := false
 	previousAgentName := ""
-	toolMessageIDs := make(map[string]string)
+	toolMessageIDs := make(map[string]pendingToolCall)
 	send := func(event domain.AgentEvent) error {
 		hasAny = true
 		if event.Type == domain.EventAssistantMessage || event.Type == domain.EventAssistantDelta {
@@ -414,11 +429,11 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		if key == "" {
 			return newAgentMessageID(), true
 		}
-		if existing := toolMessageIDs[key]; existing != "" {
-			return existing, false
+		if existing := toolMessageIDs[key]; existing.messageID != "" {
+			return existing.messageID, false
 		}
 		messageID := newAgentMessageID()
-		toolMessageIDs[key] = messageID
+		toolMessageIDs[key] = pendingToolCall{messageID: messageID, toolName: toolName}
 		return messageID, true
 	}
 	finishToolCall := func(toolCallID, toolName string) (string, bool) {
@@ -426,12 +441,30 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 		if key == "" {
 			return newAgentMessageID(), false
 		}
-		messageID := toolMessageIDs[key]
-		if messageID == "" {
+		pending := toolMessageIDs[key]
+		if pending.messageID == "" {
 			return newAgentMessageID(), false
 		}
 		delete(toolMessageIDs, key)
-		return messageID, true
+		return pending.messageID, true
+	}
+	failPendingToolCalls := func() {
+		for key, pending := range toolMessageIDs {
+			if pending.messageID == "" || pending.toolName == "" {
+				delete(toolMessageIDs, key)
+				continue
+			}
+			_ = send(a2uiToolUpdate(
+				req.ConversationID,
+				pending.messageID,
+				pending.toolName,
+				"failed",
+				"工具调用中断，请稍后重试",
+				`{"error":"agent_interrupted"}`,
+				true,
+			))
+			delete(toolMessageIDs, key)
+		}
 	}
 	for {
 		event, ok := iter.Next()
@@ -446,12 +479,14 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			logx.Infow("agent 切换", append(baseAgentLogFields(req), logx.Field("stage", "agent_transition"), logx.Field("agent_name", agentName), logx.Field("previous_agent_name", previousAgentName))...)
 			previousAgentName = agentName
 		}
+		// 错误处理
 		if event.Err != nil {
 			logx.Errorw("ai agent iterator error", append(baseAgentLogFields(req), logx.Field("agent_name", agentName), logx.Field("err", event.Err))...)
-			content := fmt.Sprintf("AI 服务暂时不可用，请稍后重试：%v", event.Err)
+			failPendingToolCalls()
+			content := "AI 服务暂时不可用，请稍后重试"
 			dataJSON := ""
 			if businessExecuted {
-				content = fmt.Sprintf("业务结果已产生，但模型总结失败，请勿重复操作：%v", event.Err)
+				content = "业务结果已产生，但模型总结失败，请勿重复操作"
 				dataJSON = `{"business_executed":true}`
 			}
 			_ = send(domain.AgentEvent{
@@ -476,7 +511,7 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 					Type:           domain.EventError,
 					ConversationID: req.ConversationID,
 					MessageID:      newAgentMessageID(),
-					Content:        fmt.Sprintf("确认请求创建失败：%v", err),
+					Content:        "确认请求创建失败，请稍后重试",
 					Status:         "failed",
 					Done:           true,
 				})
@@ -484,11 +519,13 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			}
 			if ok {
 				logx.Infow("触发中断", append(baseAgentLogFields(req), logx.Field("agent_name", agentName), logx.Field("confirmation_id", domainEvent.ConfirmationID), logx.Field("tool", domainEvent.Tool), logx.Field("confirmation_data", domainEvent.DataJSON))...)
+				_ = send(a2uiConfirmation(req.ConversationID, domainEvent.MessageID, domainEvent.ConfirmationID, domainEvent.Tool, domainEvent.Summary, domainEvent.DataJSON, domainEvent.ExpiresAt))
 				_ = send(domainEvent)
 			}
 			return
 		}
 		hasAny = true
+		// 处理模型/工具事件
 		_, stop := r.handleIteratorAgentEvent(event, req, send, startToolCall, finishToolCall, func() {
 			businessExecuted = true
 		})
@@ -513,13 +550,18 @@ func (r *agent) handleIteratorAgentEvent(event *adk.AgentEvent, req RunRequest, 
 	if event == nil || event.Output == nil || event.Output.MessageOutput == nil {
 		return false, false
 	}
+	output := event.Output.MessageOutput
+	if output.IsStreaming && output.MessageStream != nil {
+		return r.handleIteratorStreamingMessage(event, req, send, startToolCall, markBusinessExecuted)
+	}
 	message, _, err := adk.GetMessage(event)
 	if err != nil {
+		logx.Errorw("ai agent message read failed", append(baseAgentLogFields(req), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("err", err))...)
 		_ = send(domain.AgentEvent{
 			Type:           domain.EventError,
 			ConversationID: req.ConversationID,
 			MessageID:      newAgentMessageID(),
-			Content:        fmt.Sprintf("模型/工具事件读取失败：%v", err),
+			Content:        "AI 服务暂时不可用，请稍后重试",
 			Status:         "failed",
 			Done:           true,
 		})
@@ -528,7 +570,6 @@ func (r *agent) handleIteratorAgentEvent(event *adk.AgentEvent, req RunRequest, 
 	if message == nil {
 		return false, false
 	}
-	output := event.Output.MessageOutput
 	role := output.Role
 	if role == "" {
 		role = message.Role
@@ -543,13 +584,127 @@ func (r *agent) handleIteratorAgentEvent(event *adk.AgentEvent, req RunRequest, 
 	}
 }
 
+func (r *agent) handleIteratorStreamingMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), markBusinessExecuted func()) (handled bool, stop bool) {
+	output := event.Output.MessageOutput
+	if output == nil || output.MessageStream == nil {
+		return false, false
+	}
+	role := output.Role
+	finalMessageID := newAgentMessageID()
+	thinkingMessageID := newAgentMessageID()
+	var finalContent strings.Builder
+	hasFinalContent := false
+	hasThinking := false
+	for {
+		chunk, err := output.MessageStream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			logx.Errorw("ai agent message stream read failed", append(baseAgentLogFields(req), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("err", err))...)
+			_ = send(domain.AgentEvent{
+				Type:           domain.EventError,
+				ConversationID: req.ConversationID,
+				MessageID:      newAgentMessageID(),
+				Content:        "AI 服务暂时不可用，请稍后重试",
+				Status:         "failed",
+				Done:           true,
+			})
+			return true, true
+		}
+		if chunk == nil {
+			continue
+		}
+		if role == "" {
+			role = chunk.Role
+		}
+		if shouldExposeIteratorReasoning(event.AgentName) {
+			if reasoning := reasoningContent(chunk); reasoning != "" {
+				_ = send(a2uiThinkingDelta(req.ConversationID, thinkingMessageID, reasoning))
+				_ = send(domain.AgentEvent{
+					Type:           domain.EventAssistantThinkingDelta,
+					ConversationID: req.ConversationID,
+					Content:        reasoning,
+					Done:           false,
+				})
+				hasThinking = true
+				handled = true
+			}
+		}
+		if len(chunk.ToolCalls) > 0 {
+			for _, toolCall := range chunk.ToolCalls {
+				toolName := strings.TrimSpace(toolCall.Function.Name)
+				if toolName == "" || isAgentToolName(toolName) {
+					continue
+				}
+				messageID, started := startToolCall(toolCall.ID, toolName)
+				if !started {
+					continue
+				}
+				dataJSON := ensureJSONObject(toolCall.Function.Arguments)
+				content := toolProgressContent(toolName)
+				_ = send(a2uiToolUpdate(req.ConversationID, messageID, toolName, "running", content, dataJSON, false))
+				_ = send(domain.AgentEvent{
+					Type:           domain.EventToolProgress,
+					ConversationID: req.ConversationID,
+					MessageID:      messageID,
+					Tool:           toolName,
+					Status:         "running",
+					Content:        content,
+					DataJSON:       dataJSON,
+					Done:           false,
+				})
+				handled = true
+			}
+		}
+		content := chunk.Content
+		if content == "" || (event.AgentName != "" && event.AgentName != supervisorAgentName) {
+			continue
+		}
+		finalContent.WriteString(content)
+		hasFinalContent = true
+		_ = send(a2uiAssistantDelta(req.ConversationID, finalMessageID, content))
+		_ = send(domain.AgentEvent{
+			Type:           domain.EventAssistantDelta,
+			ConversationID: req.ConversationID,
+			MessageID:      finalMessageID,
+			Content:        content,
+			Done:           false,
+		})
+		handled = true
+	}
+	if hasFinalContent {
+		content := strings.TrimSpace(finalContent.String())
+		_ = send(a2uiAssistantDone(req.ConversationID, finalMessageID))
+		_ = send(domain.AgentEvent{
+			Type:           domain.EventAssistantMessage,
+			ConversationID: req.ConversationID,
+			MessageID:      finalMessageID,
+			Content:        content,
+			DataJSON:       sourcesDataJSON(req.RAGSources),
+			Done:           true,
+		})
+		return true, false
+	}
+	if hasThinking {
+		return true, false
+	}
+	if role == schema.Tool {
+		return false, false
+	}
+	return handled, false
+}
+
 func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), message *schema.Message) (handled bool, stop bool) {
 	if message == nil {
 		return false, false
 	}
+	// 思考过程
 	if shouldExposeIteratorReasoning(event.AgentName) {
 		if reasoning := reasoningContent(message); reasoning != "" {
 			logx.Infow("ai agent reasoning event", append(baseAgentLogFields(req), logx.Field("stage", "assistant_thinking"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("reasoning_length", len(reasoning)))...)
+			thinkingMessageID := newAgentMessageID()
+			_ = send(a2uiThinkingDelta(req.ConversationID, thinkingMessageID, reasoning))
 			_ = send(domain.AgentEvent{
 				Type:           domain.EventAssistantThinkingDelta,
 				ConversationID: req.ConversationID,
@@ -559,6 +714,7 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 			handled = true
 		}
 	}
+	// 工具调用
 	if len(message.ToolCalls) > 0 {
 		for _, toolCall := range message.ToolCalls {
 			toolName := strings.TrimSpace(toolCall.Function.Name)
@@ -577,14 +733,17 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 			if !started {
 				continue
 			}
+			progressContent := toolProgressContent(toolName)
+			progressDataJSON := ensureJSONObject(toolCall.Function.Arguments)
+			_ = send(a2uiToolUpdate(req.ConversationID, messageID, toolName, "running", progressContent, progressDataJSON, false))
 			_ = send(domain.AgentEvent{
 				Type:           domain.EventToolProgress,
 				ConversationID: req.ConversationID,
 				MessageID:      messageID,
 				Tool:           toolName,
 				Status:         "running",
-				Content:        toolProgressContent(toolName),
-				DataJSON:       ensureJSONObject(toolCall.Function.Arguments),
+				Content:        progressContent,
+				DataJSON:       progressDataJSON,
 				Done:           false,
 			})
 			handled = true
@@ -598,11 +757,15 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 	if event.AgentName != "" && event.AgentName != supervisorAgentName {
 		return handled, false
 	}
+	// 最终模型输出结果
 	logx.Infow("发送最终助手消息", append(baseAgentLogFields(req), logx.Field("stage", "assistant_message"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("content_length", len(content)))...)
+	messageID := newAgentMessageID()
+	_ = send(a2uiAssistantDelta(req.ConversationID, messageID, content))
+	_ = send(a2uiAssistantDone(req.ConversationID, messageID))
 	_ = send(domain.AgentEvent{
 		Type:           domain.EventAssistantMessage,
 		ConversationID: req.ConversationID,
-		MessageID:      newAgentMessageID(),
+		MessageID:      messageID,
 		Content:        content,
 		DataJSON:       sourcesDataJSON(req.RAGSources),
 		Done:           true,
@@ -645,6 +808,7 @@ func (r *agent) handleIteratorToolMessage(event *adk.AgentEvent, req RunRequest,
 	if businessExecuted {
 		markBusinessExecuted()
 	}
+	_ = send(a2uiToolUpdate(req.ConversationID, messageID, toolName, status, iteratorToolResultSummary(toolName, content, envelope), ensureJSONObject(content), true))
 	_ = send(domain.AgentEvent{
 		Type:             domain.EventToolResult,
 		ConversationID:   req.ConversationID,

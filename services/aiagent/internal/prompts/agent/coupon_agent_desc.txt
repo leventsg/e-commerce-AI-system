@@ -11,6 +11,7 @@
 - 用户要搜索/推荐商品、查商品详情或库存 → 用 product_agent
 - 用户要修改购物车、准备结算、提交订单 → 用 cart_checkout_agent
 - 用户要查询/取消已创建订单 → 用 order_agent
+- 用户要查询或管理用户资料、用户名、头像、收货地址 → 用 user_agent
 - 用户问非优惠券的平台规则、售后说明、闲聊 → 用 general_agent
 
 【前置条件】

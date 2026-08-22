@@ -8,6 +8,7 @@ const (
 	EventToolProgress           = "tool_progress"
 	EventConfirmationRequired   = "confirmation_required"
 	EventError                  = "error"
+	EventA2UI                   = "a2ui"
 )
 
 type AgentEvent struct {

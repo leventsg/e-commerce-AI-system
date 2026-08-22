@@ -1,0 +1,28 @@
+package handler
+
+import (
+	"net/http"
+
+	"github.com/leventsg/e-commerce-AI-system/apis/user/internal/logic"
+	"github.com/leventsg/e-commerce-AI-system/apis/user/internal/svc"
+	"github.com/leventsg/e-commerce-AI-system/apis/user/internal/types"
+	"github.com/zeromicro/go-zero/rest/httpx"
+)
+
+func UpdatePasswordHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.UpdatePasswordRequest
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+
+		l := logic.NewUpdatePasswordLogic(r.Context(), svcCtx)
+		resp, err := l.UpdatePassword(&req)
+		if err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+		} else {
+			httpx.OkJsonCtx(r.Context(), w, resp)
+		}
+	}
+}

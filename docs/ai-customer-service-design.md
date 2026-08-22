@@ -232,6 +232,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - order_agent：订单查询、订单列表、取消订单确认。
 - cart_checkout_agent：购物车、结算、创建订单确认。
 - coupon_agent：优惠券查询、领取、我的券、优惠计算。
+- user_agent：用户资料查询、用户名/头像修改、收货地址查询、新增、更新、删除。
 - general_agent：普通客服解释、闲聊、无法归类问题。
 
 实现方式：
@@ -268,6 +269,13 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - coupon_my_list
 - coupon_usage_list
 - coupon_calculate
+- user_get
+- user_update
+- address_list
+- address_get
+- address_add
+- address_update
+- address_delete
 
 每个工具需要定义：
 - 工具名称。
@@ -288,6 +296,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - `order_create` 接收必填 `pre_order_id`、`address_id`，`coupon_id` 可选；支付方式固定为支付宝，工具不接收 `payment_method`。
 - 高风险 Tool 的普通 Eino 调用在 ChatModelAgent middleware 中创建确认记录后调用官方 `tool.StatefulInterrupt` 中断，不调用业务 RPC。只有结构化 `ConfirmAction` 携带 `confirmation_id`，成功领取 `pending -> approved` 后，服务端才使用 `runner.ResumeWithParams` 恢复同一次工具调用，并通过同一个 Execution Guard 调用业务 RPC；`pending -> rejected` 是确定性终态，由后端直接返回取消结果，不恢复 checkpoint，不调用 LLM。
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
+- 用户资料与地址工具由 `user_agent` 绑定，统一通过 `services/users` RPC 执行。`user_get`、`address_list`、`address_get` 为只读；`user_update`、`address_add`、`address_update`、`address_delete` 为低风险写操作，无需确认。账号删除、登出、修改密码不纳入 AI 工具范围。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
 
 ### 3.7 Execution Guard / Engine

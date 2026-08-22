@@ -17,6 +17,7 @@ message RegisterRequest {
   string password = 2;
   string confirm_password = 3;
   string ip=4;
+  string code = 5;
 }
 
 // 定义注册响应消息
@@ -213,6 +214,33 @@ message GetAddressRequest {
   int32 address_id = 2;
 }
 
+message EmailCodeRequest {
+  string email = 1;
+  string scene = 2;
+  uint32 user_id = 3;
+  string ip = 4;
+}
+
+message EmailCodeResponse {
+  uint32 status_code = 1;
+  string status_msg = 2;
+}
+
+message ResetPasswordRequest {
+  string email = 1;
+  string code = 2;
+  string password = 3;
+  string confirm_password = 4;
+  uint32 user_id = 5;
+  string scene = 6;
+  string ip = 7;
+}
+
+message ResetPasswordResponse {
+  uint32 status_code = 1;
+  string status_msg = 2;
+}
+
 
 
 service Users {
@@ -244,6 +272,10 @@ service Users {
     
     // 获取单个收货地址
     rpc GetAddress (GetAddressRequest) returns (GetAddressResponse);
+
+    rpc SendEmailCode (EmailCodeRequest) returns (EmailCodeResponse);
+
+    rpc ResetPassword (ResetPasswordRequest) returns (ResetPasswordResponse);
 
 
 }

@@ -149,7 +149,7 @@ func TestConsumeEventsEmitsRootFinalAssistantOnly(t *testing.T) {
 	}
 }
 
-func TestConsumeEventsDoesNotEmitAssistantDeltaForStreamingContent(t *testing.T) {
+func TestConsumeEventsEmitsAssistantDeltaForStreamingContent(t *testing.T) {
 	reader, writer := schema.Pipe[*schema.Message](2)
 	writer.Send(&schema.Message{Role: schema.Assistant, Content: "你"}, nil)
 	writer.Send(&schema.Message{Role: schema.Assistant, Content: "好"}, nil)
@@ -164,14 +164,49 @@ func TestConsumeEventsDoesNotEmitAssistantDeltaForStreamingContent(t *testing.T)
 		}},
 	}})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want final assistant only; events=%+v", len(events), events)
+	if len(events) != 3 {
+		t.Fatalf("events len = %d, want two deltas and final assistant; events=%+v", len(events), events)
 	}
-	if events[0].Type == domain.EventAssistantDelta {
-		t.Fatalf("event = %+v, ordinary streaming content must not become assistant_delta", events[0])
+	if events[0].Type != domain.EventAssistantDelta || events[0].Content != "你" || events[0].Done {
+		t.Fatalf("first event = %+v, want assistant delta", events[0])
 	}
-	if events[0].Type != domain.EventAssistantMessage || events[0].Content != "你好" {
-		t.Fatalf("event = %+v, want final assistant from iterator stream", events[0])
+	if events[1].Type != domain.EventAssistantDelta || events[1].Content != "好" || events[1].Done {
+		t.Fatalf("second event = %+v, want assistant delta", events[1])
+	}
+	if events[2].Type != domain.EventAssistantMessage || events[2].Content != "你好" || !events[2].Done {
+		t.Fatalf("final event = %+v, want final assistant from iterator stream", events[2])
+	}
+}
+
+func TestConsumeEventsEmitsA2UIDataUpdatesForStreamingContent(t *testing.T) {
+	reader, writer := schema.Pipe[*schema.Message](2)
+	writer.Send(&schema.Message{Role: schema.Assistant, Content: "你"}, nil)
+	writer.Send(&schema.Message{Role: schema.Assistant, Content: "好"}, nil)
+	writer.Close()
+
+	events := consumeRawTestAgentEvents(t, []*adk.AgentEvent{{
+		AgentName: supervisorAgentName,
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			IsStreaming:   true,
+			MessageStream: reader,
+			Role:          schema.Assistant,
+		}},
+	}})
+
+	var a2uiEvents []domain.AgentEvent
+	for _, event := range events {
+		if event.Type == domain.EventA2UI {
+			a2uiEvents = append(a2uiEvents, event)
+		}
+	}
+	if len(a2uiEvents) != 3 {
+		t.Fatalf("a2ui events len = %d, want two chunks and done; events=%+v", len(a2uiEvents), a2uiEvents)
+	}
+	if !strings.Contains(a2uiEvents[0].DataJSON, `"component":"assistant_answer"`) || !strings.Contains(a2uiEvents[0].DataJSON, `"content":"你"`) {
+		t.Fatalf("first a2ui event = %+v, want assistant chunk", a2uiEvents[0])
+	}
+	if !strings.Contains(a2uiEvents[2].DataJSON, `"mode":"done"`) {
+		t.Fatalf("last a2ui event = %+v, want done patch", a2uiEvents[2])
 	}
 }
 
@@ -200,6 +235,49 @@ func TestConsumeEventsPreservesBusinessExecutedErrorDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(last.Content, "业务结果已产生") {
 		t.Fatalf("error content = %q, want business-executed warning", last.Content)
+	}
+	if strings.Contains(last.Content, "model summary failed") {
+		t.Fatalf("error content = %q, should not expose internal error detail", last.Content)
+	}
+}
+
+func TestConsumeEventsFailsPendingA2UIToolOnIteratorError(t *testing.T) {
+	events := consumeRawTestAgentEvents(t, []*adk.AgentEvent{
+		assistantIteratorEvent("user_agent", &schema.Message{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{{
+				ID: "call-1",
+				Function: schema.FunctionCall{
+					Name:      domain.ToolAddressAdd,
+					Arguments: `{"receiver_name":"张三"}`,
+				},
+			}},
+		}),
+		{Err: errors.New("checkpoint failed")},
+	})
+
+	var toolA2UI []domain.AgentEvent
+	var errorEvent *domain.AgentEvent
+	for i := range events {
+		event := events[i]
+		if event.Type == domain.EventA2UI && strings.Contains(event.DataJSON, `"component":"tool_call"`) {
+			toolA2UI = append(toolA2UI, event)
+		}
+		if event.Type == domain.EventError {
+			errorEvent = &event
+		}
+	}
+	if len(toolA2UI) != 2 {
+		t.Fatalf("tool a2ui events len = %d, want running and failed; events=%+v", len(toolA2UI), events)
+	}
+	if !strings.Contains(toolA2UI[0].DataJSON, `"status":"running"`) {
+		t.Fatalf("first tool a2ui = %+v, want running", toolA2UI[0])
+	}
+	if !strings.Contains(toolA2UI[1].DataJSON, `"status":"failed"`) || !strings.Contains(toolA2UI[1].DataJSON, `"done":true`) {
+		t.Fatalf("second tool a2ui = %+v, want failed done", toolA2UI[1])
+	}
+	if errorEvent == nil || strings.Contains(errorEvent.Content, "checkpoint failed") {
+		t.Fatalf("error event = %+v, want sanitized frontend error", errorEvent)
 	}
 }
 
@@ -258,6 +336,18 @@ func TestConsumeEventsConvertsIteratorInterruptToConfirmationRequired(t *testing
 }
 
 func consumeTestAgentEvents(t *testing.T, inputEvents []*adk.AgentEvent) []domain.AgentEvent {
+	t.Helper()
+	events := consumeRawTestAgentEvents(t, inputEvents)
+	filtered := make([]domain.AgentEvent, 0, len(events))
+	for _, event := range events {
+		if event.Type != domain.EventA2UI {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func consumeRawTestAgentEvents(t *testing.T, inputEvents []*adk.AgentEvent) []domain.AgentEvent {
 	t.Helper()
 	ctx := context.Background()
 	var events []domain.AgentEvent

@@ -54,6 +54,17 @@ RedisConf:
   Host: 127.0.0.1:6380
   Pass: leventsg
   Tls: false
+EmailCode:
+  TTLSeconds: 300
+  ResendCooldown: 60
+  Enabled: true
+  SMTPHost: "smtp.qq.com"
+  SMTPPort: 465
+  SMTPUsername: "1960155751@qq.com"
+  SMTPPassword: "egibiwdhbulqcgdf"
+  SMTPFrom: "1960155751@qq.com"
+  SMTPDisplayName: "go-mall"
+  SMTPTLS: true
 GorseConfig:
   GorseAddr: http://localhost:8088
   GorseApikey: 5105502fc46a411c896aa5b50c31e951

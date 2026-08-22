@@ -1,4 +1,4 @@
-import { apiGet, apiPost, type AuthTokens } from './client'
+import { apiGet, apiPost, apiPut, type AuthTokens } from './client'
 
 export interface LoginRequest {
   email: string
@@ -7,6 +7,25 @@ export interface LoginRequest {
 
 export interface RegisterRequest {
   email: string
+  password: string
+  confirmPassword: string
+  code: string
+}
+
+export interface EmailCodeRequest {
+  email: string
+  scene: 'register' | 'forgot_password'
+}
+
+export interface ForgotPasswordRequest {
+  email: string
+  code: string
+  password: string
+  confirmPassword: string
+}
+
+export interface UpdatePasswordRequest {
+  code: string
   password: string
   confirmPassword: string
 }
@@ -27,6 +46,22 @@ export function login(req: LoginRequest) {
 
 export function register(req: RegisterRequest) {
   return apiPost<AuthTokens, RegisterRequest>('/douyin/user/register', req)
+}
+
+export function sendEmailCode(req: EmailCodeRequest) {
+  return apiPost<Record<string, never>, EmailCodeRequest>('/douyin/user/email/code', req)
+}
+
+export function resetForgottenPassword(req: ForgotPasswordRequest) {
+  return apiPost<Record<string, never>, ForgotPasswordRequest>('/douyin/user/password/reset', req)
+}
+
+export function sendPasswordCode(token?: string | null) {
+  return apiPost<Record<string, never>, Record<string, never>>('/douyin/user/password/code', {}, token)
+}
+
+export function updatePassword(req: UpdatePasswordRequest, token?: string | null) {
+  return apiPut<Record<string, never>, UpdatePasswordRequest>('/douyin/user/password', req, token)
 }
 
 export function logout(token?: string | null) {

@@ -21,6 +21,8 @@ Consul:
 WhitePathList:
   - /douyin/user/login
   - /douyin/user/register
+  - /douyin/user/email/code
+  - /douyin/user/password/reset
 OptionPathList:
   - /douyin/user/address 
 

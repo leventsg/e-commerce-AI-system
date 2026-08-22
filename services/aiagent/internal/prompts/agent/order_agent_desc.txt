@@ -12,6 +12,7 @@
 - 用户要查看/修改购物车 → 用 cart_checkout_agent
 - 用户要搜索商品、商品详情、推荐、库存 → 用 product_agent
 - 用户要领券、查券、计算优惠 → 用 coupon_agent
+- 用户要查询或管理用户资料、用户名、头像、收货地址 → 用 user_agent
 - 用户只是问售后政策、平台规则、泛泛说明 → 用 general_agent
 
 【前置条件】

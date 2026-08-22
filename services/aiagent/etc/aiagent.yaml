@@ -145,6 +145,11 @@ CouponRpc:
   NonBlock: true
   Timeout: 5000
 
+UserRpc:
+  Target: consul://localhost:8500/users.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
 AuditRpc:
   Target: consul://localhost:8500/audit.rpc?wait=14s
   NonBlock: true

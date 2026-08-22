@@ -38,6 +38,17 @@ const (
 	AuditDeleteaddressFailed = 20034
 	AuditDeleteuserFailed    = 20035
 	AuditAddAddressFailed    = 20036
+	EmailCodeInvalid         = 20037
+	EmailCodeSendTooOften    = 20038
+	EmailCodeSendFailed      = 20039
+	PasswordResetFailed      = 20040
+)
+
+const (
+	EmailCodeInvalidMsg      = "email code is invalid or expired"
+	EmailCodeSendTooOftenMsg = "email code was sent too often"
+	EmailCodeSendFailedMsg   = "email code send failed"
+	PasswordResetFailedMsg   = "password reset failed"
 )
 
 const (

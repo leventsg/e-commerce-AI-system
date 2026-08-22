@@ -31,6 +31,14 @@ const (
 	ToolCouponUsageList = "coupon_usage_list"
 	ToolCouponCalculate = "coupon_calculate"
 
+	ToolUserGet       = "user_get"
+	ToolUserUpdate    = "user_update"
+	ToolAddressList   = "address_list"
+	ToolAddressGet    = "address_get"
+	ToolAddressAdd    = "address_add"
+	ToolAddressUpdate = "address_update"
+	ToolAddressDelete = "address_delete"
+
 	ToolSearchUserMemory  = "search_user_memory"
 	ToolGetToolCallResult = "get_tool_call_result"
 )

@@ -11,6 +11,7 @@ type Config struct {
 	zrpc.RpcServerConf
 	MysqlConfig MysqlConfig
 	GorseConfig GorseConfig
+	EmailCode   EmailCodeConfig
 	AuditRpc    zrpc.RpcClientConf
 	Consul      consul.Conf
 	Cache       cache.CacheConf
@@ -23,4 +24,17 @@ type MysqlConfig struct {
 type GorseConfig struct {
 	GorseAddr   string
 	GorseApikey string
+}
+
+type EmailCodeConfig struct {
+	TTLSeconds      int
+	ResendCooldown  int
+	SMTPHost        string
+	SMTPPort        int
+	SMTPUsername    string
+	SMTPPassword    string
+	SMTPFrom        string
+	SMTPDisplayName string
+	SMTPTLS         bool
+	Enabled         bool
 }

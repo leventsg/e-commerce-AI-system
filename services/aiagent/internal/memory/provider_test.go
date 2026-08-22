@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -111,15 +113,26 @@ func TestCustomerServiceProviderMemorizeIsNoop(t *testing.T) {
 }
 
 func TestConversationValuesUseConversationIDOnly(t *testing.T) {
+	ragContext := []domain.ContextMessage{
+		{Role: domain.ContextRoleSystem, Content: "RAG context"},
+	}
 	values := NewConversationValues(ConversationMetadata{
 		UserID:           42,
 		ConversationID:   "conv-1",
 		RunID:            "run-1",
 		CurrentMessageID: "msg-user",
 		ClientMessageID:  "client-1",
+		RAGContext:       ragContext,
 	})
 	if _, ok := values["session"+"ID"]; ok {
 		t.Fatalf("conversation values contain unexpected legacy key: %+v", values)
+	}
+	if _, ok := values[ConversationValueKeyRAGContext].([]domain.ContextMessage); ok {
+		t.Fatalf("RAG context should be encoded as a gob-safe value, got domain slice")
+	}
+	var buffer bytes.Buffer
+	if err := gob.NewEncoder(&buffer).Encode(values); err != nil {
+		t.Fatalf("conversation values should be gob encodable: %v", err)
 	}
 	meta, ok := ConversationMetadataFromMap(values)
 	if !ok {
@@ -127,6 +140,9 @@ func TestConversationValuesUseConversationIDOnly(t *testing.T) {
 	}
 	if meta.ConversationID != "conv-1" || meta.UserID != 42 {
 		t.Fatalf("metadata = %+v", meta)
+	}
+	if len(meta.RAGContext) != 1 || meta.RAGContext[0].Content != "RAG context" {
+		t.Fatalf("RAGContext = %+v, want JSON round trip", meta.RAGContext)
 	}
 }
 

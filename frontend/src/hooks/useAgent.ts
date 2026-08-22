@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UIMessage, ConversationSummary, StreamingState, TraceStep } from '@/types'
-import type { AgentEvent, ClientMessage, RAGSource } from '@/types'
+import type { A2UIEvent, AgentEvent, ClientMessage, RAGSource } from '@/types'
 import {
   streamAgentChat,
   streamConfirmAction,
@@ -75,6 +75,29 @@ function eventSources(event: AgentEvent): RAGSource[] | undefined {
   return undefined
 }
 
+function a2uiPayload(event: AgentEvent): A2UIEvent | null {
+  const raw = event.data && typeof event.data === 'object' ? event.data : undefined
+  if (raw && 'version' in raw && (raw as { version?: unknown }).version === 'a2ui.v1') return raw as A2UIEvent
+  if (typeof event.data_json === 'string' && event.data_json.trim()) {
+    try {
+      const parsed = JSON.parse(event.data_json)
+      if (parsed && parsed.version === 'a2ui.v1') return parsed as A2UIEvent
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function isLegacyVisualEvent(event: AgentEvent) {
+  return event.type === 'assistant_message'
+    || event.type === 'assistant_delta'
+    || event.type === 'assistant_thinking_delta'
+    || event.type === 'tool_progress'
+    || event.type === 'tool_result'
+    || event.type === 'confirmation_required'
+}
+
 export function finalizeStreamingMessages(messages: UIMessage[], assistantMessageId = '') {
   const streamingIdx = assistantMessageId
     ? messages.findIndex(message => message.id === assistantMessageId)
@@ -100,6 +123,15 @@ function lastStreamingThinkingIndex(messages: UIMessage[], conversationId = '') 
 export function finalizeThinkingMessages(messages: UIMessage[], conversationId = '') {
   if (!messages.some(message => message.type === 'thinking' && message.streaming && messageBelongsToConversation(message, conversationId))) return messages
   return messages.map(message => message.type === 'thinking' && message.streaming && messageBelongsToConversation(message, conversationId) ? { ...message, streaming: false } : message)
+}
+
+export function failRunningToolMessages(messages: UIMessage[], conversationId = '', content = '工具调用中断，请稍后重试') {
+  if (!messages.some(message => message.type === 'tool-result' && message.toolStatus === 'running' && messageBelongsToConversation(message, conversationId))) return messages
+  return messages.map(message => (
+    message.type === 'tool-result' && message.toolStatus === 'running' && messageBelongsToConversation(message, conversationId)
+      ? { ...message, toolStatus: 'failed' as const, content }
+      : message
+  ))
 }
 
 /** 后端会话 DTO 转前端会话摘要；id 统一为 conversation_id。 */
@@ -197,6 +229,88 @@ export function applyAgentEvent(
   const eventConversationId = event.conversation_id?.trim() || conversationId
 
   switch (event.type) {
+    case 'a2ui': {
+      const payload = a2uiPayload(event)
+      if (!payload) break
+      const componentID = payload.component_id || event.message_id || `a2ui_${timestamp}`
+      const content = payload.content || ''
+      if (payload.component === 'thinking') {
+        const id = `thinking_${componentID}`
+        const idx = msgs.findIndex(message => message.id === id)
+        if (idx >= 0) {
+          msgs[idx] = {
+            ...msgs[idx],
+            content: payload.mode === 'replace' ? content : msgs[idx].content + content,
+            streaming: payload.mode !== 'done' && !payload.done,
+          }
+        } else {
+          msgs.push({
+            id,
+            type: 'thinking',
+            content,
+            timestamp,
+            streaming: payload.mode !== 'done' && !payload.done,
+            conversationId: eventConversationId || undefined,
+            trace: [...traceBuffer],
+          })
+        }
+      } else if (payload.component === 'assistant_answer') {
+        const id = componentID
+        nextAssistantMessageId = id
+        const idx = msgs.findIndex(message => message.id === id)
+        if (idx >= 0) {
+          msgs[idx] = {
+            ...msgs[idx],
+            content: payload.mode === 'replace' ? content : msgs[idx].content + content,
+            streaming: payload.mode !== 'done' && !payload.done,
+            trace: [...traceBuffer],
+          }
+        } else if (payload.mode !== 'done') {
+          msgs.push({
+            id,
+            type: 'assistant',
+            content,
+            timestamp,
+            streaming: true,
+            trace: [...traceBuffer],
+          })
+        }
+      } else if (payload.component === 'tool_call') {
+        const id = `tool_${componentID}`
+        const toolStatus = payload.status === 'success' ? 'success' : payload.status === 'failed' ? 'failed' : 'running'
+        const dataJson = payload.data_json
+        const idx = msgs.findIndex(message => message.id === id)
+        const message: UIMessage = {
+          id,
+          type: 'tool-result',
+          content: content || (toolStatus === 'running' ? '执行中...' : toolStatus === 'success' ? '执行成功' : '执行失败'),
+          timestamp,
+          toolName: payload.tool,
+          toolStatus,
+          toolCallId: componentID,
+          dataJson,
+          trace: [...traceBuffer],
+        }
+        if (idx >= 0) msgs[idx] = { ...msgs[idx], ...message }
+        else msgs.push(message)
+      } else if (payload.component === 'confirmation') {
+        const id = `confirm_${payload.confirmation_id || componentID}`
+        const idx = msgs.findIndex(message => message.id === id)
+        const message: UIMessage = {
+          id,
+          type: 'confirmation',
+          content: content || '请确认是否执行该操作',
+          timestamp,
+          conversationId: eventConversationId,
+          confirmationId: payload.confirmation_id,
+          expiresAt: payload.expires_at,
+          confirmationStatus: 'pending',
+        }
+        if (idx >= 0) msgs[idx] = { ...msgs[idx], ...message }
+        else msgs.push(message)
+      }
+      break
+    }
     case 'tool_progress': {
       const step: TraceStep = {
         action: event.tool || 'tool_call',
@@ -303,12 +417,18 @@ export function applyAgentEvent(
       break
     }
     case 'error':
+      for (let i = 0; i < msgs.length; i += 1) {
+        const message = msgs[i]
+        if (message.type === 'tool-result' && message.toolStatus === 'running' && messageBelongsToConversation(message, eventConversationId)) {
+          msgs[i] = { ...message, toolStatus: 'failed', content: message.content || '工具调用中断，请稍后重试' }
+        }
+      }
       msgs.push({ id: event.message_id || `err_${timestamp}`, type: 'error', content: event.content || 'AI 服务暂时不可用', timestamp })
       break
   }
 
   return {
-    messages: event.done && event.type !== 'assistant_delta' && event.type !== 'assistant_thinking_delta'
+    messages: event.done && event.type !== 'assistant_delta' && event.type !== 'assistant_thinking_delta' && event.type !== 'a2ui'
       ? finalizeThinkingMessages(finalizeStreamingMessages(msgs, nextAssistantMessageId), eventConversationId)
       : msgs,
     assistantMessageId: nextAssistantMessageId,
@@ -475,6 +595,7 @@ export function useAgent() {
     abortRef.current = controller
     let conversationId = activeId
     let assistantMsgId = ''
+    let a2uiActive = false
 
     try {
       const traceBuffer: TraceStep[] = []
@@ -489,6 +610,8 @@ export function useAgent() {
       for await (const event of streamAgentChat(payload, token, controller.signal)) {
         if (controller.signal.aborted) break
         const t = Date.now()
+        if (event.type === 'a2ui') a2uiActive = true
+        if (a2uiActive && event.type !== 'a2ui' && isLegacyVisualEvent(event)) continue
         conversationId = syncConversationId(conversationId, event.conversation_id)
         const current = streamingCache.current.get(conversationId)?.messages || []
         const result = applyAgentEvent(current, traceBuffer, event, t, assistantMsgId, conversationId)
@@ -507,7 +630,7 @@ export function useAgent() {
       setIsStreaming(false)
       const entry = streamingCache.current.get(conversationId)
       if (entry) {
-        const finalizedMessages = finalizeThinkingMessages(finalizeStreamingMessages(entry.messages, assistantMsgId), conversationId)
+        const finalizedMessages = failRunningToolMessages(finalizeThinkingMessages(finalizeStreamingMessages(entry.messages, assistantMsgId), conversationId), conversationId)
         streamingCache.current.set(conversationId, { ...entry, messages: finalizedMessages, isStreaming: false })
         setMessages([...finalizedMessages])
       }
@@ -534,12 +657,15 @@ export function useAgent() {
     abortRef.current = controller
     let currentConversationId = confirmedConversationId
     let assistantMsgId = ''
+    let a2uiActive = false
 
     try {
       const traceBuffer: TraceStep[] = []
       for await (const event of streamConfirmAction(payload, token, controller.signal)) {
         if (controller.signal.aborted) break
         const t = Date.now()
+        if (event.type === 'a2ui') a2uiActive = true
+        if (a2uiActive && event.type !== 'a2ui' && isLegacyVisualEvent(event)) continue
         currentConversationId = syncConversationId(currentConversationId, event.conversation_id)
         const current = streamingCache.current.get(currentConversationId)?.messages || []
         const result = applyAgentEvent(current, traceBuffer, event, t, assistantMsgId, currentConversationId)
@@ -557,7 +683,7 @@ export function useAgent() {
       setIsStreaming(false)
       const entry = streamingCache.current.get(currentConversationId)
       if (entry) {
-        const finalizedMessages = finalizeThinkingMessages(finalizeStreamingMessages(entry.messages, assistantMsgId), currentConversationId)
+        const finalizedMessages = failRunningToolMessages(finalizeThinkingMessages(finalizeStreamingMessages(entry.messages, assistantMsgId), currentConversationId), currentConversationId)
         streamingCache.current.set(currentConversationId, { ...entry, messages: finalizedMessages, isStreaming: false })
         setMessages([...finalizedMessages])
       }

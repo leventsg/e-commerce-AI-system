@@ -258,6 +258,13 @@ func defaultSchemaTools(queryTimeout, writeTimeout int64) []core.Tool {
 		queryTool(domain.ToolCouponMyList, tool_prompts.CouponMyListDesc, queryTimeout, "Coupons", "ListUserCoupons", tool_prompts.CouponMyListParameters),
 		queryTool(domain.ToolCouponUsageList, tool_prompts.CouponUsageListDesc, queryTimeout, "Coupons", "ListCouponUsages", tool_prompts.CouponUsageListParameters),
 		queryTool(domain.ToolCouponCalculate, tool_prompts.CouponCalculateDesc, queryTimeout, "Coupons", "CalculateCoupon", tool_prompts.CouponCalculateParameters),
+		queryTool(domain.ToolUserGet, tool_prompts.UserGetDesc, queryTimeout, "Users", "GetUser", tool_prompts.UserGetParameters),
+		writeTool(domain.ToolUserUpdate, tool_prompts.UserUpdateDesc, domain.RiskLow, false, writeTimeout, "Users", "UpdateUser", tool_prompts.UserUpdateParameters),
+		queryTool(domain.ToolAddressList, tool_prompts.AddressListDesc, queryTimeout, "Users", "ListAddresses", tool_prompts.AddressListParameters),
+		queryTool(domain.ToolAddressGet, tool_prompts.AddressGetDesc, queryTimeout, "Users", "GetAddress", tool_prompts.AddressGetParameters),
+		writeTool(domain.ToolAddressAdd, tool_prompts.AddressAddDesc, domain.RiskLow, false, writeTimeout, "Users", "AddAddress", tool_prompts.AddressAddParameters),
+		writeTool(domain.ToolAddressUpdate, tool_prompts.AddressUpdateDesc, domain.RiskLow, false, writeTimeout, "Users", "UpdateAddress", tool_prompts.AddressUpdateParameters),
+		writeTool(domain.ToolAddressDelete, tool_prompts.AddressDeleteDesc, domain.RiskLow, false, writeTimeout, "Users", "DeleteAddress", tool_prompts.AddressDeleteParameters),
 		writeTool(domain.ToolOrderCreate, tool_prompts.OrderCreateDesc, domain.RiskHigh, true, writeTimeout, "OrderAPI", "CreateOrder", tool_prompts.OrderCreateParameters),
 		writeTool(domain.ToolOrderCancel, tool_prompts.OrderCancelDesc, domain.RiskHigh, true, writeTimeout, "OrderService", "CancelOrder", tool_prompts.OrderCancelParameters),
 	}

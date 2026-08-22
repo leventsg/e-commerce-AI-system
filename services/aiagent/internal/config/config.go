@@ -72,5 +72,6 @@ type Config struct {
 	CheckoutRpc  zrpc.RpcClientConf
 	CartRpc      zrpc.RpcClientConf
 	CouponRpc    zrpc.RpcClientConf
+	UserRpc      zrpc.RpcClientConf
 	AuditRpc     zrpc.RpcClientConf
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/dal/model/user_address"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
 	"github.com/leventsg/e-commerce-AI-system/services/users/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/users/internal/email"
 
 	"github.com/zeromicro/go-zero/core/bloom"
 	"github.com/zeromicro/go-zero/core/metric"
@@ -24,6 +25,8 @@ type ServiceContext struct {
 	Model        sqlx.SqlConn
 	GorseClient  *gorse.GorseClient
 	BF           *bloom.Filter
+	RedisClient  *redis.Redis
+	EmailSender  *email.Sender
 }
 
 // 初始化监控指标（包级变量改为结构体字段）
@@ -37,7 +40,8 @@ var UserRegCounter = metric.NewCounterVec(&metric.CounterVecOpts{
 
 func NewServiceContext(c config.Config) *ServiceContext {
 	gorseClient := gorse.NewGorseClient(c.GorseConfig.GorseAddr, c.GorseConfig.GorseApikey)
-	bf := bloom.New(redis.MustNewRedis(c.RedisConf), "user_login_bloom", 1000000)
+	redisClient := redis.MustNewRedis(c.RedisConf)
+	bf := bloom.New(redisClient, "user_login_bloom", 1000000)
 	// bloom预热
 	usermodel := user.NewUsersModel(sqlx.NewMysql(c.MysqlConfig.DataSource))
 	err := bloomPreheat(bf, usermodel)
@@ -53,6 +57,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AddressModel: user_address.NewUserAddressesModel(sqlx.NewMysql(c.MysqlConfig.DataSource), c.Cache),
 		AuditRpc:     auditclient.NewAudit(zrpc.MustNewClient(c.AuditRpc)),
 		BF:           bf,
+		RedisClient:  redisClient,
+		EmailSender:  email.NewSender(c.EmailCode),
 	}
 }
 func bloomPreheat(BF *bloom.Filter, UsersModel user.UsersModel) error {

@@ -60,6 +60,24 @@ type DeleteRequest struct {
 type DeleteResponse struct {
 }
 
+type EmailCodeRequest struct {
+	Email string `json:"email"`
+	Scene string `json:"scene"`
+}
+
+type EmailCodeResponse struct {
+}
+
+type ForgotPasswordRequest struct {
+	Email           string `json:"email"`
+	Code            string `json:"code"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirmPassword"`
+}
+
+type ForgotPasswordResponse struct {
+}
+
 type GetAddressRequest struct {
 	AddressID int32 `json:"address_id"`
 }
@@ -98,10 +116,17 @@ type LogoutResponse struct {
 	Logout_at int64 `json:"logout_at"`
 }
 
+type PasswordCodeRequest struct {
+}
+
+type PasswordCodeResponse struct {
+}
+
 type RegisterRequest struct {
 	Email           string `json:"email"`
 	Password        string `json:"password"`
 	ConfirmPassword string `json:"confirmPassword"`
+	Code            string `json:"code"`
 }
 
 type RegisterResponse struct {
@@ -121,6 +146,15 @@ type UpdateAddressRequest struct {
 
 type UpdateAddressResponse struct {
 	Data AddressData `json:"data"`
+}
+
+type UpdatePasswordRequest struct {
+	Code            string `json:"code"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirmPassword"`
+}
+
+type UpdatePasswordResponse struct {
 }
 
 type UpdateRequest struct {

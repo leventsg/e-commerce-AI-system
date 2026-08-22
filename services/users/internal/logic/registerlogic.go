@@ -76,6 +76,17 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 	existUser, err := l.svcCtx.UsersModel.FindOneByEmail(l.ctx, email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			ok, verifyErr := verifyEmailCode(l.ctx, l.svcCtx.RedisClient, emailCodeSceneRegister, in.Email, in.Code)
+			if verifyErr != nil {
+				l.Logger.Errorw("register verify email code failed", logx.Field("err", verifyErr), logx.Field("email", in.Email))
+				return nil, verifyErr
+			}
+			if !ok {
+				return &users.RegisterResponse{
+					StatusCode: code.EmailCodeInvalid,
+					StatusMsg:  code.EmailCodeInvalidMsg,
+				}, nil
+			}
 
 			// 获取头像
 			size := 40
@@ -159,6 +170,17 @@ func (l *RegisterLogic) Register(in *users.RegisterRequest) (*users.RegisterResp
 		// 用户已存在，判断是否处于删除状态
 		userDeleted := existUser.UserDeleted
 		if userDeleted { // 已删除
+			ok, verifyErr := verifyEmailCode(l.ctx, l.svcCtx.RedisClient, emailCodeSceneRegister, in.Email, in.Code)
+			if verifyErr != nil {
+				l.Logger.Errorw("register deleted user verify email code failed", logx.Field("err", verifyErr), logx.Field("email", in.Email))
+				return nil, verifyErr
+			}
+			if !ok {
+				return &users.RegisterResponse{
+					StatusCode: code.EmailCodeInvalid,
+					StatusMsg:  code.EmailCodeInvalidMsg,
+				}, nil
+			}
 			// 将删除状态改为false
 			updateErr := l.svcCtx.UsersModel.UpdateDeletebyEmail(l.ctx, in.Email, false)
 			if updateErr != nil {

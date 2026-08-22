@@ -150,6 +150,11 @@ CouponRpc:
   NonBlock: true
   Timeout: 5000
 
+UserRpc:
+  Target: consul://${CONSUL_HOST}/users.rpc?wait=14s
+  NonBlock: true
+  Timeout: 5000
+
 AuditRpc:
   Target: consul://${CONSUL_HOST}/audit.rpc?wait=14s
   NonBlock: true

@@ -19,6 +19,9 @@ var CartCheckoutAgentDesc string
 //go:embed coupon_agent_desc.txt
 var CouponAgentDesc string
 
+//go:embed user_agent_desc.txt
+var UserAgentDesc string
+
 //go:embed general_agent_desc.txt
 var GeneralAgentDesc string
 
@@ -36,6 +39,9 @@ var CartCheckoutAgentSystemPrompt string
 
 //go:embed coupon_agent_system_prompt.txt
 var CouponAgentSystemPrompt string
+
+//go:embed user_agent_system_prompt.txt
+var UserAgentSystemPrompt string
 
 //go:embed general_agent_system_prompt.txt
 var GeneralAgentSystemPrompt string
