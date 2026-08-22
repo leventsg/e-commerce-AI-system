@@ -552,8 +552,37 @@ func (r *agent) handleIteratorAgentEvent(event *adk.AgentEvent, req RunRequest, 
 	}
 	output := event.Output.MessageOutput
 	if output.IsStreaming && output.MessageStream != nil {
-		return r.handleIteratorStreamingMessage(event, req, send, startToolCall, markBusinessExecuted)
+		// tool_result
+		if output.Role == schema.Tool {
+			return r.handleIteratorCompleteMessage(event, req, send, startToolCall, finishToolCall, markBusinessExecuted)
+		}
+		// tool_call
+		if output.Role == schema.Assistant || output.Role == "" {
+			first, err := peekIteratorMessageStream(output)
+			if err != nil {
+				if err == io.EOF {
+					return false, false
+				}
+				return r.handleIteratorMessageReadError(event, req, send, err)
+			}
+			if first != nil {
+				if output.Role == "" {
+					output.Role = first.Role
+				}
+				if first.Role == schema.Tool || len(first.ToolCalls) > 0 {
+					return r.handleIteratorCompleteMessage(event, req, send, startToolCall, finishToolCall, markBusinessExecuted)
+				}
+			}
+		}
+		// 模型文本流式输出
+		return r.handleIteratorStreamingMessage(event, req, send)
 	}
+	return r.handleIteratorCompleteMessage(event, req, send, startToolCall, finishToolCall, markBusinessExecuted)
+}
+
+// 处理toolcall和toolresult
+func (r *agent) handleIteratorCompleteMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), finishToolCall func(string, string) (string, bool), markBusinessExecuted func()) (handled bool, stop bool) {
+	output := event.Output.MessageOutput
 	message, _, err := adk.GetMessage(event)
 	if err != nil {
 		logx.Errorw("ai agent message read failed", append(baseAgentLogFields(req), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("err", err))...)
@@ -584,7 +613,72 @@ func (r *agent) handleIteratorAgentEvent(event *adk.AgentEvent, req RunRequest, 
 	}
 }
 
-func (r *agent) handleIteratorStreamingMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), markBusinessExecuted func()) (handled bool, stop bool) {
+func (r *agent) handleIteratorMessageReadError(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, err error) (handled bool, stop bool) {
+	logx.Errorw("ai agent message read failed", append(baseAgentLogFields(req), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("err", err))...)
+	_ = send(domain.AgentEvent{
+		Type:           domain.EventError,
+		ConversationID: req.ConversationID,
+		MessageID:      newAgentMessageID(),
+		Content:        "AI 服务暂时不可用，请稍后重试",
+		Status:         "failed",
+		Done:           true,
+	})
+	return true, true
+}
+
+func peekIteratorMessageStream(output *adk.MessageVariant) (*schema.Message, error) {
+	var prefix []*schema.Message
+	for {
+		chunk, err := output.MessageStream.Recv()
+		if err != nil {
+			if len(prefix) > 0 {
+				output.MessageStream = prependIteratorMessageStream(prefix, output.MessageStream)
+			}
+			return nil, err
+		}
+		if chunk == nil {
+			continue
+		}
+		prefix = append(prefix, chunk)
+		if !hasIteratorRoutingSignal(chunk) {
+			continue
+		}
+		output.MessageStream = prependIteratorMessageStream(prefix, output.MessageStream)
+		return chunk, nil
+	}
+}
+
+func hasIteratorRoutingSignal(chunk *schema.Message) bool {
+	return chunk.Role == schema.Tool || len(chunk.ToolCalls) > 0 || chunk.Content != "" || reasoningContent(chunk) != ""
+}
+
+func prependIteratorMessageStream(prefix []*schema.Message, rest *schema.StreamReader[*schema.Message]) *schema.StreamReader[*schema.Message] {
+	reader, writer := schema.Pipe[*schema.Message](1)
+	go func() {
+		defer writer.Close()
+		defer rest.Close()
+		for _, chunk := range prefix {
+			if closed := writer.Send(chunk, nil); closed {
+				return
+			}
+		}
+		for {
+			chunk, err := rest.Recv()
+			if err != nil {
+				if err != io.EOF {
+					_ = writer.Send(nil, err)
+				}
+				return
+			}
+			if closed := writer.Send(chunk, nil); closed {
+				return
+			}
+		}
+	}()
+	return reader
+}
+
+func (r *agent) handleIteratorStreamingMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error) (handled bool, stop bool) {
 	output := event.Output.MessageOutput
 	if output == nil || output.MessageStream == nil {
 		return false, false
@@ -631,32 +725,6 @@ func (r *agent) handleIteratorStreamingMessage(event *adk.AgentEvent, req RunReq
 				handled = true
 			}
 		}
-		if len(chunk.ToolCalls) > 0 {
-			for _, toolCall := range chunk.ToolCalls {
-				toolName := strings.TrimSpace(toolCall.Function.Name)
-				if toolName == "" || isAgentToolName(toolName) {
-					continue
-				}
-				messageID, started := startToolCall(toolCall.ID, toolName)
-				if !started {
-					continue
-				}
-				dataJSON := ensureJSONObject(toolCall.Function.Arguments)
-				content := toolProgressContent(toolName)
-				_ = send(a2uiToolUpdate(req.ConversationID, messageID, toolName, "running", content, dataJSON, false))
-				_ = send(domain.AgentEvent{
-					Type:           domain.EventToolProgress,
-					ConversationID: req.ConversationID,
-					MessageID:      messageID,
-					Tool:           toolName,
-					Status:         "running",
-					Content:        content,
-					DataJSON:       dataJSON,
-					Done:           false,
-				})
-				handled = true
-			}
-		}
 		content := chunk.Content
 		if content == "" || (event.AgentName != "" && event.AgentName != supervisorAgentName) {
 			continue
@@ -695,11 +763,12 @@ func (r *agent) handleIteratorStreamingMessage(event *adk.AgentEvent, req RunReq
 	return handled, false
 }
 
+// 处理工具调用toolcall
 func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, startToolCall func(string, string) (string, bool), message *schema.Message) (handled bool, stop bool) {
 	if message == nil {
 		return false, false
 	}
-	// 思考过程
+	// 如果有思考过程，就发送
 	if shouldExposeIteratorReasoning(event.AgentName) {
 		if reasoning := reasoningContent(message); reasoning != "" {
 			logx.Infow("ai agent reasoning event", append(baseAgentLogFields(req), logx.Field("stage", "assistant_thinking"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("reasoning_length", len(reasoning)))...)
@@ -750,36 +819,36 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 		}
 		return handled, false
 	}
-	content := strings.TrimSpace(message.Content)
-	if content == "" {
-		return handled, false
-	}
-	if event.AgentName != "" && event.AgentName != supervisorAgentName {
-		return handled, false
-	}
-	// 最终模型输出结果
-	logx.Infow("发送最终助手消息", append(baseAgentLogFields(req), logx.Field("stage", "assistant_message"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("content_length", len(content)))...)
-	messageID := newAgentMessageID()
-	_ = send(a2uiAssistantDelta(req.ConversationID, messageID, content))
-	_ = send(a2uiAssistantDone(req.ConversationID, messageID))
-	_ = send(domain.AgentEvent{
-		Type:           domain.EventAssistantMessage,
-		ConversationID: req.ConversationID,
-		MessageID:      messageID,
-		Content:        content,
-		DataJSON:       sourcesDataJSON(req.RAGSources),
-		Done:           true,
-	})
+	// if message.Content == "" {
+	// 	return handled, false
+	// }
+	// if event.AgentName != "" && event.AgentName != supervisorAgentName {
+	// 	return handled, false
+	// }
+	// // 最终模型输出结果
+	// logx.Infow("发送最终助手消息", append(baseAgentLogFields(req), logx.Field("stage", "assistant_message"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("content_length", len(message.Content)))...)
+	// messageID := newAgentMessageID()
+	// _ = send(a2uiAssistantDelta(req.ConversationID, messageID, message.Content))
+	// _ = send(a2uiAssistantDone(req.ConversationID, messageID))
+	// _ = send(domain.AgentEvent{
+	// 	Type:           domain.EventAssistantMessage,
+	// 	ConversationID: req.ConversationID,
+	// 	MessageID:      messageID,
+	// 	Content:        message.Content,
+	// 	DataJSON:       sourcesDataJSON(req.RAGSources),
+	// 	Done:           true,
+	// })
 	return true, false
 }
 
+// handleIteratorToolMessage 处理工具调用结果消息
 func (r *agent) handleIteratorToolMessage(event *adk.AgentEvent, req RunRequest, send func(domain.AgentEvent) error, finishToolCall func(string, string) (string, bool), markBusinessExecuted func(), message *schema.Message) (handled bool, stop bool) {
 	if message == nil {
 		return false, false
 	}
-	toolName := strings.TrimSpace(event.Output.MessageOutput.ToolName)
+	toolName := event.Output.MessageOutput.ToolName
 	if toolName == "" {
-		toolName = strings.TrimSpace(message.ToolName)
+		toolName = message.ToolName
 	}
 	if toolName == "" || isAgentToolName(toolName) {
 		return false, false

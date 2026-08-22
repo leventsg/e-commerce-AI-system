@@ -210,6 +210,83 @@ func TestConsumeEventsEmitsA2UIDataUpdatesForStreamingContent(t *testing.T) {
 	}
 }
 
+func TestConsumeEventsHandlesStreamingToolCallAsCompleteProgress(t *testing.T) {
+	index := 0
+	reader, writer := schema.Pipe[*schema.Message](3)
+	writer.Send(&schema.Message{Role: schema.Assistant}, nil)
+	writer.Send(&schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			Index: &index,
+			ID:    "call-1",
+			Type:  "function",
+			Function: schema.FunctionCall{
+				Name:      domain.ToolOrderCreate,
+				Arguments: `{"request":"confirm`,
+			},
+		}},
+	}, nil)
+	writer.Send(&schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			Index: &index,
+			ID:    "call-1",
+			Type:  "function",
+			Function: schema.FunctionCall{
+				Name:      domain.ToolOrderCreate,
+				Arguments: ` order"}`,
+			},
+		}},
+	}, nil)
+	writer.Close()
+
+	events := consumeTestAgentEvents(t, []*adk.AgentEvent{{
+		AgentName: "cart_checkout_agent",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			IsStreaming:   true,
+			MessageStream: reader,
+			Role:          schema.Assistant,
+		}},
+	}})
+
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want one complete tool progress; events=%+v", len(events), events)
+	}
+	if events[0].Type != domain.EventToolProgress || events[0].Tool != domain.ToolOrderCreate {
+		t.Fatalf("event = %+v, want order_create tool progress", events[0])
+	}
+	if events[0].DataJSON != `{"request":"confirm order"}` {
+		t.Fatalf("data_json = %q, want complete arguments", events[0].DataJSON)
+	}
+}
+
+func TestConsumeEventsHandlesStreamingToolResultAsCompleteResult(t *testing.T) {
+	reader, writer := schema.Pipe[*schema.Message](2)
+	writer.Send(schema.ToolMessage(`{"summary":"created`, "call-1", schema.WithToolName(domain.ToolOrderCreate)), nil)
+	writer.Send(schema.ToolMessage(` order"}`, "call-1", schema.WithToolName(domain.ToolOrderCreate)), nil)
+	writer.Close()
+
+	events := consumeTestAgentEvents(t, []*adk.AgentEvent{{
+		AgentName: "cart_checkout_agent",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			IsStreaming:   true,
+			MessageStream: reader,
+			Role:          schema.Tool,
+			ToolName:      domain.ToolOrderCreate,
+		}},
+	}})
+
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want one complete tool result; events=%+v", len(events), events)
+	}
+	if events[0].Type != domain.EventToolResult || events[0].Tool != domain.ToolOrderCreate {
+		t.Fatalf("event = %+v, want order_create tool result", events[0])
+	}
+	if events[0].DataJSON != `{"summary":"created order"}` {
+		t.Fatalf("data_json = %q, want complete result", events[0].DataJSON)
+	}
+}
+
 func TestConsumeEventsPreservesBusinessExecutedErrorDiagnostic(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
 		assistantIteratorEvent("cart_checkout_agent", &schema.Message{
