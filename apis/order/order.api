@@ -7,10 +7,12 @@ type (
 		CouponID      string `json:"coupon_id,optional"`
 		AddressID     int32  `json:"address_id"`
 		PaymentMethod int32  `json:"payment_method"` // 1-WECHAT_PAY 2-ALIPAY
+		UserID        uint32 `json:"user_id,optional"`
 	}
 	CancelOrderReq {
 		OrderID      string `json:"order_id"`
 		CancelReason string `json:"cancel_reason,optional"`
+		UserID       uint32 `json:"user_id,optional"`
 	}
 	GetOrderReq {
 		OrderID string `json:"order_id"`
@@ -95,5 +97,16 @@ service order-api {
 	// 分页查询订单列表
 	@handler ListOrdersHandler
 	get /list (ListOrdersReq) returns (ListOrdersResp)
+}
+
+@server (
+	prefix: /douyin/order/internal
+)
+service order-api {
+	@handler InternalCreateOrderHandler
+	post /create (CreateOrderReq) returns (OrderDetailResp)
+
+	@handler InternalCancelOrderHandler
+	post /cancel (CancelOrderReq) returns (CancelOrderResp)
 }
 

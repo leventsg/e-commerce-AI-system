@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
+
 	"github.com/leventsg/e-commerce-AI-system/services/coupons/coupons"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 var _ UserCouponsModel = (*customUserCouponsModel)(nil)
@@ -93,7 +94,7 @@ func (m *customUserCouponsModel) GetUserCouponByUserIdCouponIdWithLock(ctx conte
 
 func (m *customUserCouponsModel) CheckUserCouponExistWithLock(ctx context.Context, session sqlx.Session, userId uint64, couponId string) (bool, error) {
 	var cnt int64
-	query := fmt.Sprintf("select count(*) from %s where `user_id` = ? and `coupon_id` = ? LIMIT 1 FOR SHARE ", m.table)
+	query := fmt.Sprintf("select count(*) from %s where `user_id` = ? and `coupon_id` = ? LIMIT 1 FOR UPDATE", m.table)
 	err := session.QueryRowCtx(ctx, &cnt, query, userId, couponId)
 	switch {
 	case err == nil:

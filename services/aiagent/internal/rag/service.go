@@ -83,7 +83,7 @@ func (s *Service) Prepare(ctx context.Context, req PrepareRequest) (*PrepareResu
 		if cached, ok := s.cache.Get(ctx, queryVector); ok {
 			var cachedSources []domain.AgentSource
 			if err := json.Unmarshal(cached, &cachedSources); err == nil && len(cachedSources) > 0 {
-				logx.Infow("rag vector cache hit", logx.Field("conversation_id", req.ConversationID), logx.Field("user_id", req.UserID), logx.Field("query", query), logx.Field("source_count", len(cachedSources)))
+				logx.Infow("rag 向量缓存命中", logx.Field("conversation_id", req.ConversationID), logx.Field("user_id", req.UserID), logx.Field("query", query), logx.Field("source_count", len(cachedSources)))
 				return s.buildResult(cachedSources), nil
 			}
 		}
@@ -184,11 +184,11 @@ func buildSources(chunks []retrievedChunk, cfg config.RAGConfig) []domain.AgentS
 	if previewChars <= 0 {
 		previewChars = 200
 	}
-	previewBase := strings.TrimRight(strings.TrimSpace(cfg.PreviewBaseURL), "/")
+	previewBase := strings.TrimRight(cfg.PreviewBaseURL, "/")
 	byDocument := make(map[string]*domain.AgentSource)
 	var order []string
 	for _, chunk := range chunks {
-		if strings.TrimSpace(chunk.DocumentID) == "" || strings.TrimSpace(chunk.Content) == "" {
+		if chunk.DocumentID == "" || chunk.Content == "" {
 			continue
 		}
 		docID := chunk.DocumentID

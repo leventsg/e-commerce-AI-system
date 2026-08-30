@@ -266,7 +266,7 @@ func defaultSchemaTools(queryTimeout, writeTimeout int64) []core.Tool {
 		writeTool(domain.ToolAddressUpdate, tool_prompts.AddressUpdateDesc, domain.RiskLow, false, writeTimeout, "Users", "UpdateAddress", tool_prompts.AddressUpdateParameters),
 		writeTool(domain.ToolAddressDelete, tool_prompts.AddressDeleteDesc, domain.RiskLow, false, writeTimeout, "Users", "DeleteAddress", tool_prompts.AddressDeleteParameters),
 		writeTool(domain.ToolOrderCreate, tool_prompts.OrderCreateDesc, domain.RiskHigh, true, writeTimeout, "OrderAPI", "CreateOrder", tool_prompts.OrderCreateParameters),
-		writeTool(domain.ToolOrderCancel, tool_prompts.OrderCancelDesc, domain.RiskHigh, true, writeTimeout, "OrderService", "CancelOrder", tool_prompts.OrderCancelParameters),
+		writeTool(domain.ToolOrderCancel, tool_prompts.OrderCancelDesc, domain.RiskHigh, true, writeTimeout, "OrderAPI", "CancelOrder", tool_prompts.OrderCancelParameters),
 	}
 }
 

@@ -4,6 +4,7 @@ package types
 type CancelOrderReq struct {
 	OrderID      string `json:"order_id"`
 	CancelReason string `json:"cancel_reason,optional"`
+	UserID       uint32 `json:"user_id,optional"`
 }
 
 type CancelOrderResp struct {
@@ -15,6 +16,7 @@ type CreateOrderReq struct {
 	CouponID      string `json:"coupon_id,optional"`
 	AddressID     int32  `json:"address_id"`
 	PaymentMethod int32  `json:"payment_method"` // 1-WECHAT_PAY 2-ALIPAY
+	UserID        uint32 `json:"user_id,optional"`
 }
 
 type GetOrderReq struct {

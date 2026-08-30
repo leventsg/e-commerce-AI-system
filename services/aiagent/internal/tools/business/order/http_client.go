@@ -1,38 +1,46 @@
 package order_tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/leventsg/e-commerce-AI-system/common/consts/biz"
+	"github.com/leventsg/e-commerce-AI-system/common/httpclient"
 	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
 )
 
 const (
-	orderCreatePath = "/douyin/order/create"
-	maxOrderAPIResp = 1 << 20
+	orderCreatePath = "/douyin/order/internal/create"
+	orderCancelPath = "/douyin/order/internal/cancel"
 
-	// PaymentMethodAlipay 固定使用支付宝，与现有 order-api 硬编码逻辑保持一致。
+	// PaymentMethodAlipay keeps the AI order tool aligned with order-api.
 	PaymentMethodAlipay int32 = 2
 )
 
 type CreateOrderHTTPRequest struct {
+	UserID        uint32 `json:"user_id"`
 	PreOrderID    string `json:"pre_order_id"`
 	CouponID      string `json:"coupon_id,omitempty"`
 	AddressID     int32  `json:"address_id"`
 	PaymentMethod int32  `json:"payment_method"`
 }
 
+type CancelOrderHTTPRequest struct {
+	UserID       uint32 `json:"user_id"`
+	OrderID      string `json:"order_id"`
+	CancelReason string `json:"cancel_reason,omitempty"`
+}
+
 type CreateOrderHTTPResponse struct {
 	Order   OrderAPIOrder   `json:"order"`
 	Items   []OrderAPIItem  `json:"items"`
 	Address OrderAPIAddress `json:"address"`
+}
+
+type CancelOrderHTTPResponse struct {
+	OrderID string `json:"order_id"`
 }
 
 type OrderAPIOrder struct {
@@ -75,26 +83,24 @@ type OrderAPIAddress struct {
 	OrderID         string `json:"order_id"`
 }
 
-type orderAPIEnvelope struct {
-	Code int                     `json:"code"`
-	Msg  string                  `json:"msg"`
-	Data CreateOrderHTTPResponse `json:"data"`
-}
-
 type OrderAPIClient struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL          string
+	httpClient       *http.Client
+	internalClientIP string
 }
 
-func NewOrderAPIClient(baseURL string, timeout time.Duration) *OrderAPIClient {
+func NewOrderAPIClient(baseURL string, timeout time.Duration, internalClientIP ...string) *OrderAPIClient {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	clientIP := "127.0.0.1"
+	if len(internalClientIP) > 0 && strings.TrimSpace(internalClientIP[0]) != "" {
+		clientIP = strings.TrimSpace(internalClientIP[0])
+	}
 	return &OrderAPIClient{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		baseURL:          strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		internalClientIP: clientIP,
+		httpClient:       &http.Client{Timeout: timeout},
 	}
 }
 
@@ -106,65 +112,52 @@ func (c *OrderAPIClient) CreateOrder(ctx context.Context, req CreateOrderHTTPReq
 	if !ok || execution.UserID == 0 {
 		return nil, helper.ErrToolExecutionContext
 	}
-	if strings.TrimSpace(execution.AccessToken) == "" {
-		return nil, fmt.Errorf("%w: access token missing", helper.ErrToolExecutionContext)
-	}
-	if strings.TrimSpace(execution.RefreshToken) == "" {
-		return nil, fmt.Errorf("%w: refresh token missing", helper.ErrToolExecutionContext)
-	}
-	if strings.TrimSpace(execution.ClientIP) == "" {
+	if execution.ClientIP == "" {
 		return nil, fmt.Errorf("%w: client ip missing", helper.ErrToolExecutionContext)
 	}
 
+	req.UserID = uint32(execution.UserID)
 	req.PaymentMethod = PaymentMethodAlipay
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: marshal order create request: %v", helper.ErrInvalidToolArguments, err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+orderCreatePath, bytes.NewReader(body))
-	if err != nil {
+	var out CreateOrderHTTPResponse
+	if err := httpclient.DoJSONEnvelope(ctx, http.MethodPost, c.baseURL+orderCreatePath, req, &out, c.requestOptions(execution.ClientIP)...); err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set(biz.TokenKey, execution.AccessToken)
-	httpReq.Header.Set("X-Real-IP", execution.ClientIP)
-	httpReq.AddCookie(&http.Cookie{Name: biz.RefreshTokenKey, Value: execution.RefreshToken})
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxOrderAPIResp))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("order_create http status %d: %s", resp.StatusCode, truncateOrderAPIError(raw))
-	}
-
-	var envelope orderAPIEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("decode order_create response: %w", err)
-	}
-	if envelope.Code != 0 {
-		msg := strings.TrimSpace(envelope.Msg)
-		if msg == "" {
-			msg = "order_create http business error"
-		}
-		return nil, fmt.Errorf("order_create http code=%d msg=%s", envelope.Code, msg)
-	}
-	if strings.TrimSpace(envelope.Data.Order.OrderID) == "" {
+	if out.Order.OrderID == "" {
 		return nil, fmt.Errorf("order_create http returned empty order")
 	}
-	return &envelope.Data, nil
+	return &out, nil
 }
 
-func truncateOrderAPIError(raw []byte) string {
-	text := strings.TrimSpace(string(raw))
-	if len(text) > 512 {
-		return text[:512]
+func (c *OrderAPIClient) CancelOrder(ctx context.Context, req CancelOrderHTTPRequest) (*CancelOrderHTTPResponse, error) {
+	if c == nil || c.httpClient == nil || c.baseURL == "" {
+		return nil, fmt.Errorf("%w: order api client not initialized", helper.ErrToolExecutionContext)
 	}
-	return text
+	execution, ok := helper.ToolExecutionFromContext(ctx)
+	if !ok || execution.UserID == 0 {
+		return nil, helper.ErrToolExecutionContext
+	}
+	if execution.ClientIP == "" {
+		return nil, fmt.Errorf("%w: client ip missing", helper.ErrToolExecutionContext)
+	}
+
+	req.UserID = uint32(execution.UserID)
+	var out CancelOrderHTTPResponse
+	if err := httpclient.DoJSONEnvelope(ctx, http.MethodPost, c.baseURL+orderCancelPath, req, &out, c.requestOptions(execution.ClientIP)...); err != nil {
+		return nil, err
+	}
+	if out.OrderID == "" {
+		return nil, fmt.Errorf("order_cancel http returned empty order")
+	}
+	return &out, nil
+}
+
+func (c *OrderAPIClient) requestOptions(clientIP string) []httpclient.Option {
+	ip := c.internalClientIP
+	if ip == "" {
+		ip = clientIP
+	}
+	return []httpclient.Option{
+		httpclient.WithClient(c.httpClient),
+		httpclient.WithHeader("X-Real-IP", ip),
+	}
 }

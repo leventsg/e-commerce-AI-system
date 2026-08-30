@@ -99,6 +99,7 @@ ToolTimeout:
 OrderAPI:
   BaseURL: ${AI_ORDER_API_BASE_URL}
   Timeout: 5000
+  InternalClientIP: ${AI_ORDER_API_INTERNAL_CLIENT_IP}
 
 RAG:
   Enabled: true

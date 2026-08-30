@@ -93,6 +93,7 @@ ToolTimeout:
 OrderAPI:
   BaseURL: "http://localhost:8004"
   Timeout: 5000
+  InternalClientIP: "127.0.0.1"
 
 RAG:
   Enabled: true

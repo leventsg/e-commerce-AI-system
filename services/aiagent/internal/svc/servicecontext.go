@@ -136,17 +136,17 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ragRedisClient,
 		c.Eino,
 	)
-	orderAPIClient := order_tools.NewOrderAPIClient(c.OrderAPI.BaseURL, time.Duration(c.OrderAPI.Timeout)*time.Millisecond)
+	orderAPIClient := order_tools.NewOrderAPIClient(c.OrderAPI.BaseURL, time.Duration(c.OrderAPI.Timeout)*time.Millisecond, c.OrderAPI.InternalClientIP)
 	// 业务工具实例集合
 	businessTools := aitools.DefaultBusinessTools(aitools.DefaultToolClients{
-		Product:        productRPC,
-		Inventory:      inventoryRPC,
-		Order:          orderRPC,
-		OrderCreateAPI: orderAPIClient,
-		Cart:           cartRPC,
-		Coupon:         couponRPC,
-		Checkout:       checkoutRPC,
-		User:           userRPC,
+		Product:   productRPC,
+		Inventory: inventoryRPC,
+		Order:     orderRPC,
+		OrderAPI:  orderAPIClient,
+		Cart:      cartRPC,
+		Coupon:    couponRPC,
+		Checkout:  checkoutRPC,
+		User:      userRPC,
 	}, c.ToolTimeout)
 	// 非业务工具实例集合
 	capabilityTools := aitools.DefaultCapabilityTools(aitools.CapabilityDeps{

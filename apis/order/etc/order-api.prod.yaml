@@ -51,3 +51,7 @@ CouponsRpc:
 AuthsRpc:
   Target: consul://${CONSUL_HOST}/auths.rpc?wait=14s
   NonBlock: true
+
+InternalCall:
+  AllowedIPs:
+    - ${ORDER_API_INTERNAL_ALLOWED_IPS}

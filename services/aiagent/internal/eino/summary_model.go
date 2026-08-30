@@ -38,6 +38,7 @@ func (s *summarySummarizer) Summarize(ctx context.Context, req contextmanager.Su
 	if err != nil {
 		return contextmanager.SummarizeResult{}, err
 	}
+	logx.Infof("对话压缩user_prompt：%s, 用户id：%d, 会话id：%s", userPrompt, req.UserID, req.ConversationID)
 	response, err := chatModel.Generate(ctx, []*schema.Message{
 		schema.SystemMessage(summaryprompt.SystemPrompt),
 		schema.UserMessage(userPrompt),

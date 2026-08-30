@@ -1,0 +1,67 @@
+{
+  "notes": "Descriptive tau2 metadata only. The live Go backend is the business source of truth.",
+  "users": [
+    {
+      "id": "authenticated_user",
+      "name": "current logged-in customer",
+      "expected_use": "identity must come from the customer-service auth token"
+    }
+  ],
+  "products": [
+    {
+      "name": "LED study lamp",
+      "category": "desk_lamp",
+      "expected_use": "product search, cart add, checkout, order creation, and compensation scenarios"
+    },
+    {
+      "name": "Warm bedside lamp",
+      "category": "bedside_lamp",
+      "expected_use": "intent-change and final-selection validation"
+    },
+    {
+      "name": "USB-C cable",
+      "category": "electronics_accessory",
+      "expected_use": "partial success and out-of-stock handling"
+    }
+  ],
+  "coupons": [
+    {
+      "kind": "ELEC20 claimable coupon",
+      "expected_use": "coupon listing, claim, checkout, and order-discount scenarios"
+    },
+    {
+      "kind": "VIP50 ineligible coupon",
+      "expected_use": "eligibility rejection and non-retryable business error scenarios"
+    }
+  ],
+  "orders": [
+    {
+      "kind": "ORD-20260820-LAMP",
+      "expected_use": "latest order status, shipment, and coupon usage"
+    },
+    {
+      "kind": "ORD-20260822-LAMP",
+      "expected_use": "pronoun-based unpaid order cancellation"
+    },
+    {
+      "kind": "FOREIGN-20260822",
+      "expected_use": "ownership validation and forbidden-resource tests"
+    }
+  ],
+  "cart_items": [
+    {
+      "kind": "existing or newly added cart item",
+      "expected_use": "cart list, cart sub, and cart delete tests"
+    }
+  ],
+  "addresses": [
+    {
+      "kind": "default shipping address",
+      "expected_use": "checkout and address lookup"
+    },
+    {
+      "kind": "new address fixture",
+      "expected_use": "address add, update, and delete tests"
+    }
+  ]
+}

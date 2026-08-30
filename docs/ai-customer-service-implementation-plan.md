@@ -1459,3 +1459,22 @@ go test ./...
 - UserProfile 只来源于 AI 聊天过程，异步抽取为 JSON，并支持明确偏好、稳定模式、主动纠正和删除/遗忘偏好四类更新。
 - waiting_confirmation 可以跨实例恢复，重复恢复不会重复执行写 RPC。
 - 每次模型调用可以通过结构化日志追踪摘要覆盖水位、近期消息范围、最近工具结果和历史工具引用数量。
+
+## 订单高风险工具内部 API 调整
+
+**目标：** `order_create` 和 `order_cancel` 统一调用 order-api 内部 HTTP 入口，确保取消订单也走订单 API 编排路径，并复用预库存、优惠券、结算释放链路。
+
+- [x] 新增 `common/httpclient`，统一发送 JSON 请求、限制响应体大小，并解析 `{code,msg,data}` envelope。
+- [x] order-api 新增 `/douyin/order/internal/create` 与 `/douyin/order/internal/cancel`，不挂外部 token 鉴权，只基于连接来源 IP 白名单放行。
+- [x] 内部 handler 从请求体读取 `user_id`，校验内部来源后注入 `biz.UserIDKey`，再复用现有 create/cancel logic。
+- [x] AI order tool 将 `OrderCreateAPI` 扩展为 `OrderAPI`，`order_create` 和 `order_cancel` 都调用内部 HTTP API。
+- [x] `order_cancel` 工具 metadata 从 `OrderService/CancelOrder` 调整为 `OrderAPI/CancelOrder`。
+
+验证命令：
+
+```bash
+go test ./common/...
+go test ./apis/order/...
+go test ./apis/ai/...
+go test ./services/aiagent/internal/tools/business/order
+```

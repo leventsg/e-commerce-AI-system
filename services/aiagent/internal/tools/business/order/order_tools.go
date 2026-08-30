@@ -18,12 +18,9 @@ type OrderQueryRPC interface {
 	ListOrders(ctx context.Context, in *orderservice.ListOrdersRequest, opts ...grpc.CallOption) (*orderservice.ListOrdersResponse, error)
 }
 
-type OrderHighRiskRPC interface {
-	CancelOrder(ctx context.Context, in *orderservice.CancelOrderRequest, opts ...grpc.CallOption) (*orderservice.EmptyRes, error)
-}
-
-type OrderCreateAPI interface {
+type OrderAPI interface {
 	CreateOrder(ctx context.Context, req CreateOrderHTTPRequest) (*CreateOrderHTTPResponse, error)
+	CancelOrder(ctx context.Context, req CancelOrderHTTPRequest) (*CancelOrderHTTPResponse, error)
 }
 
 func OrderQueryHandlers(rpc OrderQueryRPC) map[string]core.HandlerFunc {
@@ -36,24 +33,24 @@ func OrderQueryHandlers(rpc OrderQueryRPC) map[string]core.HandlerFunc {
 	}
 }
 
-func OrderHighRiskHandlers(createAPI OrderCreateAPI, cancelRPC OrderHighRiskRPC) map[string]core.HandlerFunc {
-	if createAPI == nil && cancelRPC == nil {
+func OrderHighRiskHandlers(api OrderAPI) map[string]core.HandlerFunc {
+	if api == nil {
 		return nil
 	}
 	return map[string]core.HandlerFunc{
-		domain.ToolOrderCreate: orderCreateHandler(createAPI),
-		domain.ToolOrderCancel: orderCancelHandler(cancelRPC),
+		domain.ToolOrderCreate: orderCreateHandler(api),
+		domain.ToolOrderCancel: orderCancelHandler(api),
 	}
 }
 
 // 创建订单工具处理函数
-func orderCreateHandler(api OrderCreateAPI) core.HandlerFunc {
+func orderCreateHandler(api OrderAPI) core.HandlerFunc {
 	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
 		if api == nil {
 			return core.HandlerResult{}, fmt.Errorf("order_create handler unavailable")
 		}
 		// 解析参数
-		_, err := helper.AuthenticatedUserID32(req.UserID)
+		userID, err := helper.AuthenticatedUserID32(req.UserID)
 		if err != nil {
 			return core.HandlerResult{}, err
 		}
@@ -75,6 +72,7 @@ func orderCreateHandler(api OrderCreateAPI) core.HandlerFunc {
 		}
 		// 调用 order-api 创建订单，由 API 完成优惠券锁定、结算锁定和订单创建 saga。
 		resp, err := api.CreateOrder(ctx, CreateOrderHTTPRequest{
+			UserID:        uint32(userID),
 			PreOrderID:    preOrderID,
 			CouponID:      couponID,
 			AddressID:     addressID,
@@ -99,7 +97,7 @@ func orderCreateHandler(api OrderCreateAPI) core.HandlerFunc {
 	}
 }
 
-func orderCancelHandler(rpc OrderHighRiskRPC) core.HandlerFunc {
+func orderCancelHandler(api OrderAPI) core.HandlerFunc {
 	return func(ctx context.Context, req core.HandlerRequest) (core.HandlerResult, error) {
 		userID, err := helper.AuthenticatedUserID32(req.UserID)
 		if err != nil {
@@ -113,20 +111,16 @@ func orderCancelHandler(rpc OrderHighRiskRPC) core.HandlerFunc {
 		if err != nil {
 			return core.HandlerResult{}, err
 		}
-		resp, err := rpc.CancelOrder(ctx, &orderservice.CancelOrderRequest{
-			OrderId:      orderID,
-			UserId:       uint32(userID),
+		resp, err := api.CancelOrder(ctx, CancelOrderHTTPRequest{
+			UserID:       uint32(userID),
+			OrderID:      orderID,
 			CancelReason: reason,
-			Initiative:   true,
 		})
 		if err != nil {
-			return core.HandlerResult{}, fmt.Errorf("order_cancel rpc: %w", err)
+			return core.HandlerResult{}, fmt.Errorf("order_cancel http: %w", err)
 		}
 		if resp == nil {
 			return core.HandlerResult{}, fmt.Errorf("order_cancel returned nil response")
-		}
-		if err := helper.ValidateRPCResponse("order_cancel", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
-			return core.HandlerResult{}, err
 		}
 		return core.HandlerResult{
 			Data:    map[string]any{"order_id": orderID, "reason": reason},

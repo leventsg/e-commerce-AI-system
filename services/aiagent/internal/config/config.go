@@ -30,8 +30,9 @@ type ConfirmationConfig struct {
 }
 
 type OrderAPIConfig struct {
-	BaseURL string
-	Timeout int64
+	BaseURL          string
+	Timeout          int64
+	InternalClientIP string
 }
 
 type RAGConfig struct {

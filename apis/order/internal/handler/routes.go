@@ -38,4 +38,22 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 		),
 		rest.WithPrefix("/douyin/order"),
 	)
+	server.AddRoutes(
+		rest.WithMiddlewares(
+			[]rest.Middleware{InternalCallMiddleware(serverCtx.Config.InternalCall)},
+			[]rest.Route{
+				{
+					Method:  http.MethodPost,
+					Path:    "/cancel",
+					Handler: InternalCancelOrderHandler(serverCtx),
+				},
+				{
+					Method:  http.MethodPost,
+					Path:    "/create",
+					Handler: InternalCreateOrderHandler(serverCtx),
+				},
+			}...,
+		),
+		rest.WithPrefix("/douyin/order/internal"),
+	)
 }

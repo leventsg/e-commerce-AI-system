@@ -1,0 +1,129 @@
+{
+  "smoke": [
+    "reg_read_latest_order_status",
+    "reg_product_search_budget_lamp",
+    "reg_cart_add_specific_product",
+    "reg_order_create_requires_confirmation",
+    "bench_pronoun_cancel_latest_unpaid_order"
+  ],
+  "regression": [
+    "reg_read_latest_order_status",
+    "reg_product_search_budget_lamp",
+    "reg_cart_add_specific_product",
+    "reg_coupon_claim_valid_coupon",
+    "reg_address_add_complete_shipping_address",
+    "reg_order_create_requires_confirmation",
+    "reg_order_cancel_reject_confirmation",
+    "reg_auth_user_id_injection"
+  ],
+  "benchmark": [
+    "bench_pronoun_cancel_latest_unpaid_order",
+    "bench_resume_checkout_after_interruption",
+    "bench_coupon_product_checkout_multi_agent",
+    "bench_rag_return_policy_for_delivered_order",
+    "bench_timeout_before_cart_add",
+    "bench_timeout_after_order_create_unknown_status",
+    "bench_idempotent_retry_checkout_prepare",
+    "bench_non_retryable_coupon_business_error",
+    "bench_saga_inventory_reserved_order_failed",
+    "bench_compensation_failure_handoff",
+    "bench_reject_confirmation_no_side_effect",
+    "bench_confirm_after_parameter_change_invalidates_confirmation",
+    "bench_stale_confirmation_replay",
+    "bench_cross_user_order_injection",
+    "bench_long_context_tool_fact_projection",
+    "bench_user_changes_mind_after_recommendation",
+    "bench_supervisor_route_mixed_order_and_coupon",
+    "bench_subagent_information_insufficient_address",
+    "bench_prompt_injection_in_memory_event",
+    "bench_tool_partial_success_cart_batch"
+  ],
+  "read": [
+    "reg_read_latest_order_status",
+    "reg_product_search_budget_lamp",
+    "bench_rag_return_policy_for_delivered_order",
+    "bench_supervisor_route_mixed_order_and_coupon"
+  ],
+  "write_low": [
+    "reg_cart_add_specific_product",
+    "reg_coupon_claim_valid_coupon",
+    "reg_address_add_complete_shipping_address",
+    "bench_user_changes_mind_after_recommendation",
+    "bench_subagent_information_insufficient_address",
+    "bench_tool_partial_success_cart_batch"
+  ],
+  "confirmation": [
+    "reg_order_create_requires_confirmation",
+    "reg_order_cancel_reject_confirmation",
+    "bench_pronoun_cancel_latest_unpaid_order",
+    "bench_reject_confirmation_no_side_effect",
+    "bench_confirm_after_parameter_change_invalidates_confirmation",
+    "bench_stale_confirmation_replay",
+    "bench_prompt_injection_in_memory_event"
+  ],
+  "context": [
+    "bench_pronoun_cancel_latest_unpaid_order",
+    "bench_resume_checkout_after_interruption",
+    "bench_long_context_tool_fact_projection",
+    "bench_user_changes_mind_after_recommendation",
+    "bench_prompt_injection_in_memory_event"
+  ],
+  "multi_agent": [
+    "bench_coupon_product_checkout_multi_agent",
+    "bench_supervisor_route_mixed_order_and_coupon",
+    "bench_subagent_information_insufficient_address"
+  ],
+  "reliability": [
+    "bench_timeout_before_cart_add",
+    "bench_timeout_after_order_create_unknown_status",
+    "bench_idempotent_retry_checkout_prepare",
+    "bench_non_retryable_coupon_business_error",
+    "bench_tool_partial_success_cart_batch"
+  ],
+  "transaction": [
+    "bench_saga_inventory_reserved_order_failed",
+    "bench_compensation_failure_handoff"
+  ],
+  "rag_tool": [
+    "bench_rag_return_policy_for_delivered_order"
+  ],
+  "safety": [
+    "reg_auth_user_id_injection",
+    "reg_order_cancel_reject_confirmation",
+    "bench_reject_confirmation_no_side_effect",
+    "bench_confirm_after_parameter_change_invalidates_confirmation",
+    "bench_stale_confirmation_replay",
+    "bench_cross_user_order_injection",
+    "bench_prompt_injection_in_memory_event"
+  ],
+  "all": [
+    "reg_read_latest_order_status",
+    "reg_product_search_budget_lamp",
+    "reg_cart_add_specific_product",
+    "reg_coupon_claim_valid_coupon",
+    "reg_address_add_complete_shipping_address",
+    "reg_order_create_requires_confirmation",
+    "reg_order_cancel_reject_confirmation",
+    "reg_auth_user_id_injection",
+    "bench_pronoun_cancel_latest_unpaid_order",
+    "bench_resume_checkout_after_interruption",
+    "bench_coupon_product_checkout_multi_agent",
+    "bench_rag_return_policy_for_delivered_order",
+    "bench_timeout_before_cart_add",
+    "bench_timeout_after_order_create_unknown_status",
+    "bench_idempotent_retry_checkout_prepare",
+    "bench_non_retryable_coupon_business_error",
+    "bench_saga_inventory_reserved_order_failed",
+    "bench_compensation_failure_handoff",
+    "bench_reject_confirmation_no_side_effect",
+    "bench_confirm_after_parameter_change_invalidates_confirmation",
+    "bench_stale_confirmation_replay",
+    "bench_cross_user_order_injection",
+    "bench_long_context_tool_fact_projection",
+    "bench_user_changes_mind_after_recommendation",
+    "bench_supervisor_route_mixed_order_and_coupon",
+    "bench_subagent_information_insufficient_address",
+    "bench_prompt_injection_in_memory_event",
+    "bench_tool_partial_success_cart_batch"
+  ]
+}

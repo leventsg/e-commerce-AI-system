@@ -40,6 +40,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      port: 5174,
       fs: {
         allow: [fileURLToPath(new URL('..', import.meta.url))],
       },

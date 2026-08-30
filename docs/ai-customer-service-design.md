@@ -617,3 +617,14 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 运营配置。
 - 模型切换。
 - 限流和监控。
+
+## 订单 API 内部调用补充
+
+AI 智能客服的高风险订单写操作统一通过 order-api 内部 HTTP 入口执行，不再让 `order_cancel` 直接调用 order RPC。内部入口包括：
+
+- `POST /douyin/order/internal/create`
+- `POST /douyin/order/internal/cancel`
+
+这两个入口只允许内部服务调用，不增加 token。order-api 必须基于 HTTP 连接来源 `RemoteAddr` 做 IP 白名单校验，不能把 `X-Real-IP`、`X-Forwarded-For` 等可伪造请求头作为授权依据。内部请求体携带 `user_id`，order-api 校验来源 IP 后把该 `user_id` 注入服务端 context，再复用现有创建订单和取消订单 logic。
+
+`services/aiagent` 侧保留 Execution Guard 作为可信用户 ID 来源，模型参数中的 `user_id` 继续被忽略。`order_create` 和 `order_cancel` handler 都把 Guard 注入的用户 ID 写入内部 HTTP 请求体，并通过 common HTTP JSON client 统一发送和解析 `{code,msg,data}` 响应。

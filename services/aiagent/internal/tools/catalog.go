@@ -21,7 +21,6 @@ type CartRPC interface {
 
 type OrderRPC interface {
 	order.OrderQueryRPC
-	order.OrderHighRiskRPC
 }
 
 type CouponRPC interface {
@@ -45,8 +44,7 @@ type DefaultToolClients struct {
 	Inventory       inventory.InventoryQueryRPC
 	Order           OrderRPC
 	OrderQuery      order.OrderQueryRPC
-	OrderHighRisk   order.OrderHighRiskRPC
-	OrderCreateAPI  order.OrderCreateAPI
+	OrderAPI        order.OrderAPI
 	Cart            CartRPC
 	CartQuery       cart.CartQueryRPC
 	CartWrite       cart.CartWriteRPC
@@ -77,10 +75,8 @@ func DefaultBusinessTools(clients DefaultToolClients, timeout config.ToolTimeout
 	// 工具执行函数
 	handlers := make(map[string]core.HandlerFunc)
 	orderQuery := clients.OrderQuery
-	orderHighRisk := clients.OrderHighRisk
 	if clients.Order != nil {
 		orderQuery = clients.Order
-		orderHighRisk = clients.Order
 	}
 	cartQuery := clients.CartQuery
 	cartWrite := clients.CartWrite
@@ -113,7 +109,7 @@ func DefaultBusinessTools(clients DefaultToolClients, timeout config.ToolTimeout
 	mergeHandlers(handlers, product.ProductQueryHandlers(clients.Product))
 	mergeHandlers(handlers, inventory.InventoryQueryHandlers(clients.Inventory))
 	mergeHandlers(handlers, order.OrderQueryHandlers(orderQuery))
-	mergeHandlers(handlers, order.OrderHighRiskHandlers(clients.OrderCreateAPI, orderHighRisk))
+	mergeHandlers(handlers, order.OrderHighRiskHandlers(clients.OrderAPI))
 	mergeHandlers(handlers, cart.CartQueryHandlers(cartQuery))
 	mergeHandlers(handlers, cart.CartWriteHandlers(cartWrite))
 	mergeHandlers(handlers, cart.CartHighRiskHandlers(cartHighRisk))

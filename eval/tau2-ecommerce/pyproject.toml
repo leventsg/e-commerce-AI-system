@@ -1,0 +1,10 @@
+[project]
+name = "tau2-ecommerce-adapter"
+version = "0.1.0"
+description = "tau2-bench adapter for the Go ecommerce AI customer service"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+

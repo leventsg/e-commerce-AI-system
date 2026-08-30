@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蓝松松 - 可编辑简历</title>
+  <style>
+    :root {
+      --blue: #0878ff;
+      --ink: #2f2f2f;
+      --muted: #5c5c5c;
+      --paper: #ffffff;
+      --screen: #eef1f5;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      color: var(--ink);
+      background: var(--screen);
+      font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
+      font-size: 14px;
+      line-height: 1.48;
+      -webkit-font-smoothing: antialiased;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
+
+    body {
+      padding: 22px 0 42px;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 12px;
+      z-index: 20;
+      width: min(210mm, calc(100vw - 24px));
+      margin: 0 auto 14px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid #d8dde6;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 10px 30px rgba(31, 43, 62, 0.13);
+    }
+
+    .toolbar span {
+      color: #4f5b6b;
+      font-size: 13px;
+    }
+
+    .toolbar button {
+      appearance: none;
+      border: 1px solid #c8d2e0;
+      border-radius: 6px;
+      padding: 7px 12px;
+      color: #1d4f94;
+      background: #fff;
+      font: 700 12px/1 "Microsoft YaHei", sans-serif;
+      cursor: pointer;
+    }
+
+    .toolbar button.primary {
+      color: #fff;
+      border-color: var(--blue);
+      background: var(--blue);
+    }
+
+    .resume {
+      display: grid;
+      gap: 18px;
+    }
+
+    .page {
+      position: relative;
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      padding: 13mm 10mm 10mm;
+      background: var(--paper);
+      box-shadow: 0 18px 45px rgba(25, 34, 48, 0.16);
+      overflow: hidden;
+    }
+
+    .header {
+      position: relative;
+      min-height: 39mm;
+      text-align: center;
+    }
+
+    .name {
+      margin: 0 0 5px;
+      color: #222;
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .summary-line,
+    .contact-line {
+      margin: 0;
+      color: #333;
+      font-size: 15px;
+      line-height: 1.9;
+    }
+
+    .sep {
+      display: inline-block;
+      margin: 0 16px;
+      color: #111;
+      font-weight: 600;
+    }
+
+    .photo {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 25.5mm;
+      height: 34mm;
+      object-fit: cover;
+      object-position: center top;
+      border: 0;
+      background: #fff;
+    }
+
+    .section {
+      margin-top: 10px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      margin: 0 0 8px;
+      color: var(--blue);
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .section-title::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      margin-left: 8px;
+      background: var(--blue);
+    }
+
+    .entry {
+      margin: 0 0 8px;
+    }
+
+    .entry-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: baseline;
+      margin-bottom: 3px;
+      font-weight: 800;
+      color: #272727;
+    }
+
+    .date {
+      white-space: nowrap;
+      font-weight: 500;
+    }
+
+    p {
+      margin: 2px 0;
+    }
+
+    ul {
+      margin: 2px 0 0 18px;
+      padding: 0;
+    }
+
+    li {
+      margin: 2px 0;
+      padding-left: 1px;
+    }
+
+    strong {
+      font-weight: 800;
+    }
+
+    .skills li,
+    .self li {
+      margin: 1px 0;
+    }
+
+    [contenteditable="true"] {
+      outline: none;
+    }
+
+    .editing [contenteditable="true"] {
+      outline: 1px dashed rgba(8, 120, 255, 0.36);
+      outline-offset: 2px;
+    }
+
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    @media print {
+      html,
+      body {
+        width: 210mm;
+        background: #fff;
+      }
+
+      body {
+        padding: 0;
+      }
+
+      .toolbar {
+        display: none;
+      }
+
+      .resume {
+        display: block;
+      }
+
+      .page {
+        width: 210mm;
+        height: 297mm;
+        min-height: 297mm;
+        margin: 0;
+        box-shadow: none;
+        page-break-after: always;
+      }
+
+      .page:last-child {
+        page-break-after: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <span>点击正文可直接编辑；打印时此工具栏会自动隐藏。</span>
+    <div>
+      <button type="button" onclick="toggleEditing()">编辑边框</button>
+      <button type="button" class="primary" onclick="window.print()">导出 PDF</button>
+    </div>
+  </div>
+
+  <main class="resume" id="resume">
+    <section class="page" contenteditable="true" spellcheck="false">
+      <header class="header">
+        <h1 class="name">蓝松松</h1>
+        <p class="summary-line">男 <span class="sep">|</span> 25岁</p>
+        <p class="contact-line">17369070912 <span class="sep">|</span> 1960155751@qq.com</p>
+        <img class="photo" src="levent-image-1-1.png" alt="证件照">
+      </header>
+
+      <section class="section">
+        <h2 class="section-title">教育背景</h2>
+        <article class="entry">
+          <div class="entry-head">
+            <div>西南科技大学&nbsp;&nbsp;&nbsp; 软件工程&nbsp;&nbsp;&nbsp; 本科&nbsp;&nbsp;&nbsp; GPA: 3.43/5.0</div>
+            <div class="date">2020-09 - 2024-07</div>
+          </div>
+        </article>
+        <article class="entry">
+          <div class="entry-head">
+            <div>深圳大学&nbsp;&nbsp;&nbsp; 计算机技术&nbsp;&nbsp;&nbsp; 硕士&nbsp;&nbsp;&nbsp; GPA: 3.69/4.0</div>
+            <div class="date">2024-09 - 2027-07</div>
+          </div>
+          <li>硕士二等学业奖学金2次</li>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">实习经历</h2>
+        <article class="entry">
+          <div class="entry-head">
+            <div><img src="https://commonresource-1252524126.cdn.xiaoeknow.com/image/lhyaurs50zil.ico" type="image/x-ico" style="height: 1em; vertical-align: middle; margin-right: 4px;">深圳小鹅网络技术有限公司&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div>
+            <!-- <div>深圳小鹅网络技术有限公司&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div> -->
+            <div class="date">2025-09 - 2026-01</div>
+          </div>
+          <p><strong>实习工作:直播中控台|数据异步导出开发</strong></p>
+          <p><strong>背景：</strong>原数据导出能力位于平台数据模块，随着直播中控台业务扩展，对原有能力进行迁移与重构，并同步优化任务处理、数据查询及权限控制链路。</p>
+          <p><strong>我的职责：</strong></p>
+          <ul>
+            <li><strong>异步导出链路：</strong><strong>负责观众明细、带货明细导出链路设计与落地，围绕字段预检、权限固化、任务入队、异步消费、业务分派、文件交付</strong>拆分完整工作流，将耗时的 Doris 查询及跨服务数据聚合从在线 HTTP 请求中解耦，降低长请求阻塞与超时风险。</li>
+            <li><strong>权限与数据安全：</strong><strong>针对手机号、企微双账号体系</strong>统一收敛角色、部门及邀请人、推广员、线索等多维数据权限，并过滤中控台账号与直播讲师；接入手机号字段级权限校验与脱敏机制，保证<strong>查询范围、导出范围与敏感字段权限一致</strong>。</li>
+            <li><strong>大批量数据处理：</strong><strong>实现流式扫描数据 + 200 条批处理</strong>；批量去重用户、商品 ID，并发聚合用户、企微、商品、评论及订单数据，提高导出效率。</li>
+            <li><strong>框架抽象：</strong><strong>抽象通用导出执行骨架 flowExport，通过SQL 生成器 + 批次处理器</strong>复用观众、带货两类业务的任务编排与数据处理流程。</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">项目经历</h2>
+        <article class="entry">
+          <div class="entry-head">
+            <div>NexusAgent——企业级多 Agent 业务执行平台&nbsp;&nbsp;&nbsp;</div>
+            <div class="date">2025-12 - 2026-02</div>
+          </div>
+          <p><strong>项目简介：</strong>面向商品、库存、订单、购物车、结算、优惠券及售后等电商场景，基于 Go 构建可调用真实业务系统的多 Agent 执行平台，覆盖知识检索、跨域任务规划、交易操作及 Human-in-the-loop 风险控制。</p>
+          <p><strong>技术栈：</strong>Go、go-zero、Eino、RAG、MCP、Skill、SSE、MySQL、Redis、Kafka、Elasticsearch、Prometheus、Grafana</p>
+          <p><strong>主要工作：</strong></p>
+          <ul>
+            <li><strong>多 Agent 任务编排：</strong> 基于 Eino 实现<strong> Supervisor + 5 个领域 Agent</strong>，将领域 Agent 封装为 AgentTool，由 Supervisor 完成任务拆解、依赖分析与结果汇聚；结合动态 Tool 暴露编排<strong> 20+ Native/MCP 工具</strong>，结合<strong>场景化Skill</strong>封装复杂任务策略，端到端任务成功率达到<strong> 82.3%。</strong></li>
+            <li><strong>分层上下文与长期记忆：</strong> 设计<strong> MemoryProvider + ContextBuilder + TaskState</strong>，分离近期消息、Session Summary、用户画像、长期事件及压缩 Tool Context，为 Agent 与外部 RAG 按需注入上下文；基于滑动窗口与游标进行增量记忆巩固，在保持跨轮任务连续性的同时将平均上下文 Token 降低约 <strong> 31% </strong>。</li>
+            <li><strong>可靠执行：</strong>构建 <strong>Tool Gateway + Agent Runtime</strong> 容错链路，统一执行 Schema 校验、可信身份注入、权限及风险控制；针对 Tool 超时、业务异常和未知执行状态进行错误分类、有界重试与幂等恢复，结合 <strong>StatefulInterrupt、Checkpoint、MySQL CAS</strong> 支撑高风险确认及中断续跑，评测样本中越权执行率 <strong>0%</strong>。</li>
+            <li><strong>Agent 自动化评测：</strong> 基于<strong> τ²-bench + 自建 Dataset </strong>构建多轮任务评测集，设计 <strong>120 个任务并完成 360 次仿真执行</strong>，覆盖 Tool Selection、参数补全、RAG、跨 Agent 协作和确认链路；通过 Prompt、Tool Schema 与 Context Retrieval 迭代，使 <strong>Pass¹ 61.7%→82.3%，Pass³ 36.7%→63.3%。</strong></li>
+          </ul>
+        </article>
+        <article class="entry">
+          <div class="entry-head">
+            <div>KnowledgeFlow——企业级知识库数据平台&nbsp;&nbsp;&nbsp;</div>
+            <div class="date">2025-12 - 2026-02</div>
+          </div>
+          <p><strong>项目简介：</strong>面向企业客服、商品资料、运营规范等非结构化知识资产，构建覆盖知识接入、智能加工、混合检索、开放服务与质量评测的统一知识基础设施，为 Agent / RAG 应用提供低耦合、可追溯的 Retrieval 能力。</p>
+          <p><strong>技术栈：</strong>Go、Gin、PostgreSQL、pgvector、Elasticsearch、Redis、MQ、Apache Tika、RAGAS</p>
+          <p><strong>主要工作：</strong></p>
+          <ul>
+            <li><strong>可编排知识入库：</strong>设计节点化 <strong>Ingestion Engine</strong>，将 Fetch、Parse、Enhance、Chunk、Enrich、Index 抽象为可配置 Pipeline，支持条件执行、拓扑校验及节点级状态/耗时记录；结合 MQ 事务任务与状态防重入机制，实现多源文档稳定入库，成功率达 <strong>99%+</strong>。</li>
+            <li><strong>智能查询理解：</strong> 构建 <strong>Query Rewrite + Sub-Question Split + Intent Tree</strong> 检索前处理链路，从请求参数获取上下文完成指代消解和查询补全，并基于动态意图树将子问题路由至对应 Knowledge Base，模型异常时自动降级原始 Query，避免 LLM 成为检索单点故障。</li>
+            <li><strong>多阶段混合检索：</strong> 构建 Vector + BM25 多路并行 Recall，通过<strong>并行召回、结果去重、RRF 融合与 Rerank 精排</strong>提升检索质量，并记录各召回通道在 Rerank 前后的结果归因；相较单路向量检索，<strong>Recall@5 提升 20%+、Context Precision 提升 15%+</strong>。</li>
+            <li><strong>检索能力平台化：</strong> 设计统一 <strong>Retrieval OpenAPI</strong>，通过 API Key 绑定可访问知识库并返回 Chunk、Score 与来源文档；基于 Redis Lua 实现 Key 级 <strong>QPS / 日配额原子限流</strong>，同时记录 HitCount、Latency、Status 与 TraceId，实现 Agent/RAG 应用的权限隔离、用量治理与调用追踪。</li>
+            <li><strong>检索质量闭环：</strong> 建设离线评测链路，统一输出 Retrieved Doc / Chunk / Context、Intent 与 Latency 等检索证据，围绕 <strong>Recall@K、MRR、Precision@K、Context Precision</strong> 对 Chunk 策略、召回通道、RRF 权重及 Rerank 模型进行 A/B 回归，使检索优化从经验调参转化为可量化迭代。</strong></li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">专业技能</h2>
+        <ul class="skills">
+          <li>熟练掌握 <strong>Go</strong>，熟悉<strong>goroutine、channel</strong>等并发编程模型，具备后端服务开发经验</li>
+          <li>熟悉<strong>Eino、LangChain、LangGraph</strong>等大模型应用开发框架,掌握<strong>上下文管理、记忆存储设计、多agent编排</strong></li>
+          <li>熟悉<strong>RAG</strong>完整链路，掌握分块、向量检索召回、重排序策略，熟悉Milvus向量数据库</li>
+          <li>熟悉<strong>MySQL</strong> 使用与基础性能优化，掌握<strong>Redis、ElasticSearch</strong>等常见 NoSQL 数据库</li>
+          <li>熟悉微服务架构，具备 <strong>Kafka、Nginx、Consul</strong> 等中间件使用经验</li>
+          <li>熟悉计算机网络原理，对<strong>HTTP/HTTPS，TCP/UDP协议</strong>有一定的理解</li>
+          <li>熟悉 <strong>Linux</strong> 常用命令，掌握 <strong>Git / GitLab</strong>协作开发流程，了解 <strong>Docker</strong> 容器化部署</li>
+        </ul>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    function toggleEditing() {
+      document.body.classList.toggle("editing");
+    }
+  </script>
+</body>
+</html>

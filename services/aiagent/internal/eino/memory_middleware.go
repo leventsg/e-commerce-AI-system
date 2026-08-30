@@ -99,7 +99,7 @@ func splitFirstSystemMessage(messages []*schema.Message) (*schema.Message, []*sc
 }
 
 func appendRuntimeContextToLatestUser(messages []*schema.Message, runtimeContext string) []*schema.Message {
-	if strings.TrimSpace(runtimeContext) == "" {
+	if runtimeContext == "" {
 		return messages
 	}
 	next := append([]*schema.Message(nil), messages...)
@@ -119,7 +119,7 @@ func appendRuntimeContextToLatestUser(messages []*schema.Message, runtimeContext
 func joinRuntimeContext(messages []domain.ContextMessage) string {
 	var builder strings.Builder
 	for _, message := range messages {
-		if strings.TrimSpace(message.Content) == "" {
+		if message.Content == "" {
 			continue
 		}
 		if builder.Len() > 0 {

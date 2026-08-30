@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 )
 
 func TestRagentClientRetrieve(t *testing.T) {
@@ -63,6 +66,57 @@ func TestParseDecision(t *testing.T) {
 	}
 }
 
+func TestParseDecisionRejectsIncompleteJSON(t *testing.T) {
+	_, err := parseDecision(`{"need_rag":`)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parse rag classifier output") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestParseDecisionRequiresConfidence(t *testing.T) {
+	_, err := parseDecision(`{"need_rag":true,"reason":"policy"}`)
+	if err == nil {
+		t.Fatal("expected missing confidence error")
+	}
+	if !strings.Contains(err.Error(), "confidence is required") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestRagClassifierUsesStructuredJSONModel(t *testing.T) {
+	factory := &fakeRagModelFactory{
+		response: `{"need_rag":true,"confidence":0.8,"reason":"policy"}`,
+	}
+	classifier := newRagClassifier(factory, config.EinoConfig{
+		Provider:  "deepseek",
+		Model:     "deepseek-chat",
+		MaxTokens: 2048,
+	})
+
+	decision, err := classifier.Classify(context.Background(), "退货规则是什么")
+	if err != nil {
+		t.Fatalf("Classify: %v", err)
+	}
+	if !decision.NeedRAG || decision.Confidence != 0.8 {
+		t.Fatalf("decision=%+v", decision)
+	}
+	if factory.chatCalls != 0 {
+		t.Fatalf("NewChatModel calls=%d, want 0", factory.chatCalls)
+	}
+	if factory.structuredCalls != 1 {
+		t.Fatalf("NewStructuredChatModel calls=%d, want 1", factory.structuredCalls)
+	}
+	if factory.structured.Name != "rag_classifier" {
+		t.Fatalf("structured config=%+v", factory.structured)
+	}
+	if factory.cfg.MaxTokens != 64 {
+		t.Fatalf("MaxTokens=%d, want 64", factory.cfg.MaxTokens)
+	}
+}
+
 func TestBuildSourcesDedupesAndTruncates(t *testing.T) {
 	sources := buildSources([]retrievedChunk{
 		{ChunkID: "c1", Content: strings.Repeat("知", 500), Score: 0.9, DocumentID: "d1", DocumentTitle: "doc"},
@@ -89,4 +143,36 @@ func TestRagentClientTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
+}
+
+type fakeRagModelFactory struct {
+	response        string
+	chatCalls       int
+	structuredCalls int
+	cfg             config.EinoConfig
+	structured      eino.StructuredOutputConfig
+}
+
+func (f *fakeRagModelFactory) NewChatModel(ctx context.Context, cfg config.EinoConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error) {
+	f.chatCalls++
+	return &fakeRagChatModel{response: f.response}, nil
+}
+
+func (f *fakeRagModelFactory) NewStructuredChatModel(ctx context.Context, cfg config.EinoConfig, structured eino.StructuredOutputConfig, tools ...*schema.ToolInfo) (model.BaseChatModel, error) {
+	f.structuredCalls++
+	f.cfg = cfg
+	f.structured = structured
+	return &fakeRagChatModel{response: f.response}, nil
+}
+
+type fakeRagChatModel struct {
+	response string
+}
+
+func (m *fakeRagChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	return schema.AssistantMessage(m.response, nil), nil
+}
+
+func (m *fakeRagChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, nil
 }

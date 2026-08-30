@@ -41,3 +41,8 @@ Telemetry:
   Endpoint: http://localhost:14268/api/traces
   Batcher: jaeger
   Sampler: 0.1
+
+InternalCall:
+  AllowedIPs:
+    - "127.0.0.1"
+    - "::1"

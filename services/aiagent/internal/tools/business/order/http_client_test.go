@@ -16,13 +16,18 @@ import (
 )
 
 func TestOrderAPIClientCreateOrder(t *testing.T) {
-	var gotAccessToken, gotClientIP, gotRefreshToken string
+	var gotClientIP string
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAccessToken = r.Header.Get(biz.TokenKey)
+		if r.URL.Path != "/douyin/order/internal/create" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		if got := r.Header.Get(biz.TokenKey); got != "" {
+			t.Fatalf("access token header must not be sent: %q", got)
+		}
 		gotClientIP = r.Header.Get("X-Real-IP")
 		if cookie, err := r.Cookie(biz.RefreshTokenKey); err == nil {
-			gotRefreshToken = cookie.Value
+			t.Fatalf("refresh token cookie must not be sent: %q", cookie.Value)
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
@@ -32,10 +37,8 @@ func TestOrderAPIClientCreateOrder(t *testing.T) {
 	defer server.Close()
 
 	ctx := helper.WithToolExecutionContext(context.Background(), helper.ToolExecutionContext{
-		UserID:       1,
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
-		ClientIP:     "1.2.3.4",
+		UserID:   1,
+		ClientIP: "1.2.3.4",
 	})
 	client := NewOrderAPIClient(server.URL, time.Second)
 	resp, err := client.CreateOrder(ctx, CreateOrderHTTPRequest{
@@ -48,14 +51,47 @@ func TestOrderAPIClientCreateOrder(t *testing.T) {
 	if resp == nil || resp.Order.OrderID != "order-1" {
 		t.Fatalf("resp=%+v", resp)
 	}
-	if gotAccessToken != "access-token" || gotClientIP != "1.2.3.4" || gotRefreshToken != "refresh-token" {
-		t.Fatalf("headers access=%q ip=%q refresh=%q", gotAccessToken, gotClientIP, gotRefreshToken)
+	if gotClientIP != "127.0.0.1" {
+		t.Fatalf("client ip header=%q", gotClientIP)
 	}
 	if gotBody == nil || gotBody["payment_method"] != float64(PaymentMethodAlipay) {
 		t.Fatalf("body=%+v, want payment_method=%d", gotBody, PaymentMethodAlipay)
 	}
-	if _, ok := gotBody["user_id"]; ok {
-		t.Fatalf("request body must not contain user_id: %+v", gotBody)
+	if gotBody["user_id"] != float64(1) {
+		t.Fatalf("request body user_id=%v, want 1", gotBody["user_id"])
+	}
+}
+
+func TestOrderAPIClientCancelOrder(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/douyin/order/internal/cancel" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":0,"msg":"ok","data":{"order_id":"order-1"}}`)
+	}))
+	defer server.Close()
+
+	ctx := helper.WithToolExecutionContext(context.Background(), helper.ToolExecutionContext{
+		UserID:   8,
+		ClientIP: "1.2.3.4",
+	})
+	client := NewOrderAPIClient(server.URL, time.Second)
+	resp, err := client.CancelOrder(ctx, CancelOrderHTTPRequest{
+		OrderID:      "order-1",
+		CancelReason: "changed mind",
+	})
+	if err != nil {
+		t.Fatalf("CancelOrder: %v", err)
+	}
+	if resp == nil || resp.OrderID != "order-1" {
+		t.Fatalf("resp=%+v", resp)
+	}
+	if gotBody["user_id"] != float64(8) || gotBody["order_id"] != "order-1" || gotBody["cancel_reason"] != "changed mind" {
+		t.Fatalf("body=%+v", gotBody)
 	}
 }
 
@@ -67,10 +103,8 @@ func TestOrderAPIClientBusinessError(t *testing.T) {
 	defer server.Close()
 
 	ctx := helper.WithToolExecutionContext(context.Background(), helper.ToolExecutionContext{
-		UserID:       1,
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
-		ClientIP:     "1.2.3.4",
+		UserID:   1,
+		ClientIP: "1.2.3.4",
 	})
 	client := NewOrderAPIClient(server.URL, time.Second)
 	_, err := client.CreateOrder(ctx, CreateOrderHTTPRequest{PreOrderID: "pre-1", AddressID: 9})
@@ -79,8 +113,31 @@ func TestOrderAPIClientBusinessError(t *testing.T) {
 	}
 }
 
+func TestOrderCancelHandlerUsesAPIAndTrustedUserID(t *testing.T) {
+	fake := &fakeOrderAPI{}
+	handler := orderCancelHandler(fake)
+	result, err := handler(context.Background(), core.HandlerRequest{
+		UserID: 7,
+		Arguments: map[string]any{
+			"user_id":  999,
+			"order_id": "order-1",
+			"reason":   "changed mind",
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if fake.cancelReq.UserID != 7 || fake.cancelReq.OrderID != "order-1" || fake.cancelReq.CancelReason != "changed mind" {
+		t.Fatalf("cancelReq=%+v", fake.cancelReq)
+	}
+	data, ok := result.Data.(map[string]any)
+	if !ok || data["order_id"] != "order-1" {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
 func TestOrderCreateHandlerFixedAlipay(t *testing.T) {
-	fake := &fakeOrderCreateAPI{}
+	fake := &fakeOrderAPI{}
 	handler := orderCreateHandler(fake)
 	result, err := handler(context.Background(), core.HandlerRequest{
 		UserID: 7,
@@ -92,19 +149,25 @@ func TestOrderCreateHandlerFixedAlipay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	if fake.req.PaymentMethod != PaymentMethodAlipay || fake.req.PreOrderID != "pre-1" || fake.req.AddressID != 9 {
-		t.Fatalf("req=%+v", fake.req)
+	if fake.createReq.PaymentMethod != PaymentMethodAlipay || fake.createReq.PreOrderID != "pre-1" || fake.createReq.AddressID != 9 {
+		t.Fatalf("req=%+v", fake.createReq)
 	}
 	if !strings.Contains(result.Summary, "支付宝") {
 		t.Fatalf("summary=%q", result.Summary)
 	}
 }
 
-type fakeOrderCreateAPI struct {
-	req CreateOrderHTTPRequest
+type fakeOrderAPI struct {
+	createReq CreateOrderHTTPRequest
+	cancelReq CancelOrderHTTPRequest
 }
 
-func (f *fakeOrderCreateAPI) CreateOrder(_ context.Context, req CreateOrderHTTPRequest) (*CreateOrderHTTPResponse, error) {
-	f.req = req
+func (f *fakeOrderAPI) CreateOrder(_ context.Context, req CreateOrderHTTPRequest) (*CreateOrderHTTPResponse, error) {
+	f.createReq = req
 	return &CreateOrderHTTPResponse{Order: OrderAPIOrder{OrderID: "order-1"}}, nil
+}
+
+func (f *fakeOrderAPI) CancelOrder(_ context.Context, req CancelOrderHTTPRequest) (*CancelOrderHTTPResponse, error) {
+	f.cancelReq = req
+	return &CancelOrderHTTPResponse{OrderID: req.OrderID}, nil
 }

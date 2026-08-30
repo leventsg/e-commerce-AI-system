@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"strings"
 	"time"
+
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 var _ CouponsModel = (*customCouponsModel)(nil)
@@ -54,7 +55,7 @@ func (m *customCouponsModel) GetCouponTypeByID(ctx context.Context, session sqlx
 }
 
 func (m *customCouponsModel) FindOneWithLock(ctx context.Context, session sqlx.Session, id string) (*Coupons, error) {
-	query := fmt.Sprintf("SELECT %s FROM %s WHERE `id` = ? FOR SHARE", couponsRows, m.table)
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE `id` = ? FOR UPDATE", couponsRows, m.table)
 	var resp Coupons
 	err := session.QueryRowCtx(ctx, &resp, query, id)
 	return &resp, err
