@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蓝松松 - ASu酥化版可编辑简历</title>
+  <style>
+    :root {
+      --blue: #2458b8;
+      --ink: #202124;
+      --muted: #5f6673;
+      --line: #d9e2f2;
+      --panel: #f3f4f6;
+      --paper: #fff;
+      --screen: #eef1f5;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      color: var(--ink);
+      background: var(--screen);
+      font-family: "Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font-size: 10.3px;
+      line-height: 1.34;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
+
+    body { padding: 12px 0 24px; }
+
+    .toolbar {
+      position: sticky;
+      top: 10px;
+      z-index: 20;
+      width: min(210mm, calc(100vw - 24px));
+      margin: 0 auto 12px;
+      padding: 9px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid #d3dbe8;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .97);
+      box-shadow: 0 10px 28px rgba(30, 41, 59, .13);
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    select,
+    input[type="color"],
+    button {
+      height: 30px;
+      border: 1px solid #c8d2e0;
+      border-radius: 6px;
+      background: #fff;
+      color: #1d3354;
+      font: 700 12px/1 "Microsoft YaHei", sans-serif;
+    }
+
+    select { padding: 0 8px; }
+    input[type="color"] { width: 34px; padding: 2px; }
+
+    button {
+      min-width: 32px;
+      padding: 0 9px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      color: #fff;
+      border-color: var(--blue);
+      background: var(--blue);
+    }
+
+    .resume {
+      width: 210mm;
+      margin: 0 auto;
+      display: grid;
+      gap: 10px;
+    }
+
+    .sheet {
+      position: relative;
+      width: 210mm;
+      min-height: 297mm;
+      padding: 10mm 11mm 9mm;
+      background: var(--paper);
+      box-shadow: 0 18px 45px rgba(25, 34, 48, .16);
+      overflow: hidden;
+    }
+
+    body.long-page .sheet {
+      min-height: 297mm;
+      height: auto;
+      overflow: visible;
+    }
+
+    .resume-content { outline: none; }
+
+    .editing [contenteditable="true"] {
+      outline: 1px dashed rgba(36, 88, 184, .38);
+      outline-offset: 2px;
+    }
+
+    .header {
+      position: relative;
+      min-height: 31mm;
+      padding-right: 28mm;
+      text-align: center;
+    }
+
+    .name {
+      margin: 0 0 3px;
+      color: #111827;
+      font-size: 23px;
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .headline,
+    .contact-line {
+      margin: 0;
+      color: #222;
+      line-height: 1.48;
+    }
+
+    .headline { font-size: 11.5px; font-weight: 800; }
+    .contact-line { font-size: 10.5px; }
+
+    .sep {
+      display: inline-block;
+      margin: 0 7px;
+      color: #9aa3b2;
+      font-weight: 700;
+    }
+
+    .photo-box {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 22mm;
+      height: 30mm;
+      display: grid;
+      place-items: center;
+      border: 1px solid #dfe5ee;
+      background: #fff;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .photo-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center top;
+    }
+
+    .section { margin-top: 5.5px; }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 4px;
+      color: var(--blue);
+      font-size: 16px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .section-title::after {
+      content: "";
+      flex: 1;
+      height: 1.5px;
+      background: var(--blue);
+    }
+
+    .entry { margin: 0 0 5px; break-inside: avoid; }
+
+    .entry-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: baseline;
+      margin: 0 0 2px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: var(--panel);
+      font-weight: 900;
+    }
+
+    .entry-title {
+      min-width: 0;
+      color: #171717;
+      overflow-wrap: anywhere;
+    }
+
+    .date {
+      color: #343a46;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+
+    .project-title {
+      margin: 2px 0 1px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    p { margin: 1.2px 0; }
+
+    ul {
+      margin: 1.2px 0 0 14px;
+      padding: 0;
+    }
+
+    li {
+      margin: 1.1px 0;
+      padding-left: 0;
+    }
+
+    strong { font-weight: 900; }
+    a { color: var(--blue); text-decoration: none; overflow-wrap: anywhere; }
+
+    .compact-list li { margin: .8px 0; }
+
+    @page { size: A4; margin: 0; }
+
+    @media print {
+      html,
+      body {
+        width: 210mm;
+        background: #fff;
+      }
+
+      body { padding: 0; }
+      .toolbar { display: none; }
+      .resume { display: block; width: 210mm; }
+
+      .sheet {
+        width: 210mm;
+        min-height: 297mm;
+        height: 297mm;
+        margin: 0;
+        box-shadow: none;
+        page-break-after: always;
+      }
+
+      body.long-page .sheet {
+        height: auto;
+        page-break-after: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <button type="button" title="撤销" onclick="document.execCommand('undo')">↶</button>
+      <button type="button" title="重做" onclick="document.execCommand('redo')">↷</button>
+      <button type="button" title="加粗" onclick="document.execCommand('bold')">B</button>
+      <select title="页面模式" onchange="setPageMode(this.value)">
+        <option value="paged">A4 分页</option>
+        <option value="long">A4 长页</option>
+      </select>
+      <select title="字体" onchange="document.execCommand('fontName', false, this.value)">
+        <option value="Microsoft YaHei">微软雅黑</option>
+        <option value="SimHei">黑体</option>
+        <option value="Times New Roman">Times</option>
+      </select>
+      <select title="字号" onchange="document.execCommand('fontSize', false, this.value)">
+        <option value="2">小</option>
+        <option value="3" selected>正文</option>
+        <option value="4">大</option>
+      </select>
+      <input type="color" title="文字颜色" value="#202124" onchange="document.execCommand('foreColor', false, this.value)">
+    </div>
+    <div class="toolbar-group">
+      <button type="button" onclick="toggleEditing()">编辑边框</button>
+      <button type="button" class="primary" onclick="window.print()">导出 PDF</button>
+    </div>
+  </div>
+
+  <main class="resume">
+    <section class="sheet">
+      <div class="resume-content" id="resumeContent" contenteditable="true" spellcheck="false">
+        <header class="header">
+          <h1 class="name">蓝松松</h1>
+          <p class="headline">Golang 后端开发 / AI Agent 应用工程师 </p>
+          <p class="contact-line">男 <span class="sep">|</span> 25岁 <span class="sep">|</span> 17369070912 <span class="sep">|</span> 1960155751@qq.com</p>
+          <p class="contact-line">GitHub：https://github.com/leventsg </p>
+          <label class="photo-box" contenteditable="false" title="点击替换证件照">
+            <input id="photoInput" type="file" accept="image/*" hidden>
+            <img id="photoPreview" src="artifacts/resume/levent-image-1-1.png" alt="证件照">
+          </label>
+        </header>
+
+        <section class="section">
+          <h2 class="section-title">教育背景</h2>
+          <article class="entry">
+            <div class="entry-head">
+              <div class="entry-title">深圳大学 · 计算机技术 · 硕士 · GPA 3.69/4.0</div>
+              <div class="date">2024.09 - 2027.07</div>
+            </div>
+            <ul class="compact-list">
+              <li>硕士二等学业奖学金 2 次</li>
+            </ul>
+          </article>
+          <article class="entry">
+            <div class="entry-head">
+              <div class="entry-title">西南科技大学 · 软件工程 · 本科 · GPA 3.43/5.0</div>
+              <div class="date">2020.09 - 2024.07</div>
+            </div>
+          </article>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">实习经历</h2>
+          <article class="entry">
+            <div class="entry-head">
+              <div><img src="https://commonresource-1252524126.cdn.xiaoeknow.com/image/lhyaurs50zil.ico" type="image/x-ico" style="height: 1em; vertical-align: middle; margin-right: 4px;">深圳小鹅网络技术有限公司&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div>
+              <!-- <div class="entry-title">深圳小鹅网络技术有限公司 · Golang 后端开发实习生 · 直播中控台/数据异步导出</div> -->
+              <div class="date">2025.09 - 2026.01</div>
+            </div>
+            <p><strong>业务背景：</strong>实习期间参与直播中控台与年度报告等业务后端迭代，围绕年报内容构建、数据导出和线上问题治理。</p>
+            <ul>
+              <li><strong>年度报告公共能力建设：</strong>参与年度报告项目后端开发，围绕多端年报复用场景抽取公共能力，将<strong>规则校验、内容组装、数据口径适配</strong>等逻辑收敛至公共服务模块，减少端侧重复实现，并为后续运营数据接入和年报模板迭代预留统一扩展入口。</li>
+              <li><strong>异步分批导出链路：</strong>参与直播中控台数据导出功能开发，根据身份、权限与筛选条件确定导出字段数据并按类型写入 <strong>Redis List</strong>；常驻 Job 按 FIFO 消费后提交协程池，从 Doris 流式分批读取并传至 kafka。</li>
+              <li><strong>业务迭代与问题治理：</strong>参与直播中控台日常需求开发及线上问题排查，处理指标口径差异、源表结构变更、数据同步延迟等数据一致性问题，通过链路日志核对、上下游字段排查和口径对齐，保障核心看板与运营分析数据稳定交付。</li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">项目经历</h2>
+          <article class="entry">
+            <div class="entry-head">
+              <div class="entry-title">NexusAgent · 企业级多 Agent 电商业务执行平台</div>
+              <div class="date">2026.03 - 2026.08</div>
+            </div>
+            <p class="project-title">Go / go-zero / Eino / RAG / MCP / Skill / SSE / MySQL / Redis / Kafka / Elasticsearch / Prometheus</p>
+            <p><strong>项目全景：</strong>面向商品、库存、订单、购物车、结算、优惠券、售后等电商域，构建可调用真实业务 RPC 的 AI 客服执行层，覆盖知识检索、跨域任务规划、交易操作、风险确认与审计留痕。</p>
+            <ul>
+              <li><strong>多 Agent 编排：</strong>基于 Eino 实现 <strong>Supervisor + 5 个领域 Agent</strong>，将领域 Agent 封装为 AgentTool，由 Supervisor 进行意图拆解、依赖排序、工具选择和结果汇聚；通过动态工具暴露编排 <strong>20+ Native/MCP 工具</strong>，并用场景化 Skill 固化复杂任务策略。</li>
+              <li><strong>上下文与长期记忆：</strong>设计 <strong>MemoryProvider + ContextBuilder + TaskState</strong>，将近期消息、Session Summary、用户画像、长期事件和压缩 Tool Context 分层注入；基于滑动窗口与游标做增量记忆巩固，在保持跨轮任务连续性的同时将平均上下文 Token 降低约 <strong>31%</strong>。</li>
+              <li><strong>安全执行链路：</strong>构建 <strong>Tool Gateway + Agent Runtime</strong>，统一 Schema 校验、可信用户身份注入、权限校验、风险分级、确认拦截和审计钩子；针对超时、业务异常、未知执行状态做错误分类、有界重试和幂等恢复，并结合 <strong>StatefulInterrupt、Checkpoint、MySQL CAS</strong> 支撑高风险操作确认与中断续跑。</li>
+              <li><strong>分布式排队限流：</strong>基于 <strong>Redis 信号量 + ZSET + Pub/Sub</strong> 设计 Agent 请求排队与并发控制链路，通过 Lua 脚本保证入队、抢占令牌、续期、释放和超时拒绝的原子性；按入队时间与优先级实现公平排队，并通过 <strong>SSE</strong> 实时推送排队位置、预计等待和拒绝原因，避免高峰期请求直接击穿模型与业务工具执行层。</li>
+              <li><strong>自动化评测：</strong>使用 <strong>tau2-bench</strong> 并自建 30 个多轮任务样本，完成 60 次仿真执行，覆盖 Tool Selection、参数补全、RAG、跨 Agent 协作和确认链路；通过 Prompt、Tool Schema、Context Retrieval 迭代，使得最终任务通过率<strong>Pass@1 -> 92%+，Pass@3 -> 99%+</strong>。</li>
+            </ul>
+          </article>
+
+          <article class="entry">
+            <div class="entry-head">
+              <div class="entry-title">KnowledgeFlow · 企业级知识库数据平台</div>
+              <div class="date">2026.03 - 2026.08</div>
+            </div>
+            <p class="project-title">Go / Gin / Eino / / PostgreSQL / pgvector / Elasticsearch / Redis / MQ / Apache Tika / RAGAS</p>
+            <p><strong>项目全景：</strong>面向企业客服、商品资料、运营规范等非结构化知识资产，建设知识接入、解析加工、混合检索、开放服务和质量评测一体化平台，为 Agent/RAG 应用提供低耦合、可追溯的 Retrieval 能力。</p>
+            <ul>
+              <li><strong>可编排知识入库：</strong>设计节点化 <strong>Ingestion Engine</strong>，将 Fetch、Parse、Enhance、Chunk、Enrich、Index 抽象为可配置 Pipeline，支持条件执行、拓扑校验、节点级状态与耗时记录；结合 MQ 事务任务和状态防重入机制，实现多源文档稳定入库，成功率 <strong>99%+</strong>。</li>
+              <li><strong>查询理解与降级：</strong>构建 <strong>Query Rewrite + Sub-Question Split + Intent Tree</strong> 检索前处理链路，从请求参数获取会话上下文完成指代消解、查询补全和子问题路由；模型异常时自动回退原始 Query，避免 LLM 成为检索链路单点故障。</li>
+              <li><strong>混合检索与归因：</strong>实现 Vector + BM25 多路并行召回，通过结果去重、RRF 融合、Rerank 精排提升检索质量，并记录各召回通道在精排前后的结果归因；相较单路向量检索，<strong>Recall@5 提升 20%+、Context Precision 提升 15%+</strong>。</li>
+              <li><strong>平台化开放服务：</strong>设计统一 <strong>Retrieval OpenAPI</strong>，通过 API Key 绑定可访问知识库并返回 Chunk、Score、来源文档与 TraceId；基于 Redis Lua 实现 Key 级 <strong>QPS/日配额原子限流</strong>，沉淀 HitCount、Latency、Status 等用量与质量数据。</li>
+              <li><strong>质量闭环：</strong>建设离线评测链路，统一输出 Retrieved Doc、Chunk、Context、Intent、Latency 等证据，围绕 <strong>Recall@K、MRR、Precision@K、Context Precision</strong> 对 Chunk 策略、召回通道、RRF 权重和 Rerank 模型做 A/B 回归。</li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">专业技能</h2>
+          <ul class="compact-list">
+            <li><strong>后端语言与工程：</strong>熟练掌握 Go，熟悉 goroutine、channel、context、错误处理、并发控制与常见服务分层，具备 Golang 后端业务开发和接口联调经验。</li>
+            <li><strong>AI 应用工程：</strong>熟悉 Eino、LangChain、LangGraph 等大模型应用框架，理解 Tool Calling、Agent 编排、上下文压缩、长期记忆、Human-in-the-loop 与模型不可用降级。</li>
+            <li><strong>RAG 与检索：</strong>熟悉文档解析、Chunk、Embedding、向量召回、BM25、RRF、Rerank 和离线评测流程，了解 Milvus、pgvector、Elasticsearch 等检索/向量存储方案。</li>
+            <li><strong>存储与中间件：</strong>熟悉 MySQL 表设计与基础性能优化，掌握 Redis 常见数据结构，对缓存持久化、缓存穿透、缓存击穿有一定理解，具备 Kafka/MQ 异步任务处理经验。</li>
+            <li><strong>操作系统与网络：</strong>熟悉 Linux 系统及其常用命令的使用，对 Docker 有一定的理解；熟悉计算机网络原理，对 TCP/UDP，HTTP/HTTPS 等常用协议有一定理解。</li>
+          </ul>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "levent-asu-sufied-resume-v2";
+    const PHOTO_KEY = "levent-asu-resume-photo-v1";
+    const content = document.getElementById("resumeContent");
+
+    function toggleEditing() {
+      document.body.classList.toggle("editing");
+    }
+
+    function setPageMode(mode) {
+      document.body.classList.toggle("long-page", mode === "long");
+    }
+
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) content.innerHTML = saved;
+
+    content.addEventListener("input", () => {
+      localStorage.setItem(STORAGE_KEY, content.innerHTML);
+    });
+
+    function bindPhotoUpload() {
+      const photoInput = document.getElementById("photoInput");
+      const photoPreview = document.getElementById("photoPreview");
+      if (!photoInput || !photoPreview) return;
+
+      const savedPhoto = localStorage.getItem(PHOTO_KEY);
+      if (savedPhoto) photoPreview.src = savedPhoto;
+
+      photoInput.addEventListener("change", event => {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          photoPreview.src = reader.result;
+          localStorage.setItem(PHOTO_KEY, reader.result);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    bindPhotoUpload();
+  </script>
+</body>
+</html>

@@ -28,7 +28,7 @@ services:
     volumes:
       - ./conf/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9091:9091"
+      - "9091:9090"
     restart: unless-stopped
     networks:
       - go-mall
