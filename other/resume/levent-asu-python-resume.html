@@ -356,8 +356,8 @@
               <li><strong>多 Agent 编排：</strong>基于 Eino 实现 <strong>Supervisor + 5 个领域 Agent</strong>，将领域 Agent 封装为 AgentTool，由 Supervisor 进行意图拆解、依赖排序、工具选择和结果汇聚；通过动态工具暴露编排 <strong>20+ Native/MCP 工具</strong>，并用场景化 Skill 固化复杂任务策略。</li>
               <li><strong>上下文与长期记忆：</strong>设计 <strong>MemoryProvider + ContextBuilder + TaskState</strong>，将近期消息、Session Summary、用户画像、长期事件和压缩 Tool Context 分层注入；基于滑动窗口与游标做增量记忆巩固，在保持跨轮任务连续性的同时将平均上下文 Token 降低约 <strong>31%</strong>。</li>
               <li><strong>安全执行链路：</strong>构建 <strong>Tool Gateway + Agent Runtime</strong>，统一 Schema 校验、可信用户身份注入、权限校验、风险分级、确认拦截和审计钩子；针对超时、业务异常、未知执行状态做错误分类、有界重试和幂等恢复，并结合 <strong>StatefulInterrupt、Checkpoint、MySQL CAS</strong> 支撑高风险操作确认与中断续跑。</li>
-              <li><strong>分布式排队限流：</strong>基于 <strong>Redis 信号量 + ZSET + Pub/Sub</strong> 设计 Agent 请求排队与并发控制链路，通过 Lua 脚本保证入队、抢占令牌、续期、释放和超时拒绝的原子性；按入队时间与优先级实现公平排队，并通过 <strong>SSE</strong> 实时推送排队位置、预计等待和拒绝原因，避免高峰期请求直接击穿模型与业务工具执行层。</li>
-              <li><strong>自动化评测：</strong>使用 <strong>tau2-bench</strong> 并自建 30 个多轮任务样本，完成 60 次仿真执行，覆盖 Tool Selection、参数补全、RAG、跨 Agent 协作和确认链路；通过 Prompt、Tool Schema、Context Retrieval 迭代，使得最终任务通过率<strong>Pass@1 -> 92%+，Pass@3 -> 99%+</strong>。</li>
+              <li><strong>流量治理与模型熔断：</strong>基于 <strong>Redis 信号量 + ZSET + Pub/Sub</strong> 实现请求排队与并发控制，通过 <strong>Lua</strong> 保证入队、令牌获取、续期、释放及超时拒绝的原子性，按入队顺序处理，并通过 <strong>SSE</strong> 推送等待信息；结合<strong>模型熔断器</strong>，在模型不可用时开启熔断器，并更换其他候选模型，减少故障期间的无效调用。</li>
+              <li><strong>自动化评测：</strong>使用 <strong>tau2-bench</strong> 并自建 28 个多轮任务样本，完成 84 次仿真执行，覆盖 Tool Selection、参数补全、RAG、跨 Agent 协作和确认链路；通过 Prompt、Tool Schema、Context Retrieval 迭代，使得最终任务通过率<strong>Pass@1 -> 92%+，Pass@3 -> 99%+</strong>。</li>
             </ul>
           </article>
 

@@ -51,10 +51,23 @@ func (s *SQLEventStore) SearchUserMemoryEvents(ctx context.Context, query UserMe
 		sqlText += " and `type` = ?"
 		args = append(args, query.Type)
 	}
-	for _, keyword := range compactKeywords(query.Keywords) {
-		sqlText += " and (`summary` like ? or `keywords` like ?)"
-		pattern := "%" + keyword + "%"
-		args = append(args, pattern, pattern)
+	if matchTerms := eventSearchTerms(query.Match, query.Keywords); len(matchTerms) > 0 && strings.TrimSpace(query.Match) != "" {
+		sqlText += " and ("
+		for i, keyword := range matchTerms {
+			if i > 0 {
+				sqlText += " or "
+			}
+			sqlText += "`summary` like ? or `keywords` like ?"
+			pattern := "%" + keyword + "%"
+			args = append(args, pattern, pattern)
+		}
+		sqlText += ")"
+	} else {
+		for _, keyword := range compactKeywords(query.Keywords) {
+			sqlText += " and (`summary` like ? or `keywords` like ?)"
+			pattern := "%" + keyword + "%"
+			args = append(args, pattern, pattern)
+		}
 	}
 	if query.Since != "" {
 		sqlText += " and `event_date` >= ?"
@@ -137,6 +150,31 @@ func compactKeywords(items []string) []string {
 		item = strings.TrimSpace(item)
 		if item != "" {
 			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func eventSearchTerms(match string, keywords []string) []string {
+	items := compactKeywords(keywords)
+	items = append(items, strings.FieldsFunc(match, func(r rune) bool {
+		return r <= ' ' || strings.ContainsRune(",.?!;:，。？！；：、()[]{}<>\"'`", r)
+	})...)
+	result := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if len([]rune(item)) < 2 || len([]rune(item)) > 32 {
+			continue
+		}
+		key := strings.ToLower(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, item)
+		if len(result) >= 8 {
+			break
 		}
 	}
 	return result

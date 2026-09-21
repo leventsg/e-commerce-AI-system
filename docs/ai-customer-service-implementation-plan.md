@@ -1123,20 +1123,22 @@ Expected: 上下文工具事实来自 `ai_tool_calls`，recent 列表不直接�
 - Retrieve 返回 system/history/context 三类槽位。
 - 有摘要水位时，已摘要原文不重复进入 history。
 - MemoryMiddleware 只注入一次，并将 runtime context 追加到当前 user message。
+- MemoryMiddleware 按 `AgentName` 去重，root 和 SubAgent 可以分别注入受控上下文。
+- Provider 默认注入最近 12 条历史消息，并基于当前输入召回最多 5 条相关长期事件。
 - MemoryMiddleware 不在 `AfterModelRewriteState` 做记忆写回。
 - ReAct 多次模型调用不会触发摘要、画像或长期事件更新。
 
 - [x] **Step 2: 定义 MemoryProvider 和 ConversationMetadata**
 
-使用 `MemoryProvider`、`RetrieveRequest`、`RetrieveResult`、`MemorizeRequest`、`ConversationMetadata`。`conversationID` 是本项目唯一的客服对话标识，不再额外引入旧会话 ID 字段。
+使用 `MemoryProvider`、`RetrieveRequest`、`RetrieveResult`、`MemorizeRequest`、`ConversationMetadata`。`RetrieveRequest.AgentName` 作为 root / SubAgent 的轻量作用域。`conversationID` 是本项目唯一的客服对话标识，不再额外引入旧会话 ID 字段。
 
 - [x] **Step 3: CustomerServiceProvider 复用现有 stores**
 
-Provider 读取 `ai_messages`、会话摘要、最近完整工具调用、最近工具调用最小列表、UserProfile 和可选长期事件。Store 故障按组件降级，不阻塞基础聊天。
+Provider 读取 `ai_messages`、会话摘要、最近完整工具调用、最近工具调用最小列表、UserProfile 和可选长期事件。长期事件采用近期直接注入 + 当前输入 `Match + Keywords` 召回；动态订单、库存、价格和优惠券状态只作为定位线索，结论和写操作前必须重新调用业务工具精确核实。Store 故障按组件降级，不阻塞基础聊天。
 
 - [x] **Step 4: AgentRunner 接入 MemoryMiddleware**
 
-ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 挂载 MemoryMiddleware，子 agent 不重复注入完整会话上下文。
+ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 和领域 SubAgent 都挂载按 `AgentName` 分作用域的 MemoryMiddleware。SubAgent 不共享完整聊天历史，但会拿到受控的近期上下文、相关长期记忆和工具事实引用，避免完全依赖 Supervisor 对 `request` 的一次性总结。
 
 - [x] **Step 5: 接入 search_user_memory**
 

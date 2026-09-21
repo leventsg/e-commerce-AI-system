@@ -168,7 +168,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
 	// 创建子agent
 	for _, spec := range supervisorSubAgentSpecs {
-		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.approvalManager, spec)
+		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.approvalManager, opts.memoryProvider, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +189,14 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	// 加入上下文记忆组装中间件
 	rootHandlers := []adk.ChatModelAgentMiddleware{adk.NewEventSenderModelWrapper(), newToolCallContextMiddleware()}
 	if opts.memoryProvider != nil {
-		rootHandlers = append(rootHandlers, NewMemoryMiddleware(opts.memoryProvider))
+		rootHandlers = append(rootHandlers, NewMemoryMiddlewareForAgent(opts.memoryProvider, supervisorAgentName))
+	}
+	skillMiddleware, err := newSkillMiddleware(ctx, supervisorAgentName)
+	if err != nil {
+		return nil, err
+	}
+	if skillMiddleware != nil {
+		rootHandlers = append(rootHandlers, skillMiddleware)
 	}
 	// 创建supervisor agent
 	root, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -213,7 +220,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 }
 
 // newDomainAgent 创建子agent
-func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, spec agentSpec) (adk.Agent, error) {
+func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, memoryProvider aimemory.MemoryProvider, spec agentSpec) (adk.Agent, error) {
 	// 这里获取的是子 agent 内部可调用的业务工具 schema；子 agent 自身作为 root 工具的 ToolInfo 由 adk.NewAgentTool 根据 Name/Description 生成。
 	infos, err := registry.SubAgentToolInfos(ctx, spec.tools...)
 	if err != nil {
@@ -228,8 +235,18 @@ func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoCo
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
 	handlers := []adk.ChatModelAgentMiddleware{adk.NewEventSenderModelWrapper(), newToolCallContextMiddleware()}
+	if memoryProvider != nil {
+		handlers = append(handlers, NewMemoryMiddlewareForAgent(memoryProvider, spec.name))
+	}
 	if approvalManager != nil {
 		handlers = append(handlers, newHighRiskApprovalMiddleware(approvalManager))
+	}
+	skillMiddleware, err := newSkillMiddleware(ctx, spec.name)
+	if err != nil {
+		return nil, err
+	}
+	if skillMiddleware != nil {
+		handlers = append(handlers, skillMiddleware)
 	}
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        spec.name,
@@ -819,25 +836,25 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 		}
 		return handled, false
 	}
-	// if message.Content == "" {
-	// 	return handled, false
-	// }
-	// if event.AgentName != "" && event.AgentName != supervisorAgentName {
-	// 	return handled, false
-	// }
-	// // 最终模型输出结果
-	// logx.Infow("发送最终助手消息", append(baseAgentLogFields(req), logx.Field("stage", "assistant_message"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("content_length", len(message.Content)))...)
-	// messageID := newAgentMessageID()
-	// _ = send(a2uiAssistantDelta(req.ConversationID, messageID, message.Content))
-	// _ = send(a2uiAssistantDone(req.ConversationID, messageID))
-	// _ = send(domain.AgentEvent{
-	// 	Type:           domain.EventAssistantMessage,
-	// 	ConversationID: req.ConversationID,
-	// 	MessageID:      messageID,
-	// 	Content:        message.Content,
-	// 	DataJSON:       sourcesDataJSON(req.RAGSources),
-	// 	Done:           true,
-	// })
+	if message.Content == "" {
+		return handled, false
+	}
+	if event.AgentName != "" && event.AgentName != supervisorAgentName {
+		return handled, false
+	}
+	// 最终模型输出结果
+	logx.Infow("发送最终助手消息", append(baseAgentLogFields(req), logx.Field("stage", "assistant_message"), logx.Field("agent_name", agentNameForLog(event.AgentName)), logx.Field("content_length", len(message.Content)))...)
+	messageID := newAgentMessageID()
+	_ = send(a2uiAssistantDelta(req.ConversationID, messageID, message.Content))
+	_ = send(a2uiAssistantDone(req.ConversationID, messageID))
+	_ = send(domain.AgentEvent{
+		Type:           domain.EventAssistantMessage,
+		ConversationID: req.ConversationID,
+		MessageID:      messageID,
+		Content:        message.Content,
+		DataJSON:       sourcesDataJSON(req.RAGSources),
+		Done:           true,
+	})
 	return true, false
 }
 

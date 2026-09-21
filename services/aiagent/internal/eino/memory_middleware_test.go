@@ -99,15 +99,56 @@ func TestMemoryMiddlewareDoesNotMemorizeAfterModelRewrite(t *testing.T) {
 	}
 }
 
+func TestMemoryMiddlewareScopesDedupByAgentName(t *testing.T) {
+	provider := &fakeMemoryProvider{retrieve: &aimemory.RetrieveResult{
+		ContextMessages: []domain.ContextMessage{{Role: domain.ContextRoleUser, Content: "<ctx>scoped</ctx>"}},
+	}}
+	root := NewMemoryMiddlewareForAgent(provider, supervisorAgentName)
+	child := NewMemoryMiddlewareForAgent(provider, "product_agent")
+	ctx := context.Background()
+	ctx = aimemory.ContextWithConversationMetadata(ctx, aimemory.ConversationMetadata{
+		UserID:           42,
+		ConversationID:   "conv-1",
+		CurrentMessageID: "msg-user",
+		ClientMessageID:  "client-1",
+		RunID:            "run-1",
+	})
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.SystemMessage("system"),
+		schema.UserMessage("current input"),
+	}}
+
+	ctx, state, err := root.BeforeModelRewriteState(ctx, state, nil)
+	if err != nil {
+		t.Fatalf("root BeforeModelRewriteState() error = %v", err)
+	}
+	if provider.requests[0].AgentName != supervisorAgentName {
+		t.Fatalf("root request AgentName=%q, want %q", provider.requests[0].AgentName, supervisorAgentName)
+	}
+
+	_, _, err = child.BeforeModelRewriteState(ctx, state, nil)
+	if err != nil {
+		t.Fatalf("child BeforeModelRewriteState() error = %v", err)
+	}
+	if provider.retrieveCalls != 2 {
+		t.Fatalf("retrieve calls = %d, want root and child retrieval", provider.retrieveCalls)
+	}
+	if provider.requests[1].AgentName != "product_agent" {
+		t.Fatalf("child request AgentName=%q, want product_agent", provider.requests[1].AgentName)
+	}
+}
+
 type fakeMemoryProvider struct {
 	retrieve      *aimemory.RetrieveResult
 	retrieveCalls int
+	requests      []*aimemory.RetrieveRequest
 	memorized     *aimemory.MemorizeRequest
 	memorizeCalls int
 }
 
 func (f *fakeMemoryProvider) Retrieve(ctx context.Context, req *aimemory.RetrieveRequest) (*aimemory.RetrieveResult, error) {
 	f.retrieveCalls++
+	f.requests = append(f.requests, req)
 	return f.retrieve, nil
 }
 

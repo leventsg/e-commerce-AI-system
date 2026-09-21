@@ -34,3 +34,5 @@ devlog/
 **/devlog/
 
 key/
+
+.tmp/

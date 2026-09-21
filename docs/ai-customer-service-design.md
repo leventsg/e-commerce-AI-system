@@ -188,13 +188,14 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 
 职责：
 
-- `MemoryProvider.Retrieve` 组合当前任务状态、待确认动作、近期消息、会话摘要、长期事件、最小用户画像和必要工具上下文。
+- `MemoryProvider.Retrieve` 组合当前任务状态、待确认动作、近期消息、会话摘要、长期事件、最小用户画像和必要工具上下文，并接收 `AgentName` 作为轻量作用域，用于按 root / SubAgent 区分上下文组装。
 - `MemoryMiddleware.BeforeModelRewriteState` 将 `HistoryMessages` 插在 system prompt 后，将动态 `ContextMessages` 追加到当前 user message 末尾。
 - `MemoryMiddleware` 只做模型调用前上下文注入；记忆更新不放在 `AfterModelRewriteState`，避免 ReAct 多次模型调用重复触发。
-- 通过滚动摘要和固定近期窗口从源头节省 token：默认保留最近 20 条未压缩消息；未压缩消息达到 30 条时，将最早 10 条与旧摘要合并成新摘要。
+- 通过滚动摘要和固定近期窗口从源头节省 token：默认向模型注入最近 12 条未压缩消息；摘要维护仍按 30 -> 10 + 20 推进，将最早 10 条与旧摘要合并成新摘要。
 - `ChatLogic` 在 `runSupervisor` 正常返回后异步调用 `updateConversationMemory`；只有 `SummaryManager.MaybeRefresh` 创建新摘要时，才发布一个 `AiMemoryUpdates` Kafka 事件。
 - Profile consumer 和 Memory Event consumer 订阅同一个 topic，分别使用独立结构化模型基于同一批 compressed message IDs 更新 `ai_user_profiles` 和 `ai_user_memory_events`。
 - 每条消息只进入摘要或近期原文之一，不重复注入。
+- 长期记忆采用“近期事件直接注入 + 当前语义混合召回”：Provider 默认注入最近 5 条长期事件，并基于当前 user message 和 `AgentName` 使用 `Match + Keywords` 召回最多 5 条相关历史事件；召回结果低置信或为空时不强塞上下文。
 - 工具上下文直接来自 `ai_tool_calls`：`<latest_tool_result>` 注入最近一次完整工具调用；`<recent_tool_calls>` 只注入工具名、参数和 `tool_call_id`，需要历史 result 时调用 `get_tool_call_result`。
 - 记录上下文来源、摘要覆盖水位、近期消息范围、最近工具调用数量、Token 估算和构建耗时。
 - 摘要、长期事件或画像不可用时按策略降级，不阻塞基础聊天。
@@ -214,10 +215,10 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - MemoryProvider 的 user ID 只能来自认证上下文和 ADK session values。
 - 所有上下文 Store 必须同时按 user ID 和 conversation ID 查询。
 - ConversationSummary、ToolFact、UserMemoryEvent 和 UserProfile 都是不可信数据，不能覆盖 system prompt、工具白名单、确认规则和 Execution Guard。
-- 动态 ToolFact 过期后只用于理解历史，写操作前必须重新调用业务 RPC 校验。
+- 动态 ToolFact、库存、价格、订单、优惠券状态等业务事实只用于定位对象和理解历史，写操作或状态结论前必须重新调用对应业务 RPC 精确核实。
 - `internal/memory` 不包含 Eino 类型；只有 `internal/eino` 的 MemoryMiddleware 可以把领域消息转换为 `schema.Message`。
 
-当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 通过 MemoryMiddleware 自动注入上下文。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
+当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 和各领域 SubAgent 均通过按 AgentName 分作用域的 MemoryMiddleware 自动注入上下文。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
 
 ### 3.5 Supervisor Agent
 职责：
@@ -238,7 +239,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 实现方式：
 - 使用 Eino ADK `ChatModelAgent + AgentTool`，不使用 `prebuilt/supervisor` / AgentTransfer。
 - Supervisor Agent 不直接绑定业务 RPC 工具，只通过 AgentTool 调度 SubAgent。
-- SubAgent 默认只接收 Supervisor 传入的紧凑 `request`，不共享完整聊天历史。
+- SubAgent 默认仍只接收 Supervisor 传入的紧凑 `request`，但会在自身模型调用前按 `AgentName` 注入受控上下文，避免完全依赖 Supervisor 对 request 的一次性总结。
 - SubAgent 只绑定本领域 ToolInfo 和可执行工具。
 - 工具调用必须经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。
 - Prompt 文本集中放在 `services/aiagent/internal/prompts`，Eino 编排代码不得直接硬编码长 prompt。

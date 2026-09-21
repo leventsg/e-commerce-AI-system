@@ -58,6 +58,33 @@ func TestSQLEventStoreSearchesByTrustedUserAndKeyword(t *testing.T) {
 	}
 }
 
+func TestSQLEventStoreSearchesByMatchWithOrTerms(t *testing.T) {
+	store, mock, cleanup := newEventStoreTest(t)
+	defer cleanup()
+	query := "select `user_id`, `type`, `event_date`, `summary`, `keywords` from `ai_user_memory_events` where `user_id` = ? and `status` = ? and (`summary` like ? or `keywords` like ? or `summary` like ? or `keywords` like ?) order by `event_date` desc, `id` desc limit ?"
+	eventDate := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{"user_id", "type", "event_date", "summary", "keywords"}).
+		AddRow(uint64(42), "event", eventDate, "user likes headphones under 500", `["headphones","budget"]`)
+	mock.ExpectQuery(regexp.QuoteMeta(query)).
+		WithArgs(uint64(42), "active", "%headphones%", "%headphones%", "%commute%", "%commute%", 5).
+		WillReturnRows(rows)
+
+	events, err := store.SearchUserMemoryEvents(context.Background(), UserMemoryEventQuery{
+		UserID: 42,
+		Match:  "headphones commute",
+		Limit:  5,
+	})
+	if err != nil {
+		t.Fatalf("SearchUserMemoryEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Summary != "user likes headphones under 500" {
+		t.Fatalf("events = %+v", events)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func TestSQLEventStoreSavesUserMemoryEvents(t *testing.T) {
 	store, mock, cleanup := newEventStoreTest(t)
 	defer cleanup()

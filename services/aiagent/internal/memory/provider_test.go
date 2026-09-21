@@ -96,6 +96,70 @@ func TestCustomerServiceProviderRetrieveSplitsHistoryAndRuntimeContext(t *testin
 	}
 }
 
+func TestCustomerServiceProviderRetrievesRelevantMemoryEventsFromCurrentInput(t *testing.T) {
+	base := time.Date(2026, 8, 14, 12, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	events := &fakeMemoryEventStore{
+		recent: []Event{
+			{UserID: 42, Type: "event", EventDate: "2026-08-01", Summary: "User asked about phone accessories", Keywords: []string{"phone"}},
+		},
+		search: []Event{
+			{UserID: 42, Type: "event", EventDate: "2026-07-01", Summary: "User prefers noise-cancelling headphones under 500", Keywords: []string{"headphones", "budget"}},
+		},
+	}
+	provider := NewCustomerServiceProvider(CustomerServiceProviderConfig{
+		Events: events,
+		Now:    func() time.Time { return base },
+	})
+
+	result, err := provider.Retrieve(context.Background(), &RetrieveRequest{
+		UserID:         42,
+		ConversationID: "conv-1",
+		AgentName:      "product_agent",
+		Messages: []domain.ContextMessage{
+			{Role: domain.ContextRoleUser, Content: "Please recommend headphones for commuting under 500"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	joined := joinMessages(result.ContextMessages)
+	if !strings.Contains(joined, "<user_memory_relevant_events>") {
+		t.Fatalf("runtime context missing relevant memory block: %s", joined)
+	}
+	if !strings.Contains(joined, "noise-cancelling headphones") {
+		t.Fatalf("runtime context missing searched memory: %s", joined)
+	}
+	if events.lastQuery.UserID != 42 {
+		t.Fatalf("search query user id = %d, want trusted user id 42", events.lastQuery.UserID)
+	}
+	if events.lastQuery.Match == "" {
+		t.Fatalf("search query Match should be built from current input")
+	}
+	if events.lastQuery.Limit != 5 {
+		t.Fatalf("search query Limit = %d, want 5", events.lastQuery.Limit)
+	}
+}
+
+func TestCustomerServiceProviderDefaultsRecentHistoryToTwelveMessages(t *testing.T) {
+	base := time.Date(2026, 8, 14, 12, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	rows := make([]*aimessages.AiMessages, 0, 15)
+	for i := 0; i < 15; i++ {
+		rows = append(rows, messageRow("m-"+string(rune('a'+i)), domain.ContextRoleUser, "history message", base.Add(time.Duration(i)*time.Minute)))
+	}
+	provider := NewCustomerServiceProvider(CustomerServiceProviderConfig{
+		Messages: &fakeMessageStore{rows: rows},
+		Now:      func() time.Time { return base },
+	})
+
+	result, err := provider.Retrieve(context.Background(), &RetrieveRequest{UserID: 42, ConversationID: "conv-1"})
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if len(result.HistoryMessages) != 12 {
+		t.Fatalf("history message count = %d, want 12", len(result.HistoryMessages))
+	}
+}
+
 func TestCustomerServiceProviderMemorizeIsNoop(t *testing.T) {
 	provider := NewCustomerServiceProvider(CustomerServiceProviderConfig{})
 
@@ -194,6 +258,22 @@ type fakeProfileStore struct {
 
 func (f *fakeProfileStore) LoadActive(ctx context.Context, userID uint64) (*domain.UserProfile, error) {
 	return f.profile, f.err
+}
+
+type fakeMemoryEventStore struct {
+	recent    []Event
+	search    []Event
+	err       error
+	lastQuery UserMemoryEventQuery
+}
+
+func (f *fakeMemoryEventStore) ListRecentUserMemoryEvents(ctx context.Context, userID uint64, limit int) ([]Event, error) {
+	return f.recent, f.err
+}
+
+func (f *fakeMemoryEventStore) SearchUserMemoryEvents(ctx context.Context, query UserMemoryEventQuery) ([]Event, error) {
+	f.lastQuery = query
+	return f.search, f.err
 }
 
 func messageRow(id, role, content string, createdAt time.Time) *aimessages.AiMessages {

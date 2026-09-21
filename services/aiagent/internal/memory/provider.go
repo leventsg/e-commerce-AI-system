@@ -18,6 +18,7 @@ type MemoryProvider interface {
 type RetrieveRequest struct {
 	UserID           uint64
 	ConversationID   string
+	AgentName        string
 	RunID            string
 	CurrentMessageID string
 	ClientMessageID  string

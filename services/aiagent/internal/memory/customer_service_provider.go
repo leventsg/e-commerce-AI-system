@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	defaultRecentMessageLimit = 20
-	defaultRecentToolRefLimit = 20
+	defaultRecentMessageLimit       = 12
+	defaultRecentToolRefLimit       = 20
+	defaultRelevantMemoryEventLimit = 5
 )
 
 type MessageStore interface {
@@ -221,18 +222,46 @@ func (p *CustomerServiceProvider) appendEvents(ctx context.Context, req *Retriev
 	if p.events == nil {
 		return
 	}
-	events, err := p.events.ListRecentUserMemoryEvents(ctx, req.UserID, defaultRecentToolRefLimit)
+	events, err := p.events.ListRecentUserMemoryEvents(ctx, req.UserID, defaultRelevantMemoryEventLimit)
 	if err != nil {
 		meta["memory_events_degraded"] = err.Error()
 		return
 	}
-	if len(events) == 0 {
+	if len(events) > 0 {
+		if msg, ok := jsonBlock("user_memory_recent_events", events); ok {
+			*blocks = append(*blocks, msg)
+			meta["user_memory_event_count"] = len(events)
+		}
+	}
+	relevant, err := p.retrieveRelevantEvents(ctx, req)
+	if err != nil {
+		meta["memory_relevant_events_degraded"] = err.Error()
 		return
 	}
-	if msg, ok := jsonBlock("user_memory_recent_events", events); ok {
-		*blocks = append(*blocks, msg)
-		meta["user_memory_event_count"] = len(events)
+	relevant = dedupeEvents(relevant, events)
+	if len(relevant) == 0 {
+		return
 	}
+	if msg, ok := jsonBlock("user_memory_relevant_events", relevant); ok {
+		*blocks = append(*blocks, msg)
+		meta["user_memory_relevant_event_count"] = len(relevant)
+	}
+}
+
+func (p *CustomerServiceProvider) retrieveRelevantEvents(ctx context.Context, req *RetrieveRequest) ([]Event, error) {
+	if req == nil {
+		return nil, nil
+	}
+	queryText := eventRecallQuery(req)
+	if queryText == "" {
+		return nil, nil
+	}
+	return p.events.SearchUserMemoryEvents(ctx, UserMemoryEventQuery{
+		UserID:   req.UserID,
+		Match:    queryText,
+		Keywords: recallKeywords(queryText, req.AgentName),
+		Limit:    defaultRelevantMemoryEventLimit,
+	})
 }
 
 func (p *CustomerServiceProvider) appendProfile(ctx context.Context, req *RetrieveRequest, blocks *[]domain.ContextMessage, meta map[string]any) {
@@ -319,4 +348,86 @@ var (
 func redactSensitiveContext(content string) string {
 	content = sensitiveAssignmentPattern.ReplaceAllString(content, "$1=[redacted]")
 	return sensitiveColonPattern.ReplaceAllString(content, "$1:[redacted]")
+}
+
+func eventRecallQuery(req *RetrieveRequest) string {
+	if req == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(req.Messages))
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		message := req.Messages[i]
+		if message.Role != domain.ContextRoleUser {
+			continue
+		}
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		parts = append(parts, content)
+		if len(parts) >= 2 {
+			break
+		}
+	}
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func recallKeywords(text string, agentName string) []string {
+	keywords := compactKeywords([]string{agentName})
+	seen := make(map[string]struct{}, len(keywords)+8)
+	for _, item := range keywords {
+		seen[strings.ToLower(item)] = struct{}{}
+	}
+	for _, token := range strings.FieldsFunc(text, func(r rune) bool {
+		return r <= ' ' || strings.ContainsRune(",.?!;:，。？！；：、()[]{}<>\"'`", r)
+	}) {
+		token = strings.TrimSpace(token)
+		if len([]rune(token)) < 2 || len([]rune(token)) > 32 {
+			continue
+		}
+		key := strings.ToLower(token)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keywords = append(keywords, token)
+		if len(keywords) >= 6 {
+			break
+		}
+	}
+	return keywords
+}
+
+func dedupeEvents(primary []Event, already []Event) []Event {
+	if len(primary) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(primary)+len(already))
+	for _, event := range already {
+		seen[eventKey(event)] = struct{}{}
+	}
+	result := make([]Event, 0, len(primary))
+	for _, event := range primary {
+		key := eventKey(event)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, event)
+	}
+	return result
+}
+
+func eventKey(event Event) string {
+	summary := strings.TrimSpace(event.Summary)
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("%d|%s|%s|%s", event.UserID, event.Type, event.EventDate, summary)
 }

@@ -13,15 +13,21 @@ import (
 
 type memoryMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	provider aimemory.MemoryProvider
+	provider  aimemory.MemoryProvider
+	agentName string
 }
 
 type memoryPreparedContextKey struct{}
 
 func NewMemoryMiddleware(provider aimemory.MemoryProvider) adk.ChatModelAgentMiddleware {
+	return NewMemoryMiddlewareForAgent(provider, "")
+}
+
+func NewMemoryMiddlewareForAgent(provider aimemory.MemoryProvider, agentName string) adk.ChatModelAgentMiddleware {
 	return &memoryMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
 		provider:                     provider,
+		agentName:                    strings.TrimSpace(agentName),
 	}
 }
 
@@ -32,7 +38,7 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 		return ctx, state, nil
 	}
 	// 去重，防止重复组装上下文
-	if prepared, _ := ctx.Value(memoryPreparedContextKey{}).(bool); prepared {
+	if preparedAgent, ok := ctx.Value(memoryPreparedContextKey{}).(string); ok && preparedAgent == m.agentName {
 		return ctx, state, nil
 	}
 	// 获取会话元信息
@@ -43,6 +49,7 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	result, err := m.provider.Retrieve(ctx, &aimemory.RetrieveRequest{
 		UserID:           meta.UserID,
 		ConversationID:   meta.ConversationID,
+		AgentName:        m.agentName,
 		RunID:            meta.RunID,
 		CurrentMessageID: meta.CurrentMessageID,
 		ClientMessageID:  meta.ClientMessageID,
@@ -72,7 +79,7 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	enhanced = append(enhanced, history...)
 	enhanced = append(enhanced, nextRest...)
 	state.Messages = enhanced
-	ctx = context.WithValue(ctx, memoryPreparedContextKey{}, true)
+	ctx = context.WithValue(ctx, memoryPreparedContextKey{}, m.agentName)
 	return ctx, state, nil
 }
 

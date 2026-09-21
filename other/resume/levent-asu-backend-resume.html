@@ -352,10 +352,10 @@
             <p class="project-title">Go / go-zero / Eino / SSE / MySQL / Redis / Kafka / Elasticsearch / Consul / DTM / Docker / Prometheus</p>
             <p><strong>项目全景：</strong>基于 go-zero 构建微服务电商后端，覆盖商品、库存、订单、结算、购物车、优惠券、用户、支付、审计和 AI 客服入口；用户可通过传统 API 完成交易，也可通过 AI 对话复用同一套业务 RPC 触发推荐、加购、结算和订单处理。</p>
             <ul>
-              <li><strong>可靠异步任务架构：</strong>利用 <strong>Redis 延迟队列</strong>处理超时订单，基于 <strong>Kafka</strong> 构建支付事件、审计记录和状态通知的<strong>事件驱动链路</strong>，将订单主流程与后置任务解耦，降低同步接口等待时间并提升系统整体吞吐能力。</li>
+              <li><strong>可靠异步任务架构：</strong>利用 <strong>Redis 延迟队列</strong>处理超时订单，基于 <strong>Kafka</strong> 构建支付事件、审计记录和状态通知的<strong>事件驱动链路</strong>，将后置任务解耦，降低同步接口等待时间并提升系统整体吞吐能力。</li>
               <li><strong>交易与库存链路：</strong>围绕购物车、结算、下单、支付和订单状态流转串联商品快照、地址、优惠券、金额计算、库存校验和支付单生成；高并发扣减使用 <strong>Redis Lua</strong> 保证库存检查与扣减原子性，并通过库存服务统一控制扣减、回滚和查询语义。</li>
               <li><strong>分布式事务处理：</strong>接入 <strong>DTM Saga</strong> 协调订单、库存、支付等跨服务事务，将业务拆分为正向操作与补偿操作；针对下单失败、支付异常和库存回滚等场景保留<strong>幂等与补偿入口</strong>，降低交易链路部分成功风险。</li>
-              <li><strong>缓存检索与可观测：</strong><strong>Elasticsearch</strong> 支撑商品搜索和推荐召回，<strong>Redis</strong> 承担登录态、购物车、热点商品、库存预热和限流状态；<strong>Kafka</strong> 解耦审计、状态通知等非强同步任务，配套 <strong>Prometheus、EFK、Docker Compose、GitHub Actions</strong> 完成本地启动、指标采集、日志检索与基础 CI。</li>
+              <li><strong>缓存检索与可观测：</strong><strong>Elasticsearch</strong> 支撑商品搜索和推荐召回，<strong>Redis</strong> 承担登录安全、购物车、热点商品、库存预热和限流状态；<strong>Kafka</strong> 解耦审计、状态通知等非强同步任务，配套 <strong>Prometheus、EFK、Docker Compose、GitHub Actions</strong> 完成本地启动、指标采集、日志检索与基础 CI。</li>
               <li><strong>AI 客服业务接入：</strong>基于 Eino 构建 <strong>Supervisor + 多领域 Agent</strong> 编排体系，结合<strong>上下文与长期记忆</strong>、<strong>Tool Gateway 安全执行链路</strong>、<strong>Redis 分布式排队限流</strong>及 <strong>StatefulInterrupt/Checkpoint</strong> 中断续跑机制，支撑复杂电商任务的稳定执行；并通过 <strong>tau2-bench</strong> 自动化评测持续优化 <strong>Prompt、Tool Schema 与上下文检索</strong>，使任务通过率达到 <strong>Pass@1->92%+、Pass@3->99%+</strong>。</li>
             </ul>
           </article>
