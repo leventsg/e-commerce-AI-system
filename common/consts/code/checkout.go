@@ -17,6 +17,11 @@ const (
 	QuerySettlementRecordFailed  = 60012
 	UpdateSettlementStatusFailed = 60013
 	OutOfRecord                  = 60014
+	CheckoutTokenInvalid         = 60015
+	CheckoutTokenExpired         = 60016
+	CheckoutTokenConflict        = 60017
+	CheckoutProcessing           = 60018
+	CheckoutOutcomeUnknown       = 60019
 )
 
 // 状态码描述
@@ -36,4 +41,9 @@ const (
 	QuerySettlementRecordFailedMsg  = "查询结算记录失败"
 	UpdateSettlementStatusFailedMsg = "更新结算状态失败"
 	OutOfRecordMsg                  = "查询的结果记录不存在"
+	CheckoutTokenInvalidMsg         = "结算令牌无效"
+	CheckoutTokenExpiredMsg         = "结算令牌已过期，请重新发起结算"
+	CheckoutTokenConflictMsg        = "同一结算令牌不能修改商品、数量或优惠券"
+	CheckoutProcessingMsg           = "结算正在处理中，请使用原令牌稍后查询"
+	CheckoutOutcomeUnknownMsg       = "结算结果待核对，请勿重新提交购买，联系支持核实"
 )

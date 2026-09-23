@@ -27,6 +27,8 @@ type (
 	checkoutsModel interface {
 		Insert(ctx context.Context, data *Checkouts) (sql.Result, error)
 		FindOne(ctx context.Context, preOrderId string) (*Checkouts, error)
+		FindOneByCheckoutToken(ctx context.Context, checkoutToken sql.NullString) (*Checkouts, error)
+		FindOneByUserIdCheckoutIntentId(ctx context.Context, userId uint64, checkoutIntentId sql.NullString) (*Checkouts, error)
 		Update(ctx context.Context, data *Checkouts) error
 		Delete(ctx context.Context, preOrderId string) error
 	}
@@ -37,15 +39,23 @@ type (
 	}
 
 	Checkouts struct {
-		PreOrderId     string         `db:"pre_order_id"`    // 预订单ID
-		UserId         uint64         `db:"user_id"`         // 用户ID
-		CouponId       sql.NullString `db:"coupon_id"`       // 使用优惠券ID列表（支持多券）
-		OriginalAmount int64          `db:"original_amount"` // 原始金额（单位：分）
-		FinalAmount    int64          `db:"final_amount"`    // 实付金额（单位：分）
-		Status         int64          `db:"status"`          // 状态：0-预占中 1-已确认 2-已取消 3-已过期
-		ExpireTime     int64          `db:"expire_time"`     // 过期时间戳（秒）
-		CreatedAt      time.Time      `db:"created_at"`      // 创建时间（毫秒精度）
-		UpdatedAt      time.Time      `db:"updated_at"`      // 更新时间
+		PreOrderId          string         `db:"pre_order_id"`          // 预订单ID
+		UserId              uint64         `db:"user_id"`               // 用户ID
+		CouponId            sql.NullString `db:"coupon_id"`             // 使用优惠券ID列表（支持多券）
+		OriginalAmount      int64          `db:"original_amount"`       // 原始金额（单位：分）
+		FinalAmount         int64          `db:"final_amount"`          // 实付金额（单位：分）
+		Status              int64          `db:"status"`                // 状态：0-预占中 1-已确认 2-已取消 3-已过期
+		ExpireTime          int64          `db:"expire_time"`           // 过期时间戳（秒）
+		CreatedAt           time.Time      `db:"created_at"`            // 创建时间（毫秒精度）
+		UpdatedAt           time.Time      `db:"updated_at"`            // 更新时间
+		CheckoutToken       sql.NullString `db:"checkout_token"`        // 服务端随机购买意图令牌
+		CheckoutIntentId    sql.NullString `db:"checkout_intent_id"`    // 领取请求幂等ID
+		CheckoutRequestHash sql.NullString `db:"checkout_request_hash"` // 首次提交参数摘要
+		CheckoutRequest     sql.NullString `db:"checkout_request"`      // 规范化结算请求，供核对使用
+		PrepareState        int64          `db:"prepare_state"`         // 0待提交 1处理中 2成功 3失败 4待核对
+		TokenExpiresAt      int64          `db:"token_expires_at"`      // 令牌首次消费截止时间秒
+		PrepareStartedAt    int64          `db:"prepare_started_at"`    // 执行开始时间秒
+		PrepareResult       sql.NullString `db:"prepare_result"`        // 原始结算响应，用于重放
 	}
 )
 
@@ -76,15 +86,43 @@ func (m *defaultCheckoutsModel) FindOne(ctx context.Context, preOrderId string) 
 	}
 }
 
+func (m *defaultCheckoutsModel) FindOneByCheckoutToken(ctx context.Context, checkoutToken sql.NullString) (*Checkouts, error) {
+	var resp Checkouts
+	query := fmt.Sprintf("select %s from %s where `checkout_token` = ? limit 1", checkoutsRows, m.table)
+	err := m.conn.QueryRowCtx(ctx, &resp, query, checkoutToken)
+	switch err {
+	case nil:
+		return &resp, nil
+	case sqlx.ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultCheckoutsModel) FindOneByUserIdCheckoutIntentId(ctx context.Context, userId uint64, checkoutIntentId sql.NullString) (*Checkouts, error) {
+	var resp Checkouts
+	query := fmt.Sprintf("select %s from %s where `user_id` = ? and `checkout_intent_id` = ? limit 1", checkoutsRows, m.table)
+	err := m.conn.QueryRowCtx(ctx, &resp, query, userId, checkoutIntentId)
+	switch err {
+	case nil:
+		return &resp, nil
+	case sqlx.ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
 func (m *defaultCheckoutsModel) Insert(ctx context.Context, data *Checkouts) (sql.Result, error) {
-	query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?)", m.table, checkoutsRowsExpectAutoSet)
-	ret, err := m.conn.ExecCtx(ctx, query, data.PreOrderId, data.UserId, data.CouponId, data.OriginalAmount, data.FinalAmount, data.Status, data.ExpireTime)
+	query := fmt.Sprintf("insert into %s (%s) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", m.table, checkoutsRowsExpectAutoSet)
+	ret, err := m.conn.ExecCtx(ctx, query, data.PreOrderId, data.UserId, data.CouponId, data.OriginalAmount, data.FinalAmount, data.Status, data.ExpireTime, data.CheckoutToken, data.CheckoutIntentId, data.CheckoutRequestHash, data.CheckoutRequest, data.PrepareState, data.TokenExpiresAt, data.PrepareStartedAt, data.PrepareResult)
 	return ret, err
 }
 
-func (m *defaultCheckoutsModel) Update(ctx context.Context, data *Checkouts) error {
+func (m *defaultCheckoutsModel) Update(ctx context.Context, newData *Checkouts) error {
 	query := fmt.Sprintf("update %s set %s where `pre_order_id` = ?", m.table, checkoutsRowsWithPlaceHolder)
-	_, err := m.conn.ExecCtx(ctx, query, data.UserId, data.CouponId, data.OriginalAmount, data.FinalAmount, data.Status, data.ExpireTime, data.PreOrderId)
+	_, err := m.conn.ExecCtx(ctx, query, newData.UserId, newData.CouponId, newData.OriginalAmount, newData.FinalAmount, newData.Status, newData.ExpireTime, newData.CheckoutToken, newData.CheckoutIntentId, newData.CheckoutRequestHash, newData.CheckoutRequest, newData.PrepareState, newData.TokenExpiresAt, newData.PrepareStartedAt, newData.PrepareResult, newData.PreOrderId)
 	return err
 }
 

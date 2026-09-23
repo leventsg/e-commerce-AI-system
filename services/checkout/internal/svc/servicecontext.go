@@ -20,6 +20,7 @@ type ServiceContext struct {
 	Mysql              sqlx.SqlConn
 	RedisClient        *redis.Redis
 	CheckoutModel      checkout.CheckoutsModel
+	CheckoutIntents    *checkout.CheckoutIntentStore
 	CheckoutItemsModel checkout.CheckoutItemsModel
 	CartsModel         cart.CartsModel
 	InventoryRpc       inventoryclient.Inventory
@@ -41,6 +42,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		RedisClient:        redis.MustNewRedis(c.RedisConf),
 		CartsModel:         cart.NewCartsModel(mysql),
 		CheckoutModel:      checkout.NewCheckoutsModel(mysql),
+		CheckoutIntents:    checkout.NewCheckoutIntentStore(mysql),
 		CheckoutItemsModel: checkout.NewCheckoutItemsModel(mysql),
 		InventoryRpc:       inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc)),
 		CouponsRpc:         couponsclient.NewCoupons(zrpc.MustNewClient(c.CouponsRpc)),

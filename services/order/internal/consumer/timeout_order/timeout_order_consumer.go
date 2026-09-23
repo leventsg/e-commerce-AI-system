@@ -81,6 +81,7 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 			return nil
 		}
 
+		// 更新订单状态为已过期
 		if err := co.OrdersModel.WithSession(session).UpdateOrderStatusByOrderIDAndUserID(
 			ctx,
 			data.OrderId,
@@ -96,6 +97,7 @@ func (co *TimeoutOrderConsumer) Handle(ctx context.Context, msg []byte) error {
 		return err
 	}
 
+	// 保存超时订单消息到Outbox消息表
 	return co.saveFullTimeoutOutbox(ctx, orderRes, data.Source)
 }
 

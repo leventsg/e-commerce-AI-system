@@ -8,6 +8,7 @@ enum CheckoutStatus {
   CONFIRMED = 1;   // 已确认
   CANCELLED = 2;   // 已取消
   EXPIRED = 3;     // 已过期
+  PREPARING = 4;   // 意图已创建，尚未完成预结算，不可下单
 }
 
 message CheckoutItem {
@@ -56,7 +57,20 @@ message CheckoutReq{
   uint32 user_id = 1;
   string coupon_id = 2; //
   repeated OrderItem order_items = 3; // 新增：直接传商品信息
+  string checkout_token = 4; // 同次购买重试复用，新购买领取新 token
 
+}
+
+message IssueCheckoutTokenReq {
+  uint32 user_id = 1;
+  string intent_id = 2; // 领取请求幂等 ID；同一购买意图稳定复用
+}
+
+message IssueCheckoutTokenResp {
+  int32 status_code = 1;
+  string status_msg = 2;
+  string checkout_token = 3;
+  int64 expires_at = 4;
 }
 
 // --------------- response ---------------
@@ -73,7 +87,7 @@ message CheckoutResp {
   string status_msg = 2;
 
   int64 expire_time = 3;        // 预占库存有效期)如30分钟）
-  string pre_order_id = 4;    // 结算令牌)用于后续提交）也就是pre_order_id)幂等控制）
+  string pre_order_id = 4;    // 成功创建的预订单 ID；购买意图由 checkout_token 标识
   repeated int64  pay_method = 5;// 支付方式 )如：微信支付：1、支付宝支付：2）
 }
 message CheckoutDetailResp {
@@ -91,6 +105,7 @@ message ReleaseReq {
 
 
 service CheckoutService {
+  rpc IssueCheckoutToken (IssueCheckoutTokenReq) returns (IssueCheckoutTokenResp);
   //  PrepareCheckout 预结算)生成预订单）
   rpc PrepareCheckout (CheckoutReq) returns (CheckoutResp);
   //  UpdateCheckoutStatus2Success 当订单超时，支付超时，支付退款

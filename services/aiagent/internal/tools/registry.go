@@ -246,7 +246,7 @@ func defaultSchemaTools(queryTimeout, writeTimeout int64) []core.Tool {
 		queryTool(domain.ToolInventoryGet, tool_prompts.InventoryGetDesc, queryTimeout, "Inventory", "GetInventory", tool_prompts.InventoryGetParameters),
 		queryTool(domain.ToolOrderGet, tool_prompts.OrderGetDesc, queryTimeout, "OrderService", "GetOrder", tool_prompts.OrderGetParameters),
 		queryTool(domain.ToolOrderList, tool_prompts.OrderListDesc, queryTimeout, "OrderService", "ListOrders", tool_prompts.OrderListParameters),
-		writeTool(domain.ToolCheckoutPrepare, tool_prompts.CheckoutPrepareDesc, domain.RiskLow, false, writeTimeout, "CheckoutService", "PrepareCheckout", tool_prompts.CheckoutPrepareParameters),
+		writeTool(domain.ToolCheckoutPrepare, tool_prompts.CheckoutPrepareDesc, domain.RiskLow, false, writeTimeout, "CheckoutService", "IssueCheckoutToken/PrepareCheckout", tool_prompts.CheckoutPrepareParameters),
 		queryTool(domain.ToolCheckoutDetail, tool_prompts.CheckoutDetailDesc, queryTimeout, "CheckoutService", "GetCheckoutDetail", tool_prompts.CheckoutDetailParameters),
 		queryTool(domain.ToolCartList, tool_prompts.CartListDesc, queryTimeout, "Cart", "CartItemList", tool_prompts.CartListParameters),
 		writeTool(domain.ToolCartAdd, tool_prompts.CartAddDesc, domain.RiskLow, false, writeTimeout, "Cart", "CreateCartItem", tool_prompts.CartAddParameters),

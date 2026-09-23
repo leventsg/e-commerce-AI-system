@@ -25,8 +25,10 @@ var (
 
 【执行限制】
 - 低风险写操作（仅预扣库存，未真正扣款），无需用户确认
-- 结算有有效期（约30分钟），过期后库存自动释放
-- 相同商品+数量的重复结算会被幂等拦截（5分钟内返回已有 pre_order_id）
+- 结算有效期以工具返回的 expire_time 为准
+- 服务端用 checkout_token 区分购买意图，同次执行重试复用令牌；用户明确再次购买同样商品可以创建新结算
+- checkout_token 由服务端执行层管理，不需要模型提供
+- 返回处理中、结果待核对或 business_outcome=unknown 时，不得再次调用 checkout_prepare，也不得宣称未执行；告知用户等待原结果或联系支持核对
 - order_items 为必填，coupon_id 为可选`
 
 	CheckoutPrepareParameters = map[string]*schema.ParameterInfo{

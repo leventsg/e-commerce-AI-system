@@ -39,13 +39,13 @@ func (m *customCheckoutsModel) withSession(session sqlx.Session) CheckoutsModel 
 }
 
 func (m *customCheckoutsModel) UpdateStatusWithSession(ctx context.Context, session sqlx.Session, status int64, userId int32, preOrderId string) error {
-	query := fmt.Sprintf("UPDATE %s SET `status` = ? WHERE `user_id` = ? AND `pre_order_id` = ?", m.table)
+	query := fmt.Sprintf("UPDATE %s SET `status` = ? WHERE `user_id` = ? AND `pre_order_id` = ? AND `prepare_state` = 2", m.table)
 	_, err := session.ExecCtx(ctx, query, status, userId, preOrderId)
 	return err
 }
 
 func (m *customCheckoutsModel) FindOneByUserIdAndPreOrderIdWithSession(ctx context.Context, session sqlx.Session, userId int32, preOrderId string) (*Checkouts, error) {
-	query := fmt.Sprintf("SELECT %s FROM %s WHERE `user_id` = ? AND `pre_order_id` = ? LIMIT 1 FOR SHARE", checkoutsRows, m.table)
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE `user_id` = ? AND `pre_order_id` = ? AND `prepare_state` = 2 LIMIT 1 FOR SHARE", checkoutsRows, m.table)
 
 	var resp Checkouts
 	err := session.QueryRowCtx(ctx, &resp, query, userId, preOrderId) // 使用 session 查询
@@ -58,13 +58,13 @@ func (m *customCheckoutsModel) FindOneByUserIdAndPreOrderIdWithSession(ctx conte
 	return &resp, nil
 }
 func (m *customCheckoutsModel) FindOneByUserIdAndPreOrderId(ctx context.Context, userId int32, preOrderId string) (*Checkouts, error) {
-	query := fmt.Sprintf("SELECT %s FROM %s WHERE `user_id` = ? AND `pre_order_id` = ? LIMIT 1", checkoutsRows, m.table)
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE `user_id` = ? AND `pre_order_id` = ? AND `prepare_state` = 2 LIMIT 1", checkoutsRows, m.table)
 	var resp Checkouts
 	err := m.conn.QueryRowCtx(ctx, &resp, query, userId, preOrderId)
 	return &resp, err
 }
 func (m *customCheckoutsModel) CountByUserId(ctx context.Context, userId uint32) (int64, error) {
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id = ?", m.table)
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id = ? AND prepare_state = 2", m.table)
 	var count int64
 	err := m.conn.QueryRowCtx(ctx, &count, query, userId)
 	if err != nil {
@@ -73,7 +73,7 @@ func (m *customCheckoutsModel) CountByUserId(ctx context.Context, userId uint32)
 	return count, nil
 }
 func (m *customCheckoutsModel) FindByUserId(ctx context.Context, userId uint32, page int32, pageSize int32) ([]*Checkouts, error) {
-	query := fmt.Sprintf("SELECT %s FROM %s WHERE user_id = ? ORDER BY pre_order_id DESC LIMIT ?, ?", checkoutsRows, m.table)
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE user_id = ? AND prepare_state = 2 ORDER BY pre_order_id DESC LIMIT ?, ?", checkoutsRows, m.table)
 	var resp []*Checkouts
 	err := m.conn.QueryRowsCtx(ctx, &resp, query, userId, (page-1)*pageSize, pageSize)
 	return resp, err

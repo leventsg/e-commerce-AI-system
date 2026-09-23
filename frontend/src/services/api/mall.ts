@@ -37,7 +37,10 @@ export const couponApi = {
 }
 
 export const checkoutApi = {
-  prepare: (data: { coupon_id?: string; order_items: Array<{ product_id: number; quantity: number }> }, token?: string | null) =>
+  // Generate intent_id once per purchase; keep it and checkout_token for retries.
+  issueToken: (intent_id: string, token?: string | null) =>
+    apiPost<{ checkout_token: string; expires_at: number }>('/douyin/checkout/token', { intent_id }, token),
+  prepare: (data: { checkout_token: string; coupon_id?: string; order_items: Array<{ product_id: number; quantity: number }> }, token?: string | null) =>
     apiPost('/douyin/checkout/prepare', data, token),
   list: (params: { page?: number; page_size?: number }, token?: string | null) =>
     apiGet(`/douyin/checkout/list?${toQuery(params)}`, token),

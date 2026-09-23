@@ -303,7 +303,7 @@
           <p class="contact-line">GitHub：https://github.com/leventsg </p>
           <label class="photo-box" contenteditable="false" title="点击替换证件照">
             <input id="photoInput" type="file" accept="image/*" hidden>
-            <img id="photoPreview" src="artifacts/resume/levent-image-1-1.png" alt="证件照">
+            <img id="photoPreview" src="../../artifacts/resume/levent-image-1-1.png" alt="证件照">
           </label>
         </header>
 
@@ -418,7 +418,7 @@
       if (!photoInput || !photoPreview) return;
 
       const savedPhoto = localStorage.getItem(PHOTO_KEY);
-      if (savedPhoto) photoPreview.src = savedPhoto;
+      photoPreview.src = savedPhoto || "../../artifacts/resume/levent-image-1-1.png";
 
       photoInput.addEventListener("change", event => {
         const file = event.target.files && event.target.files[0];

@@ -294,6 +294,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 首期下单工具契约：
 
 - `checkout_prepare` 接收必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
+- 结算 RPC 采用购买意图 token 协议：handler 使用可信 ConversationID/RunID/ToolCallID 派生领取请求 ID，先调用 `IssueCheckoutToken` 再将服务端 token 传给 `PrepareCheckout`。token 不暴露在模型 schema 中；同次执行重试复用，新购买不按商品去重。业务状态 60018/60019、写 RPC 响应不明和取消均按 `business_outcome=unknown` 记录，禁止自动换新意图重试。完整状态机、字段 SQL 与人工核对边界见 [结算 token 设计](checkout-token-design.md)。
 - `order_create` 接收必填 `pre_order_id`、`address_id`，`coupon_id` 可选；支付方式固定为支付宝，工具不接收 `payment_method`。
 - 高风险 Tool 的普通 Eino 调用在 ChatModelAgent middleware 中创建确认记录后调用官方 `tool.StatefulInterrupt` 中断，不调用业务 RPC。只有结构化 `ConfirmAction` 携带 `confirmation_id`，成功领取 `pending -> approved` 后，服务端才使用 `runner.ResumeWithParams` 恢复同一次工具调用，并通过同一个 Execution Guard 调用业务 RPC；`pending -> rejected` 是确定性终态，由后端直接返回取消结果，不恢复 checkpoint，不调用 LLM。
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。

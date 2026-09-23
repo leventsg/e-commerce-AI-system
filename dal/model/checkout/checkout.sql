@@ -9,7 +9,18 @@ CREATE TABLE checkouts
     expire_time     BIGINT       NOT NULL COMMENT '过期时间戳（秒）',
     created_at      TIMESTAMP(3)          DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间（毫秒精度）',
     updated_at      TIMESTAMP(3)          DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
+    checkout_token CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '服务端随机购买意图令牌',
+    checkout_intent_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '领取请求幂等ID',
+    checkout_request_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '首次提交参数摘要',
+    checkout_request JSON NULL COMMENT '规范化结算请求，供核对使用',
+    prepare_state TINYINT NOT NULL DEFAULT 0 COMMENT '0待提交 1处理中 2成功 3失败 4待核对',
+    token_expires_at BIGINT NOT NULL DEFAULT 0 COMMENT '令牌首次消费截止时间秒',
+    prepare_started_at BIGINT NOT NULL DEFAULT 0 COMMENT '执行开始时间秒',
+    prepare_result JSON NULL COMMENT '原始结算响应，用于重放',
     PRIMARY KEY (pre_order_id),
+    UNIQUE KEY uk_checkout_token (checkout_token),
+    UNIQUE KEY uk_checkout_intent (user_id, checkout_intent_id),
+    INDEX idx_prepare_state_started (prepare_state, prepare_started_at),
     INDEX idx_user_status (user_id, status),
     INDEX idx_expire (expire_time)
 ) COMMENT ='预订单主表';

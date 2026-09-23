@@ -34,9 +34,10 @@ func (l *CheckoutLogic) Checkout(req *types.CheckoutReq) (resp *types.CheckoutRe
 		return nil, xerrors.New(code.AuthBlank, code.AuthBlankMsg)
 	}
 	res, err := l.svcCtx.CheckoutRpc.PrepareCheckout(l.ctx, &checkout.CheckoutReq{
-		UserId:     userID,
-		CouponId:   req.CouponID,
-		OrderItems: convertCheckoutItem2Req(req.OrderItems),
+		UserId:        userID,
+		CheckoutToken: req.CheckoutToken,
+		CouponId:      req.CouponID,
+		OrderItems:    convertCheckoutItem2Req(req.OrderItems),
 	})
 	if err != nil {
 		l.Logger.Errorw("call rpc PrepareCheckout failed", logx.Field("err", err))

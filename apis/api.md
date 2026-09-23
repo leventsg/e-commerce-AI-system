@@ -2367,6 +2367,7 @@
 
 ```javascript
 {
+    "checkout_token": "<先调用 POST /douyin/checkout/token 领取>",
     "coupon_id": "FJ20250214001",
     "order_items": [
         {
@@ -2396,6 +2397,9 @@
 ```
 
 **Query**
+
+
+结算前调用 `POST /douyin/checkout/token`，body 为 `{"intent_id":"<一次购买的UUID>"}`，返回 `data.checkout_token` 与 `data.expires_at`。领取重试复用 intent_id，提交重试复用 checkout_token。新购买使用新 intent_id，即使商品完全相同也可再次购买。详见 [结算 token 设计](../docs/checkout-token-design.md)。
 
 ## 获取结算详细信息
 

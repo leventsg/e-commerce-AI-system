@@ -83,5 +83,8 @@
 | 请求方法 | 接口 URL | 接口作用 |
 |---|---|---|
 | GET | `checkout/list` | 获取结算列表 |
+| POST | `checkout/token` | 按 intent_id 领取当前用户的结算意图令牌 |
 | POST | `checkout/prepare` | 创建预结算 |
 | GET | `/checkout/detail` | 获取结算详情 |
+
+`prepare` 必传 `checkout_token`。新购买先生成新 `intent_id` 并调用 token 接口；领取重试复用 intent_id，结算重试复用 token。商品相同不再合并购买意图。完整请求、状态码、字段 SQL 见 [结算 token 设计](../docs/checkout-token-design.md)。

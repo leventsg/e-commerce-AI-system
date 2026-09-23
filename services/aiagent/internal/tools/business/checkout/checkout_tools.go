@@ -2,7 +2,11 @@ package checkout_tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"github.com/leventsg/e-commerce-AI-system/common/consts/code"
 
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
@@ -15,7 +19,10 @@ type CheckoutQueryRPC interface {
 	GetCheckoutDetail(ctx context.Context, in *checkoutservice.CheckoutDetailReq, opts ...grpc.CallOption) (*checkoutservice.CheckoutDetailResp, error)
 }
 
+// CheckoutWriteRPC isolates checkout issuance and preparation transport from
+// guarded tool execution. Implemented by the generated RPC client and test fakes.
 type CheckoutWriteRPC interface {
+	IssueCheckoutToken(ctx context.Context, in *checkoutservice.IssueCheckoutTokenReq, opts ...grpc.CallOption) (*checkoutservice.IssueCheckoutTokenResp, error)
 	PrepareCheckout(ctx context.Context, in *checkoutservice.CheckoutReq, opts ...grpc.CallOption) (*checkoutservice.CheckoutResp, error)
 }
 
@@ -51,19 +58,47 @@ func checkoutPrepareHandler(rpc CheckoutWriteRPC) core.HandlerFunc {
 		if err != nil {
 			return core.HandlerResult{}, err
 		}
+		// The execution identity comes from the guard/Eino context, never model
+		// arguments. Retrying this tool call reuses issuance and prepare tokens.
+		execution, ok := helper.ToolExecutionFromContext(ctx)
+		if !ok || execution.UserID != req.UserID || execution.ConversationID != req.ConversationID || execution.RunID == "" || execution.ToolCallID == "" {
+			return core.HandlerResult{}, helper.ErrToolExecutionContext
+		}
+		identity, _ := json.Marshal([]string{"checkout_prepare", execution.ConversationID, execution.RunID, execution.ToolCallID})
+		digest := sha256.Sum256(identity)
+		issued, err := rpc.IssueCheckoutToken(ctx, &checkoutservice.IssueCheckoutTokenReq{UserId: uint32(userID), IntentId: hex.EncodeToString(digest[:])})
+		if err != nil {
+			return core.HandlerResult{}, fmt.Errorf("checkout token rpc: %w", err)
+		}
+		if issued == nil {
+			return core.HandlerResult{}, fmt.Errorf("%w: checkout token returned nil response", helper.ErrQueryRPCUnavailable)
+		}
+		if err := helper.ValidateRPCResponse("checkout_token", issued, int64(issued.StatusCode), issued.StatusMsg); err != nil {
+			return core.HandlerResult{}, err
+		}
+		if issued.CheckoutToken == "" {
+			return core.HandlerResult{}, fmt.Errorf("%w: checkout token is empty", helper.ErrQueryRPCUnavailable)
+		}
 		resp, err := rpc.PrepareCheckout(ctx, &checkoutservice.CheckoutReq{
-			UserId:     uint32(userID),
-			CouponId:   couponID,
-			OrderItems: items,
+			CheckoutToken: issued.CheckoutToken,
+			UserId:        uint32(userID),
+			CouponId:      couponID,
+			OrderItems:    items,
 		})
 		if err != nil {
-			return core.HandlerResult{}, fmt.Errorf("checkout_prepare rpc: %w", err)
+			return core.HandlerResult{}, fmt.Errorf("%w: checkout_prepare rpc: %w", helper.ErrWriteRPCOutcomeUnknown, err)
 		}
 		if resp == nil {
-			return core.HandlerResult{}, fmt.Errorf("%w: checkout_prepare returned nil response", helper.ErrQueryRPCUnavailable)
+			return core.HandlerResult{}, fmt.Errorf("%w: checkout_prepare returned nil response", helper.ErrWriteRPCOutcomeUnknown)
 		}
 		if err := helper.ValidateRPCResponse("checkout_prepare", resp, int64(resp.StatusCode), resp.StatusMsg); err != nil {
+			if resp.StatusCode == code.CheckoutProcessing || resp.StatusCode == code.CheckoutOutcomeUnknown {
+				return core.HandlerResult{}, fmt.Errorf("%w: %w", helper.ErrWriteRPCOutcomeUnknown, err)
+			}
 			return core.HandlerResult{}, err
+		}
+		if resp.PreOrderId == "" || resp.ExpireTime <= 0 {
+			return core.HandlerResult{}, fmt.Errorf("%w: checkout_prepare returned incomplete success", helper.ErrWriteRPCOutcomeUnknown)
 		}
 		return core.HandlerResult{
 			Data: map[string]any{

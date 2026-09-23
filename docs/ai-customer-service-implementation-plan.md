@@ -832,6 +832,7 @@ RPC 对应：
 工具参数契约同步为真实 RPC 结构：
 
 - `checkout_prepare` 必填 `order_items[]`，每项包含 `product_id`、`quantity`，`coupon_id` 可选。
+- 结算兼容性扩展（2026-09-22）：先调用 `IssueCheckoutToken`，再带 `checkout_token` 调用 `PrepareCheckout`；AI schema 不增加 token，可信执行上下文派生稳定领取 ID。结算服务以 MySQL CAS 和持久化响应保证同意图重放，不再按商品去重；执行器保留处理中/不明结果的 unknown 状态，写工具仍不自动重试。新增字段 SQL 由用户手工执行，旧数据不回填，详见 `docs/checkout-token-design.md`。
 - `order_create` 必填 `pre_order_id`、`address_id`，`coupon_id` 可选。
 - 支付方式固定为支付宝，不再由模型传入 `payment_method`。
 
@@ -1461,6 +1462,10 @@ go test ./...
 - UserProfile 只来源于 AI 聊天过程，异步抽取为 JSON，并支持明确偏好、稳定模式、主动纠正和删除/遗忘偏好四类更新。
 - waiting_confirmation 可以跨实例恢复，重复恢复不会重复执行写 RPC。
 - 每次模型调用可以通过结构化日志追踪摘要覆盖水位、近期消息范围、最近工具结果和历史工具引用数量。
+
+## 结算 token 回归入口
+
+本次结算新增测试统一放在根目录 `tests/checkout/`。运行 `python tests/checkout/run.py` 使用 Go overlay 覆盖 checkout logic、API logic、AI handler 和 Executor 的行为，运行 `go test ./tests/checkout` 验证协议与 SQL 状态条件。真实 RPC 场景需显式配置测试环境，默认跳过，不在开发过程中修改用户数据库。
 
 ## 订单高风险工具内部 API 调整
 

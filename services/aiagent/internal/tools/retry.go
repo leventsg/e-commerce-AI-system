@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	checkoutcode "github.com/leventsg/e-commerce-AI-system/common/consts/code"
 	"math/rand"
 	"net"
 	"strings"
@@ -85,6 +86,23 @@ classifyToolError(err)
 func classifyToolError(err error, metadata domain.Metadata, parentCtx context.Context) *ToolError {
 	if err == nil {
 		return nil
+	}
+	// Preserve a dispatched checkout's uncertain outcome even if the caller
+	// disconnects; cancellation does not prove that inventory was untouched.
+	if errors.Is(err, helper.ErrWriteRPCOutcomeUnknown) {
+		result := permanentToolError("write_outcome_unknown", checkoutcode.CheckoutOutcomeUnknownMsg, BusinessOutcomeUnknown, err)
+		var rpcStatusErr *helper.RPCStatusError
+		if errors.As(err, &rpcStatusErr) {
+			result.StatusCode = rpcStatusErr.StatusCode
+			result.Code = fmt.Sprintf("rpc_status_%d", rpcStatusErr.StatusCode)
+			if message := strings.TrimSpace(rpcStatusErr.StatusMsg); message != "" {
+				result.SafeMessage = message
+			}
+		}
+		return result
+	}
+	if metadata.Name == domain.ToolCheckoutPrepare && (errors.Is(err, context.Canceled) || (parentCtx != nil && errors.Is(parentCtx.Err(), context.Canceled))) {
+		return permanentToolError("checkout_canceled_outcome_unknown", checkoutcode.CheckoutOutcomeUnknownMsg, BusinessOutcomeUnknown, err)
 	}
 	if parentCtx != nil && errors.Is(parentCtx.Err(), context.Canceled) {
 		return permanentToolError("context_canceled", "请求已取消。", BusinessOutcomeNotExecuted, err)

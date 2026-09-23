@@ -25,6 +25,10 @@ var ErrQueryRPCUnavailable = errors.New("query rpc unavailable")
 var ErrToolExecutionContext = errors.New("trusted tool execution context missing")
 var ErrRPCBusinessStatus = errors.New("rpc business status failed")
 
+// ErrWriteRPCOutcomeUnknown means a dispatched write may have taken effect.
+// It must never be reported as not_executed or automatically retried.
+var ErrWriteRPCOutcomeUnknown = errors.New("write rpc outcome unknown")
+
 type RPCStatusError struct {
 	Operation  string
 	StatusCode int64

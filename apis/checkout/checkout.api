@@ -3,8 +3,16 @@ syntax = "v1"
 type (
 	// 请求结构体
 	CheckoutReq {
-		CouponID   string            `json:"coupon_id,optional"`
-		OrderItems []CheckoutItemReq `json:"order_items"`
+		CheckoutToken string            `json:"checkout_token"`
+		CouponID      string            `json:"coupon_id,optional"`
+		OrderItems    []CheckoutItemReq `json:"order_items"`
+	}
+	CheckoutTokenReq {
+		IntentID string `json:"intent_id"`
+	}
+	CheckoutTokenResp {
+		CheckoutToken string `json:"checkout_token"`
+		ExpiresAt     int64  `json:"expires_at"`
 	}
 	CheckoutItemReq {
 		ProductID int32 `json:"product_id"`
@@ -63,6 +71,10 @@ type (
 )
 // 服务定义
 service checkout-api {
+	@handler TokenHandler
+	// 同一意图的领取重试复用 intent_id
+	post /token (CheckoutTokenReq) returns (CheckoutTokenResp)
+
 	@handler CheckoutHandler
 	// 预结算接口
 	post /prepare (CheckoutReq) returns (CheckoutResp)
