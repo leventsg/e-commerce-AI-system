@@ -349,14 +349,14 @@
               <div class="entry-title">e-commerce-AI-system · AI 客服一体化 Go 微服务电商后端系统</div>
               <div class="date">2026.03 - 2026.08</div>
             </div>
-            <p class="project-title">Go / go-zero / Eino / SSE / MySQL / Redis / Kafka / Elasticsearch / Consul / DTM / Docker / Prometheus</p>
-            <p><strong>项目全景：</strong>基于 go-zero 构建微服务电商后端，覆盖商品、库存、订单、结算、购物车、优惠券、用户、支付、审计和 AI 客服入口；用户可通过传统 API 完成交易，也可通过 AI 对话复用同一套业务 RPC 触发推荐、加购、结算和订单处理。</p>
+            <p class="project-title">Go / go-zero / Eino / MySQL / Redis / Kafka / Elasticsearch / DTM / Prometheus</p>
+            <p><strong>项目简介：</strong>围绕购物车、结算、订单、库存和支付构建电商交易后端，并在真实业务 RPC 之上接入 AI 客服执行层，使 Agent 能够完成商品查询、购物车操作、订单处理及售后等真实业务任务。</p>
             <ul>
-              <li><strong>可靠异步任务架构：</strong>利用 <strong>Redis 延迟队列</strong>处理超时订单，基于 <strong>Kafka</strong> 构建支付事件、审计记录和状态通知的<strong>事件驱动链路</strong>，将后置任务解耦，降低同步接口等待时间并提升系统整体吞吐能力。</li>
-              <li><strong>交易与库存链路：</strong>围绕购物车、结算、下单、支付和订单状态流转串联商品快照、地址、优惠券、金额计算、库存校验和支付单生成；高并发扣减使用 <strong>Redis Lua</strong> 保证库存检查与扣减原子性，并通过库存服务统一控制扣减、回滚和查询语义。</li>
-              <li><strong>分布式事务处理：</strong>接入 <strong>DTM Saga</strong> 协调订单、库存、支付等跨服务事务，将业务拆分为正向操作与补偿操作；针对下单失败、支付异常和库存回滚等场景保留<strong>幂等与补偿入口</strong>，降低交易链路部分成功风险。</li>
-              <li><strong>缓存检索与可观测：</strong><strong>Elasticsearch</strong> 支撑商品搜索和推荐召回，<strong>Redis</strong> 承担登录安全、购物车、热点商品、库存预热和限流状态；<strong>Kafka</strong> 解耦审计、状态通知等非强同步任务，配套 <strong>Prometheus、EFK、Docker Compose、GitHub Actions</strong> 完成本地启动、指标采集、日志检索与基础 CI。</li>
-              <li><strong>AI 客服业务接入：</strong>基于 Eino 构建 <strong>Supervisor + 多领域 Agent</strong> 编排体系，结合<strong>上下文与长期记忆</strong>、<strong>Tool Gateway 安全执行链路</strong>、<strong>Redis 分布式排队限流</strong>及 <strong>StatefulInterrupt/Checkpoint</strong> 中断续跑机制，支撑复杂电商任务的稳定执行；并通过 <strong>tau2-bench</strong> 自动化评测持续优化 <strong>Prompt、Tool Schema 与上下文检索</strong>，使任务通过率达到 <strong>Pass@1->92%+、Pass@3->99%+</strong>。</li>
+              <li><strong>交易与库存链路：</strong>围绕购物车 → 结算 → 下单 → 支付构建交易流程，由服务端统一完成商品快照、优惠计算、库存校验与支付单生成；通过 Redis Lua 将库存检查与扣减原子化，由库存服务统一维护扣减、查询与回滚语义。</li>
+              <li><strong>事务与异步可靠性：</strong>使用 DTM Saga 编排订单、库存和支付等跨服务正向/补偿操作，并为补偿接口设计幂等控制；采用业务状态 + 本地消息表同事务落库、后台扫描投递 Kafka，降低业务提交成功但事件发送失败导致的状态不一致风险。</li>
+              <li><strong>订单超时处理：</strong>通过 Redis 延迟任务处理待支付订单超时，关单前复核支付状态；针对支付回调与关单竞争，通过状态条件更新和补偿幂等避免重复关单及重复库存回补。</li>
+              <li><strong>AI 客服执行层：</strong>基于 Eino 构建 <strong>Supervisor + 子 Agent</strong> 编排体系，将商品、购物车、订单、支付、售后能力封装为 20+ Tools，由 Supervisor 完成任务拆解、依赖排序和工具调用，使 Agent 能通过真实业务 RPC 完成跨域任务</li>
+              <li><strong>Agent 执行控制：</strong>对交易类写操作加入 Human-in-the-loop 确认、业务权限校验及幂等控制；针对工具超时与重复调用，通过业务结果查询及 Checkpoint 恢复执行状态，避免模型重试造成重复业务操作。</li>
             </ul>
           </article>
 
@@ -366,13 +366,12 @@
               <div class="date">2026.03 - 2026.08</div>
             </div>
             <p class="project-title">Go / Gin / Eino / PostgreSQL / pgvector / Elasticsearch / Redis / MQ / Apache Tika / RAGAS</p>
-            <p><strong>项目全景：</strong>面向企业客服、商品资料、运营规范等非结构化知识资产，建设知识接入、解析加工、混合检索、开放服务和质量评测一体化平台，为 Agent/RAG 应用提供低耦合、可追溯的 Retrieval 能力。</p>
+            <p><strong>项目简介：</strong>面向企业文档、商品资料及运营规范等非结构化知识，构建文档接入、解析加工、混合检索、开放服务与质量评测一体化 Retrieval 平台，为 RAG / Agent 提供稳定、可评测、可追踪的知识检索能力。</p>
             <ul>
-              <li><strong>可编排知识入库：</strong>设计节点化 <strong>Ingestion Engine</strong>，将 Fetch、Parse、Enhance、Chunk、Enrich、Index 抽象为可配置 Pipeline，支持条件执行、拓扑校验、节点级状态与耗时记录；结合 MQ 事务任务和状态防重入机制，实现多源文档稳定入库，成功率 <strong>99%+</strong>。</li>
-              <li><strong>查询理解与降级：</strong>构建 <strong>Query Rewrite + Sub-Question Split + Intent Tree</strong> 检索前处理链路，从请求参数获取会话上下文完成指代消解、查询补全和子问题路由；模型异常时自动回退原始 Query，避免 LLM 成为检索链路单点故障。</li>
-              <li><strong>混合检索与归因：</strong>实现 Vector + BM25 多路并行召回，通过结果去重、RRF 融合、Rerank 精排提升检索质量，并记录各召回通道在精排前后的结果归因；相较单路向量检索，<strong>Recall@5 提升 20%+、Context Precision 提升 15%+</strong>。</li>
-              <li><strong>平台化开放服务：</strong>设计统一 <strong>Retrieval OpenAPI</strong>，通过 API Key 绑定可访问知识库并返回 Chunk、Score、来源文档与 TraceId；基于 Redis Lua 实现 Key 级 <strong>QPS/日配额原子限流</strong>，沉淀 HitCount、Latency、Status 等用量与质量数据。</li>
-              <li><strong>质量闭环：</strong>建设离线评测链路，统一输出 Retrieved Doc、Chunk、Context、Intent、Latency 等证据，围绕 <strong>Recall@K、MRR、Precision@K、Context Precision</strong> 对 Chunk 策略、召回通道、RRF 权重和 Rerank 模型做 A/B 回归。</li>
+              <li><strong>可编排知识入库：</strong>将文档处理拆分为 Fetch → Parse → Enhance → Chunk → Enrich → Index 节点化 Pipeline，支持条件执行、拓扑校验及节点状态/耗时记录，通过任务状态和防重入机制处理失败及重复执行，使文档处理链路可定位、可恢复。</li>
+              <li><strong>混合检索与排序：</strong>采用 Vector + BM25 并行召回，经去重后使用 RRF 融合并通过 Cross-Encoder 精排；基于自建 Query + Ground Truth Chunk 测试集进行离线评测，相较单路向量检索，Recall@5 提升 20%+、Context Precision 提升 15%+。</li>
+              <li><strong>Retrieval 服务化：</strong>设计统一 Retrieval OpenAPI，返回 Chunk、Score、来源文档；通过 API Key 绑定知识库访问范围，并使用 Redis Lua 原子维护 Key 级 QPS / 日配额，记录 HitCount、Latency、Status 等运行数据。</li>
+              <li><strong>检索质量闭环：</strong>统一计算 Recall@K、MRR、Context Precision 等指标，对 Chunk 策略、TopK、RRF 权重与 Rerank 候选数进行 A/B 回归，并记录不同召回通道及排序前后的结果用于问题归因。</li>
             </ul>
           </article>
         </section>

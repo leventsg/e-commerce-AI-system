@@ -1,3 +1,5 @@
+//go:build ai_business_agents
+
 package eino
 
 import (
@@ -104,7 +106,7 @@ func TestMemoryMiddlewareScopesDedupByAgentName(t *testing.T) {
 		ContextMessages: []domain.ContextMessage{{Role: domain.ContextRoleUser, Content: "<ctx>scoped</ctx>"}},
 	}}
 	root := NewMemoryMiddlewareForAgent(provider, supervisorAgentName)
-	child := NewMemoryMiddlewareForAgent(provider, "product_agent")
+	child := NewMemoryMiddlewareForAgent(provider, "product_discovery_agent")
 	ctx := context.Background()
 	ctx = aimemory.ContextWithConversationMetadata(ctx, aimemory.ConversationMetadata{
 		UserID:           42,
@@ -133,8 +135,8 @@ func TestMemoryMiddlewareScopesDedupByAgentName(t *testing.T) {
 	if provider.retrieveCalls != 2 {
 		t.Fatalf("retrieve calls = %d, want root and child retrieval", provider.retrieveCalls)
 	}
-	if provider.requests[1].AgentName != "product_agent" {
-		t.Fatalf("child request AgentName=%q, want product_agent", provider.requests[1].AgentName)
+	if provider.requests[1].AgentName != "product_discovery_agent" {
+		t.Fatalf("child request AgentName=%q, want product_discovery_agent", provider.requests[1].AgentName)
 	}
 }
 

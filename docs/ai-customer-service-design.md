@@ -218,31 +218,51 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - 动态 ToolFact、库存、价格、订单、优惠券状态等业务事实只用于定位对象和理解历史，写操作或状态结论前必须重新调用对应业务 RPC 精确核实。
 - `internal/memory` 不包含 Eino 类型；只有 `internal/eino` 的 MemoryMiddleware 可以把领域消息转换为 `schema.Message`。
 
-当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 和各领域 SubAgent 均通过按 AgentName 分作用域的 MemoryMiddleware 自动注入上下文。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
+当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 和各业务/通用客服 SubAgent 均通过按 AgentName 分作用域的 MemoryMiddleware 自动注入上下文。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
 
 ### 3.5 Supervisor Agent
 职责：
 - 判断用户意图。
 - 拆解多步骤业务任务。
-- 路由到合适的领域 SubAgent。
+- 路由到合适的业务或通用客服 SubAgent。
 - 协调多个 SubAgent 的执行顺序。
 - 汇总最终中文回复。
 
-领域 SubAgent：
-- product_agent：商品搜索、商品详情、商品推荐、库存查询。
-- order_agent：订单查询、订单列表、取消订单确认。
-- cart_checkout_agent：购物车、结算、创建订单确认。
-- coupon_agent：优惠券查询、领取、我的券、优惠计算。
-- user_agent：用户资料查询、用户名/头像修改、收货地址查询、新增、更新、删除。
-- general_agent：普通客服解释、闲聊、无法归类问题。
+四个业务 Agent + 一个闲聊/通用客服 Agent 的业务工具白名单：
+
+| Agent | 职责 | 业务工具 |
+|---|---|---|
+| `product_discovery_agent` 商品发现 | 澄清找货需求、搜索、推荐、详情和库存核实 | `product_search`、`product_recommend`、`product_detail`、`inventory_get` |
+| `shopping_decision_agent` 购物决策 | 商品比较、取舍、优惠选择与领取、购物车调整 | `product_search`、`product_recommend`、`product_detail`、`inventory_get`、`coupon_list`、`coupon_detail`、`coupon_claim`、`coupon_my_list`、`coupon_usage_list`、`coupon_calculate`、`cart_list`、`cart_add`、`cart_sub`、`cart_delete` |
+| `order_fulfillment_agent` 订单履约 | 地址管理、结算、下单确认、普通订单查询 | `address_list`、`address_get`、`address_add`、`address_update`、`address_delete`、`cart_list`、`checkout_prepare`、`checkout_detail`、`order_create`、`order_get`、`order_list` |
+| `after_sales_agent` 售后服务 | 订单与优惠问题排查、取消订单确认、有依据的政策解释 | `order_get`、`order_list`、`order_cancel`、`coupon_usage_list`、`coupon_detail`、`product_detail` |
+| `general_agent` 闲聊/通用客服 | 闲聊、通用说明、无法归类问题、用户资料维护 | `user_get`、`user_update` |
+
+查询工具允许共享，每个写工具只有一个归属 Agent；共享能力工具继续遵循 Registry 的可见性规则。工具风险、确认、超时和审计策略保持现状，`cart_delete` 仍需要高风险确认。
 
 实现方式：
 - 使用 Eino ADK `ChatModelAgent + AgentTool`，不使用 `prebuilt/supervisor` / AgentTransfer。
 - Supervisor Agent 不直接绑定业务 RPC 工具，只通过 AgentTool 调度 SubAgent。
 - SubAgent 默认仍只接收 Supervisor 传入的紧凑 `request`，但会在自身模型调用前按 `AgentName` 注入受控上下文，避免完全依赖 Supervisor 对 request 的一次性总结。
-- SubAgent 只绑定本领域 ToolInfo 和可执行工具。
+- SubAgent 只绑定上述业务白名单及 Registry 允许的共享能力工具，子 Agent 不直接互相调用。
 - 工具调用必须经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。
 - Prompt 文本集中放在 `services/aiagent/internal/prompts`，Eino 编排代码不得直接硬编码长 prompt。
+
+路由与交接规则：
+
+- 搜索、推荐、找商品优先进入商品发现；比较、取舍、优惠和购物车进入购物决策。购物决策可自行补查商品，避免为补充信息反复转交。
+- 结算、下单、地址和普通订单状态查询进入订单履约；取消订单、订单异常和售后政策进入售后服务；资料维护与闲聊进入 general。
+- 多意图请求按依赖执行，只调用必要 Agent。修改购物车后下单时先决策再履约；直接下单或查询订单不必经过选购阶段。
+- 紧凑 `request` 携带真实 `product_id`、明确数量、用户约束、必要工具结果引用、已完成动作和待解决事项。缺失信息先澄清，不默认补齐；交接信息不包含可信用户身份或用户批准的替代凭据。
+- 最终金额、库存和优惠资格以结算链路重新校验的真实结果为准。`checkout_prepare` 可能占用库存，只用于明确结算意图，不用于比较试算。
+- 高风险操作产生 `confirmation_required` 后暂停依赖它的后续步骤，批准后走既有 checkpoint 恢复链路。拒绝、过期和失败不得总结为成功。
+- 未接入退款、退换货、物流操作，明确告知能力边界，不以其他写工具替代执行。政策解释使用现有知识上下文，无依据时说明无法核实。
+
+Skill 与迁移约束：
+
+- `purchase-advisor` 绑定 `shopping_decision_agent`，选购阶段保持只读；阶段结束后宿主按用户意图处理领券和购物车操作。`issue-triage` 继续绑定 Supervisor。
+- MemoryMiddleware 使用上述新 AgentName 注入上下文；事件过滤、日志、前端展示和 mock 同步使用新名称，最终回答仍只来自 Supervisor。历史消息与工具调用记录保留原样。
+- 本次按当前没有待确认任务的部署前提替换旧 Agent 结构，不增加旧版本 checkpoint 兼容路径。公共 API/RPC、工具参数、数据库和底层业务 handler 分层保持现状。
 
 ### 3.6 Tool Registry
 所有业务工具必须注册为 Eino Tool，并同步维护本地工具元数据白名单，模型不能调用未注册工具。
@@ -298,7 +318,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - `order_create` 接收必填 `pre_order_id`、`address_id`，`coupon_id` 可选；支付方式固定为支付宝，工具不接收 `payment_method`。
 - 高风险 Tool 的普通 Eino 调用在 ChatModelAgent middleware 中创建确认记录后调用官方 `tool.StatefulInterrupt` 中断，不调用业务 RPC。只有结构化 `ConfirmAction` 携带 `confirmation_id`，成功领取 `pending -> approved` 后，服务端才使用 `runner.ResumeWithParams` 恢复同一次工具调用，并通过同一个 Execution Guard 调用业务 RPC；`pending -> rejected` 是确定性终态，由后端直接返回取消结果，不恢复 checkpoint，不调用 LLM。
 - 使用优惠券创建订单时，确认前基于预结算商品快照调用 `coupon_calculate`，确认摘要展示该优惠券对应的最新应付金额；优惠券不可用时不创建确认。
-- 用户资料与地址工具由 `user_agent` 绑定，统一通过 `services/users` RPC 执行。`user_get`、`address_list`、`address_get` 为只读；`user_update`、`address_add`、`address_update`、`address_delete` 为低风险写操作，无需确认。账号删除、登出、修改密码不纳入 AI 工具范围。
+- 用户资料工具 `user_get`、`user_update` 由 `general_agent` 绑定；地址工具由 `order_fulfillment_agent` 绑定，统一通过 `services/users` RPC 执行。`user_get`、`address_list`、`address_get` 为只读；`user_update`、`address_add`、`address_update`、`address_delete` 为低风险写操作，无需确认。账号删除、登出、修改密码不纳入 AI 工具范围。
 - 业务 RPC 成功但审计记录失败时，工具结果返回失败并明确标记业务已经执行，确认状态仍转为 `executed`，避免用户重试造成重复写入。
 
 ### 3.7 Execution Guard / Engine
@@ -495,23 +515,23 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 ## 5. 关键流程
 ### 5.1 商品推荐流程
 1. 用户描述购买需求。
-2. Eino Agent 结合系统提示词和工具 schema 生成商品推荐工具调用。
+2. Supervisor 路由到商品发现 Agent，结合系统提示词和工具 schema 生成商品推荐工具调用。
 3. Execution Guard 校验并注入用户 ID。
 4. 调用 product_recommend。
 5. 推荐不足时调用 product_search。
 6. Eino ChatModel 基于工具结果生成简短推荐理由。
 7. 返回商品列表和推荐理由。
-8. 用户要求加入购物车时调用 cart_add。
+8. 用户要求加入购物车时，Supervisor 交给购物决策 Agent 调用 cart_add。
 
 ### 5.2 查询订单流程
-1. 用户提供订单号或描述“最近订单”。
+1. 用户提供订单号或描述“最近订单”，Supervisor 路由到订单履约 Agent。
 2. 有订单号时调用 order_get。
 3. 无订单号时调用 order_list，并将结果交给 Eino ChatModel 根据用户描述筛选和总结。
 4. 多个候选订单时让用户选择。
 5. 返回订单状态、商品、金额、地址、支付状态。
 
 ### 5.3 取消订单流程
-1. 用户提出取消订单。
+1. 用户提出取消订单，Supervisor 路由到售后服务 Agent。
 2. 查询订单详情。
 3. 校验订单属于当前用户。
 4. 判断订单是否允许取消。
@@ -521,7 +541,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 8. 记录审计日志。
 
 ### 5.4 创建订单流程
-1. 用户表达购买意图。
+1. 用户表达明确结算或下单意图，Supervisor 路由到订单履约 Agent；需要修改购物车时先由购物决策 Agent 完成。
 2. AI 确认商品、数量、优惠券、地址；支付方式固定为支付宝，缺少参数时先追问，不猜测。
 3. 没有 `pre_order_id` 时调用 `checkout_prepare` 创建预结算。
 4. 使用当前用户身份查询预结算详情，取得应付金额和商品数量。
@@ -535,7 +555,7 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 2. ChatLogic 将当前用户输入作为最小 user message 交给 Supervisor Runner。
 3. MemoryMiddleware 在 root model 调用前加载最新会话摘要、水位后的近期原文、长期事件、活跃 TaskState、pending confirmation、最近一次完整工具调用和最近工具调用最小列表。
 4. MemoryProvider 返回 history 和 runtime context；runtime context 追加到当前 user message，不写入原始历史。
-5. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 负责本领域工具选择与执行。
+5. Supervisor 负责意图识别、任务拆解、SubAgent 路由和最终总结；SubAgent 围绕业务目标在白名单内选择与执行工具。
 6. 工具和 assistant 结果持久化后，ChatLogic 在 `runSupervisor` 正常返回后异步调用 `updateConversationMemory`。
 7. 如果未压缩消息达到 30 条，`SummaryManager` 将最早 10 条与旧摘要合并成新摘要，返回本次 compressed message IDs；否则结束。
 8. 摘要创建时只发布一个 `AiMemoryUpdates` 事件；Profile consumer 和 Memory Event consumer 用同一批消息分别更新画像和长期事件。
@@ -555,6 +575,8 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 
 ## 6. 测试方案
 ### 6.1 单元测试
+- 五个子 Agent 注册、完整业务白名单、共享查询和写工具唯一归属。
+- `purchase-advisor` 绑定购物决策、`issue-triage` 绑定 Supervisor，新 AgentName 上下文和内部消息过滤。
 - Supervisor Agent 路由、任务拆解和 SubAgent 协调。
 - Eino Tool schema 注册和本地工具风险等级。
 - Confirmation Manager 确认创建、确认、拒绝、过期。
@@ -568,6 +590,10 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - TaskState 状态条件更新和 checkpoint 恢复。
 
 ### 6.2 集成测试
+- 商品发现 → 购物决策 → 订单履约的组合流程；直接下单、地址修改、资料修改与闲聊路由。
+- 创建订单、取消订单、删除购物车的中断和确认恢复，依赖步骤在确认前不执行。
+- 未接入退款、退换货请求不执行替代写工具、不虚构办理成功；政策无依据时明确说明。
+- 前端五类子 Agent、工具分组、mock 和事件处理一致。
 - SSE 请求成功返回事件流。
 - 未登录 SSE 请求被拒绝。
 - 用户查询商品。
@@ -586,6 +612,8 @@ Execution Guard 位于 Eino Tool 的业务处理函数内部或外层包装器�
 - 用户不能读取其他用户的摘要、记忆、TaskState、工具结果或工具引用。
 - 记忆和摘要中的提示注入文本不能覆盖 system prompt 或确认策略。
 - 过期动态 ToolFact 不能直接驱动写操作。
+
+本次重组新增及迁移的测试放在根目录 `tests/`，内部包测试使用 Go overlay；入口为 `python tests/ai_business_agents/run.py`。可控模型桩验证编排和执行行为，真实模型单独检查 Prompt 路由，桩测试不能证明真实模型路由准确率。验收同时运行 `go test ./services/aiagent/...`、`go test ./apis/ai/...`、`go test ./...` 以及前端 `npm test`、`npm run build`；具体结果记录在实施计划，未执行的验证保持待验收。
 
 ## 7. 实施建议
 建议分阶段实现：

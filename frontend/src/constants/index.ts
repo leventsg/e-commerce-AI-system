@@ -57,11 +57,11 @@ export const TOOL_ICONS: Record<string, string> = {
 
 /** 子 Agent 定义 */
 export const SUB_AGENTS = [
-  { name: 'product_agent', display: '商品 Agent', tools: ['product_search','product_detail','product_recommend','inventory_get'] },
-  { name: 'order_agent', display: '订单 Agent', tools: ['order_get','order_list','order_cancel'] },
-  { name: 'cart_checkout_agent', display: '购物车结算 Agent', tools: ['cart_list','cart_add','cart_sub','cart_delete','checkout_prepare','checkout_detail','order_create'] },
-  { name: 'coupon_agent', display: '优惠券 Agent', tools: ['coupon_list','coupon_detail','coupon_claim','coupon_my_list','coupon_usage_list','coupon_calculate'] },
-  { name: 'user_agent', display: '用户 Agent', tools: ['user_get','user_update','address_list','address_get','address_add','address_update','address_delete'] },
+  { name: 'product_discovery_agent', display: '商品发现 Agent', tools: ['product_search','product_recommend','product_detail','inventory_get'] },
+  { name: 'shopping_decision_agent', display: '购物决策 Agent', tools: ['product_search','product_recommend','product_detail','inventory_get','coupon_list','coupon_detail','coupon_claim','coupon_my_list','coupon_usage_list','coupon_calculate','cart_list','cart_add','cart_sub','cart_delete'] },
+  { name: 'order_fulfillment_agent', display: '订单履约 Agent', tools: ['address_list','address_get','address_add','address_update','address_delete','cart_list','checkout_prepare','checkout_detail','order_create','order_get','order_list'] },
+  { name: 'after_sales_agent', display: '售后服务 Agent', tools: ['order_get','order_list','order_cancel','coupon_usage_list','coupon_detail','product_detail'] },
+  { name: 'general_agent', display: '闲聊/通用客服 Agent', tools: ['user_get','user_update'] },
 ]
 
 /** 高风险工具列表 */

@@ -1,3 +1,5 @@
+//go:build ai_business_agents
+
 package eino
 
 import (
@@ -39,13 +41,13 @@ func TestSkillMiddlewareBindsIssueTriageToSupervisor(t *testing.T) {
 	}
 }
 
-func TestSkillMiddlewareBindsPurchaseAdvisorToProductAgent(t *testing.T) {
-	middleware, err := newSkillMiddleware(context.Background(), "product_agent")
+func TestSkillMiddlewareBindsPurchaseAdvisorToShoppingDecisionAgent(t *testing.T) {
+	middleware, err := newSkillMiddleware(context.Background(), "shopping_decision_agent")
 	if err != nil {
 		t.Fatalf("newSkillMiddleware() error = %v", err)
 	}
 	if middleware == nil {
-		t.Fatal("product skill middleware is nil")
+		t.Fatal("shopping decision skill middleware is nil")
 	}
 	runCtx := &adk.ChatModelAgentContext{}
 	_, next, err := middleware.BeforeAgent(context.Background(), runCtx)
@@ -62,7 +64,7 @@ func TestSkillMiddlewareBindsPurchaseAdvisorToProductAgent(t *testing.T) {
 }
 
 func TestSkillMiddlewareUnboundAgentReturnsNil(t *testing.T) {
-	for _, agentName := range []string{"order_agent", "cart_checkout_agent", "coupon_agent", "user_agent", "general_agent"} {
+	for _, agentName := range []string{"product_discovery_agent", "order_fulfillment_agent", "after_sales_agent", "general_agent"} {
 		middleware, err := newSkillMiddleware(context.Background(), agentName)
 		if err != nil {
 			t.Fatalf("newSkillMiddleware(%s) error = %v", agentName, err)

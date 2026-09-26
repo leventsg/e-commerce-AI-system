@@ -1,3 +1,5 @@
+//go:build ai_business_agents
+
 package memory
 
 import (
@@ -114,7 +116,7 @@ func TestCustomerServiceProviderRetrievesRelevantMemoryEventsFromCurrentInput(t 
 	result, err := provider.Retrieve(context.Background(), &RetrieveRequest{
 		UserID:         42,
 		ConversationID: "conv-1",
-		AgentName:      "product_agent",
+		AgentName:      "product_discovery_agent",
 		Messages: []domain.ContextMessage{
 			{Role: domain.ContextRoleUser, Content: "Please recommend headphones for commuting under 500"},
 		},

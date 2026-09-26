@@ -11,10 +11,10 @@ import (
 
 // agentSkillBindings 声明每个 Agent 绑定的 Skill：
 // - issue-triage 面向含糊异常诊断，绑定 Supervisor；
-// - purchase-advisor 面向选购咨询，绑定商品 Agent。
+// - purchase-advisor 面向选购咨询，绑定购物决策 Agent。
 var agentSkillBindings = map[string][]string{
-	supervisorAgentName: {skills.IssueTriage},
-	"product_agent":     {skills.PurchaseAdvisor},
+	supervisorAgentName:       {skills.IssueTriage},
+	"shopping_decision_agent": {skills.PurchaseAdvisor},
 }
 
 // skillBackend 将内嵌 SKILL.md 适配为 Eino 官方 skill.Backend，

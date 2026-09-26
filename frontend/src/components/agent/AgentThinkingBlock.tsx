@@ -38,7 +38,11 @@ export function AgentThinkingBlock({ trace, isThinking }: AgentThinkingBlockProp
       {isOpen && (
         <div className="border-t border-gray-800 px-3 py-2 space-y-1.5 animate-fade-in">
           {steps.map((step, i) => {
-            const agent = SUB_AGENTS.find(a => a.tools.includes(step.tool_name || ''))
+            const candidates = SUB_AGENTS.filter(a => a.tools.includes(step.tool_name || ''))
+            // Shared query tools cannot identify the caller on their own.
+            const agent = step.subagent_name
+              ? SUB_AGENTS.find(a => a.name === step.subagent_name)
+              : candidates.length === 1 ? candidates[0] : undefined
             return (
               <div key={i} className="flex items-start gap-2 text-xs">
                 <div className="mt-0.5">

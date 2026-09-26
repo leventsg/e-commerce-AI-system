@@ -17,25 +17,25 @@ export async function* mockStreamAgentChat(req: AgentChatRequest): AsyncGenerato
 
   if (message.includes('订单')) {
     toolSteps.push({
-      tool: 'order_list', params: { page: 1, page_size: 10 }, agent: 'order_agent',
+      tool: 'order_list', params: { page: 1, page_size: 10 }, agent: 'order_fulfillment_agent',
       result: { total: 3, orders: [{ order_id: 'ord_001', status: '待支付', amount: 29900, items: 2 }, { order_id: 'ord_002', status: '已完成', amount: 89900, items: 1 }] },
       summary: '找到 3 个订单',
     })
   } else if (message.includes('购物车')) {
     toolSteps.push({
-      tool: 'cart_list', params: { page: 1, page_size: 20 }, agent: 'cart_checkout_agent',
+      tool: 'cart_list', params: { page: 1, page_size: 20 }, agent: 'shopping_decision_agent',
       result: { total: 2, items: [{ cart_item_id: 1, product_id: 12, product_name: '无线耳机', quantity: 2, price: 29900 }] },
       summary: '购物车中有 2 件商品',
     })
   } else if (message.includes('优惠券')) {
     toolSteps.push({
-      tool: 'coupon_list', params: { page: 1, page_size: 10 }, agent: 'coupon_agent',
+      tool: 'coupon_list', params: { page: 1, page_size: 10 }, agent: 'shopping_decision_agent',
       result: { total: 4, coupons: [{ id: 'cpn_001', name: '满199减50', type: '满减', min_amount: 19900, value: 5000 }] },
       summary: '找到 4 张可用优惠券',
     })
   } else {
     toolSteps.push({
-      tool: 'product_search', params: { keyword: message, page: 1, page_size: 10 }, agent: 'product_agent',
+      tool: 'product_search', params: { keyword: message, page: 1, page_size: 10 }, agent: 'product_discovery_agent',
       result: { total: 5, items: [{ id: 1, name: '无线蓝牙耳机', price: 29900, stock: 128 }, { id: 2, name: '智能手表', price: 89900, stock: 56 }] },
       summary: '找到 5 件相关商品',
     })

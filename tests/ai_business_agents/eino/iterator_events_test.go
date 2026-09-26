@@ -1,3 +1,5 @@
+//go:build ai_business_agents
+
 package eino
 
 import (
@@ -32,7 +34,7 @@ func TestConsumeEventsConvertsIteratorReasoningToThinkingDelta(t *testing.T) {
 
 func TestConsumeEventsConvertsIteratorToolCallsToProgress(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
-		assistantIteratorEvent("product_agent", &schema.Message{
+		assistantIteratorEvent("product_discovery_agent", &schema.Message{
 			Role: schema.Assistant,
 			ToolCalls: []schema.ToolCall{{
 				ID: "call-1",
@@ -57,7 +59,7 @@ func TestConsumeEventsConvertsIteratorToolCallsToProgress(t *testing.T) {
 
 func TestConsumeEventsMatchesRepeatedToolResultsByToolCallID(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
-		assistantIteratorEvent("product_agent", &schema.Message{
+		assistantIteratorEvent("product_discovery_agent", &schema.Message{
 			Role: schema.Assistant,
 			ToolCalls: []schema.ToolCall{
 				{
@@ -76,8 +78,8 @@ func TestConsumeEventsMatchesRepeatedToolResultsByToolCallID(t *testing.T) {
 				},
 			},
 		}),
-		toolIteratorEvent("product_agent", domain.ToolProductSearch, "call-2", `{"products":[{"id":2}],"total":1}`),
-		toolIteratorEvent("product_agent", domain.ToolProductSearch, "call-1", `{"products":[],"total":0}`),
+		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-2", `{"products":[{"id":2}],"total":1}`),
+		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-1", `{"products":[],"total":0}`),
 	})
 
 	if len(events) != 4 {
@@ -99,7 +101,7 @@ func TestConsumeEventsMatchesRepeatedToolResultsByToolCallID(t *testing.T) {
 
 func TestConsumeEventsConvertsIteratorToolMessageToResult(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
-		toolIteratorEvent("product_agent", domain.ToolProductSearch, "call-1", `{"products":[],"total":0}`),
+		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-1", `{"products":[],"total":0}`),
 	})
 
 	if len(events) != 1 {
@@ -118,7 +120,7 @@ func TestConsumeEventsConvertsIteratorToolMessageToResult(t *testing.T) {
 
 func TestConsumeEventsKeepsFailedToolEnvelopeFailed(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
-		toolIteratorEvent("product_agent", domain.ToolProductSearch, "call-1", `{"status":"failed","tool_name":"product_search","attempt_count":3,"retry_count":2,"error":{"kind":"transient","code":"rpc_unavailable","message":"商品查询暂时不可用","retryable_in_current_run":false},"business_outcome":"not_executed"}`),
+		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-1", `{"status":"failed","tool_name":"product_search","attempt_count":3,"retry_count":2,"error":{"kind":"transient","code":"rpc_unavailable","message":"商品查询暂时不可用","retryable_in_current_run":false},"business_outcome":"not_executed"}`),
 	})
 
 	if len(events) != 1 {
@@ -137,7 +139,7 @@ func TestConsumeEventsKeepsFailedToolEnvelopeFailed(t *testing.T) {
 
 func TestConsumeEventsEmitsRootFinalAssistantOnly(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
-		assistantIteratorEvent("product_agent", schema.AssistantMessage("内部子 agent 回复", nil)),
+		assistantIteratorEvent("product_discovery_agent", schema.AssistantMessage("内部子 agent 回复", nil)),
 		assistantIteratorEvent(supervisorAgentName, schema.AssistantMessage("这是给用户的最终回复。", nil)),
 	})
 
@@ -241,7 +243,7 @@ func TestConsumeEventsHandlesStreamingToolCallAsCompleteProgress(t *testing.T) {
 	writer.Close()
 
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{{
-		AgentName: "cart_checkout_agent",
+		AgentName: "order_fulfillment_agent",
 		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
 			IsStreaming:   true,
 			MessageStream: reader,
@@ -267,7 +269,7 @@ func TestConsumeEventsHandlesStreamingToolResultAsCompleteResult(t *testing.T) {
 	writer.Close()
 
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{{
-		AgentName: "cart_checkout_agent",
+		AgentName: "order_fulfillment_agent",
 		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
 			IsStreaming:   true,
 			MessageStream: reader,
@@ -289,17 +291,17 @@ func TestConsumeEventsHandlesStreamingToolResultAsCompleteResult(t *testing.T) {
 
 func TestConsumeEventsPreservesBusinessExecutedErrorDiagnostic(t *testing.T) {
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{
-		assistantIteratorEvent("cart_checkout_agent", &schema.Message{
+		assistantIteratorEvent("shopping_decision_agent", &schema.Message{
 			Role: schema.Assistant,
 			ToolCalls: []schema.ToolCall{{
 				ID: "call-1",
 				Function: schema.FunctionCall{
 					Name:      domain.ToolCartAdd,
-					Arguments: `{"sku_id":1,"quantity":1}`,
+					Arguments: `{"product_id":1,"quantity":1}`,
 				},
 			}},
 		}),
-		toolIteratorEvent("cart_checkout_agent", domain.ToolCartAdd, "call-1", `{"summary":"已加入购物车"}`),
+		toolIteratorEvent("shopping_decision_agent", domain.ToolCartAdd, "call-1", `{"summary":"已加入购物车"}`),
 		{Err: errors.New("model summary failed")},
 	})
 
@@ -320,7 +322,7 @@ func TestConsumeEventsPreservesBusinessExecutedErrorDiagnostic(t *testing.T) {
 
 func TestConsumeEventsFailsPendingA2UIToolOnIteratorError(t *testing.T) {
 	events := consumeRawTestAgentEvents(t, []*adk.AgentEvent{
-		assistantIteratorEvent("user_agent", &schema.Message{
+		assistantIteratorEvent("general_agent", &schema.Message{
 			Role: schema.Assistant,
 			ToolCalls: []schema.ToolCall{{
 				ID: "call-1",
@@ -365,12 +367,12 @@ func TestConsumeEventsIgnoresAgentToolProgressAndResult(t *testing.T) {
 			ToolCalls: []schema.ToolCall{{
 				ID: "agent-call-1",
 				Function: schema.FunctionCall{
-					Name:      "product_agent",
+					Name:      "product_discovery_agent",
 					Arguments: `{"task":"查商品"}`,
 				},
 			}},
 		}),
-		toolIteratorEvent(supervisorAgentName, "product_agent", "agent-call-1", "内部 agent 已完成"),
+		toolIteratorEvent(supervisorAgentName, "product_discovery_agent", "agent-call-1", "内部 agent 已完成"),
 	})
 
 	if len(events) != 0 {

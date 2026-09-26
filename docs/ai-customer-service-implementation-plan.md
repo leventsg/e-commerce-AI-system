@@ -12,7 +12,9 @@
 
 ## 当前架构修订
 
-本文早期任务中关于 `IntentPlanner`、`IntentContext`、`IntentModel` 和 `services/aiagent/internal/planner` 的实现步骤已被当前 Supervisor Agent 架构取代。在线聊天主链路现在直接构建 `AgentContext`，进入 Eino ADK `ChatModelAgent + AgentTool` 编排；Supervisor 负责意图识别、任务拆解、领域 SubAgent 路由和最终总结。业务工具只绑定到对应 SubAgent，并继续经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。当前不使用 ADK `prebuilt/supervisor` / AgentTransfer。
+本文早期任务中关于 `IntentPlanner`、`IntentContext`、`IntentModel` 和 `services/aiagent/internal/planner` 的实现步骤已被当前 Supervisor Agent 架构取代。在线聊天主链路现在直接构建 `AgentContext`，进入 Eino ADK `ChatModelAgent + AgentTool` 编排；Supervisor 负责意图识别、任务拆解、业务/通用客服 SubAgent 路由和最终总结。业务工具只绑定到对应 SubAgent，并继续经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。当前不使用 ADK `prebuilt/supervisor` / AgentTransfer。
+
+本轮按 Task 25 将原六个领域子 Agent 重组为 `product_discovery_agent`、`shopping_decision_agent`、`order_fulfillment_agent`、`after_sales_agent` 和 `general_agent`。工具白名单、路由和交接规则以设计文档 3.5 节为准；Task 24 的旧 Agent 归属仅保留为历史记录。首期复用现有能力，退款、退换货与物流操作后续接入。SSE、公共 API/RPC、工具 schema、风险/审计策略和数据库结构保持现状。
 
 ## 1. 交付范围
 
@@ -31,7 +33,7 @@
 不在首期强制交付：
 
 - 运营后台配置页面。
-- 支付、退款、删除账号、登出、修改密码等后续敏感操作。
+- 支付、退款、退换货、物流操作、删除账号、登出、修改密码等后续操作。
 - 复杂长期记忆推荐策略。长期用户上下文收敛为 `ai_user_profiles` 和 `ai_user_memory_events`。
 
 ## 2. 文件与模块规划
@@ -1139,7 +1141,7 @@ Provider 读取 `ai_messages`、会话摘要、最近完整工具调用、最近
 
 - [x] **Step 4: AgentRunner 接入 MemoryMiddleware**
 
-ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 和领域 SubAgent 都挂载按 `AgentName` 分作用域的 MemoryMiddleware。SubAgent 不共享完整聊天历史，但会拿到受控的近期上下文、相关长期记忆和工具事实引用，避免完全依赖 Supervisor 对 `request` 的一次性总结。
+ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 和业务/通用客服 SubAgent 都挂载按 `AgentName` 分作用域的 MemoryMiddleware。SubAgent 不共享完整聊天历史，但会拿到受控的近期上下文、相关长期记忆和工具事实引用，避免完全依赖 Supervisor 对 `request` 的一次性总结。
 
 - [x] **Step 5: 接入 search_user_memory**
 
@@ -1378,9 +1380,12 @@ go test ./services/aiagent/... ./apis/ai/...
 12. Agent Run 与 Checkpoint：Task 20。
 13. 观测、清理和旧路径收敛：Task 21。
 14. 历史会话查询：Task 23。
-15. 用户资料与地址子 Agent：Task 24。
+15. 用户资料与地址工具接入（旧 Agent 归属已被 Task 25 取代）：Task 24。
+16. 四个业务 Agent + 通用客服重组：Task 25。
 
 ### Task 24: user_agent 用户资料与地址管理
+
+> 历史任务：工具接入和风险策略继续有效；`user_agent` 注册、Prompt 及路由被 Task 25 取代。当前 `user_get` / `user_update` 归 `general_agent`，地址工具归 `order_fulfillment_agent`，不保留旧 Agent 别名。
 
 **Files:**
 
@@ -1428,6 +1433,51 @@ go test ./services/aiagent/... ./apis/ai/...
 ```bash
 go test ./...
 ```
+
+### Task 25: 四个业务 Agent + 闲聊/通用客服重组
+
+**目标：** 保留 Supervisor 统一调度和最终回复，以设计文档 3.5 节的五个子 Agent 及完整业务工具矩阵替换旧注册。查询可共享，写工具唯一归属；现有共享能力工具继续按 Registry 可见性提供。
+
+**实施与验收状态：** 以下清单记录本轮任务；完成代码修改与通过验证分别勾选，真实模型验收单独记录，不沿用历史任务的通过结论。
+
+- [x] **Step 1: 先补充重组回归测试**
+
+新增与本次迁移的测试统一放在根目录 `tests/`，通过 `tests/ai_business_agents/run.py` 运行内部包 Go overlay 测试。覆盖五个 Agent 注册、完整白名单、共享查询、写工具唯一归属及原有安全策略。
+
+- [x] **Step 2: 替换注册和业务路由 Prompt**
+
+在 Eino 注册表及 Prompt 嵌入声明中移除旧领域结构，构造命名改为业务 Agent。Supervisor 继续使用 `ChatModelAgent + AgentTool`，不新增业务工具，子 Agent 不直接互调。找货/推荐归商品发现；比较/优惠/购物车归购物决策；结算/下单/地址/普通订单查询归履约；取消/异常/售后政策归售后；资料和闲聊归 general。
+
+多意图按依赖执行，只调用必要 Agent；改购物车后下单先决策再履约。交接沿用紧凑 `request`，携带真实商品 ID、明确数量、用户约束、工具结果引用、已完成和待处理事项，缺参先澄清。明确结算意图才调用可能占库存的 `checkout_prepare`，最终金额等以真实结算校验为准。确认前暂停依赖步骤，确认后恢复既有链路；退款、退换货、物流操作未接入，不调用替代写工具，政策无依据时说明无法核实。
+
+- [x] **Step 3: 迁移 Skill、上下文和事件识别**
+
+`purchase-advisor` 绑定购物决策 Agent，选购阶段只读，结束后宿主再按用户意图处理写操作。`issue-triage` 保持 Supervisor 绑定并保留已有未提交内容。更新 MemoryMiddleware AgentName、事件过滤、日志和测试引用，Supervisor final assistant 继续作为唯一最终回答。历史消息和工具调用记录保留原样。按当前无待确认任务的前提切换，不增加旧版本 checkpoint 兼容路径；不新增抽象接口、不改底层业务 handler 目录。
+
+- [x] **Step 4: 同步前端和产品/设计文档**
+
+前端展示五个子 Agent，名称、文案、工具分组和 mock 与后端一致。PRD 明确首期售后边界，设计文档记录完整白名单、路由、Skill 和迁移约束，实施计划记录验证结果。保留无关工作区改动。
+
+- [x] **Step 5: 运行自动验证并记录结果**
+
+可控模型桩覆盖商品发现 → 决策 → 履约组合、直接下单、订单查询、取消订单、地址修改、资料修改、闲聊、Skill 和上下文传递及最终回复过滤。继续验证创建订单/取消订单/删除购物车的确认恢复，拒绝、过期、重复和跨用户拒绝，用户 ID 注入、超时、审计、模型不可用及工具失败不报成功；验证未接入售后操作不执行替代写工具。
+
+```bash
+python tests/ai_business_agents/run.py
+go test ./services/aiagent/...
+go test ./apis/ai/...
+go test ./...
+```
+
+在 `frontend` 目录运行 `npm test` 和 `npm run build`，覆盖展示、mock 和事件处理。若依赖或环境阻塞，记录具体命令与原因，并处理所需授权后继续；不得静默跳过或声称通过。
+
+- [ ] **Step 6: 真实模型路由验收**
+
+单独检查上述业务路由及未接入售后场景的 Prompt 表现，记录模型、场景、实际路由和结果。可控模型桩仅证明指定工具调用下的编排行为，不能代表真实模型路由准确率；尚未执行时明确标记待验收。
+
+**本轮验证记录（2026-09-26）：** 注册、Prompt、Skill、前端和文档重组已实现。`python tests/ai_business_agents/run.py` 和 AI 服务/API 测试通过，前端 54 项测试及构建通过。默认 Go 缓存曾出现 `Access is denied`，改用临时 `GOCACHE` 后相关测试通过。`go test ./...` 已运行，但既有 `test/rpc/**` 依赖的本机业务服务连接被拒绝，部分测试在 RPC 失败后触发空指针错误，全仓验收未通过。Step 5 的勾选仅表示已执行并记录验证，不表示全仓通过。
+
+真实模型验收待补：当前环境没有有效模型配置，仓库 API Key 为占位值。已提供 `TestLiveBusinessAgentRouting` 首轮检查入口；使用合成请求和实际 Prompt/AgentTool schema，不执行业务工具。执行方式及多轮验收场景见 `tests/ai_business_agents/README.md`。
 
 ## 13. 风险与处理策略
 

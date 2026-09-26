@@ -109,48 +109,34 @@ type pendingToolCall struct {
 
 var supervisorSubAgentSpecs = []agentSpec{
 	{
-		name:        "product_agent",
-		description: agentprompt.ProductAgentDesc,
-		instruction: agentprompt.ProductAgentSystemPrompt,
-		tools:       []string{domain.ToolProductSearch, domain.ToolProductDetail, domain.ToolProductRecommend, domain.ToolInventoryGet},
+		name:        "product_discovery_agent",
+		description: agentprompt.ProductDiscoveryAgentDesc,
+		instruction: agentprompt.ProductDiscoveryAgentSystemPrompt,
+		tools:       []string{domain.ToolProductSearch, domain.ToolProductRecommend, domain.ToolProductDetail, domain.ToolInventoryGet},
 	},
 	{
-		name:        "order_agent",
-		description: agentprompt.OrderAgentDesc,
-		instruction: agentprompt.OrderAgentSystemPrompt,
-		tools:       []string{domain.ToolOrderGet, domain.ToolOrderList, domain.ToolOrderCancel},
+		name:        "shopping_decision_agent",
+		description: agentprompt.ShoppingDecisionAgentDesc,
+		instruction: agentprompt.ShoppingDecisionAgentSystemPrompt,
+		tools:       []string{domain.ToolProductSearch, domain.ToolProductRecommend, domain.ToolProductDetail, domain.ToolInventoryGet, domain.ToolCouponList, domain.ToolCouponDetail, domain.ToolCouponClaim, domain.ToolCouponMyList, domain.ToolCouponUsageList, domain.ToolCouponCalculate, domain.ToolCartList, domain.ToolCartAdd, domain.ToolCartSub, domain.ToolCartDelete},
 	},
 	{
-		name:        "cart_checkout_agent",
-		description: agentprompt.CartCheckoutAgentDesc,
-		instruction: agentprompt.CartCheckoutAgentSystemPrompt,
-		tools: []string{
-			domain.ToolCartList, domain.ToolCartAdd, domain.ToolCartSub, domain.ToolCartDelete,
-			domain.ToolCheckoutPrepare, domain.ToolCheckoutDetail, domain.ToolOrderCreate,
-		},
+		name:        "order_fulfillment_agent",
+		description: agentprompt.OrderFulfillmentAgentDesc,
+		instruction: agentprompt.OrderFulfillmentAgentSystemPrompt,
+		tools:       []string{domain.ToolAddressList, domain.ToolAddressGet, domain.ToolAddressAdd, domain.ToolAddressUpdate, domain.ToolAddressDelete, domain.ToolCartList, domain.ToolCheckoutPrepare, domain.ToolCheckoutDetail, domain.ToolOrderCreate, domain.ToolOrderGet, domain.ToolOrderList},
 	},
 	{
-		name:        "coupon_agent",
-		description: agentprompt.CouponAgentDesc,
-		instruction: agentprompt.CouponAgentSystemPrompt,
-		tools: []string{
-			domain.ToolCouponList, domain.ToolCouponDetail, domain.ToolCouponClaim,
-			domain.ToolCouponMyList, domain.ToolCouponUsageList, domain.ToolCouponCalculate,
-		},
-	},
-	{
-		name:        "user_agent",
-		description: agentprompt.UserAgentDesc,
-		instruction: agentprompt.UserAgentSystemPrompt,
-		tools: []string{
-			domain.ToolUserGet, domain.ToolUserUpdate,
-			domain.ToolAddressList, domain.ToolAddressGet, domain.ToolAddressAdd, domain.ToolAddressUpdate, domain.ToolAddressDelete,
-		},
+		name:        "after_sales_agent",
+		description: agentprompt.AfterSalesAgentDesc,
+		instruction: agentprompt.AfterSalesAgentSystemPrompt,
+		tools:       []string{domain.ToolOrderGet, domain.ToolOrderList, domain.ToolOrderCancel, domain.ToolCouponUsageList, domain.ToolCouponDetail, domain.ToolProductDetail},
 	},
 	{
 		name:        "general_agent",
 		description: agentprompt.GeneralAgentDesc,
 		instruction: agentprompt.GeneralAgentSystemPrompt,
+		tools:       []string{domain.ToolUserGet, domain.ToolUserUpdate},
 	},
 }
 
@@ -168,7 +154,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
 	// 创建子agent
 	for _, spec := range supervisorSubAgentSpecs {
-		subAgent, err := newDomainAgent(ctx, factory, cfg, registry, opts.approvalManager, opts.memoryProvider, spec)
+		subAgent, err := newBusinessAgent(ctx, factory, cfg, registry, opts.approvalManager, opts.memoryProvider, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -219,8 +205,8 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	return &agent{root: root, checkpointStore: opts.checkpointStore, approvalManager: opts.approvalManager}, nil
 }
 
-// newDomainAgent 创建子agent
-func newDomainAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, memoryProvider aimemory.MemoryProvider, spec agentSpec) (adk.Agent, error) {
+// newBusinessAgent 按业务职责绑定工具和上下文，创建子 Agent。
+func newBusinessAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, memoryProvider aimemory.MemoryProvider, spec agentSpec) (adk.Agent, error) {
 	// 这里获取的是子 agent 内部可调用的业务工具 schema；子 agent 自身作为 root 工具的 ToolInfo 由 adk.NewAgentTool 根据 Name/Description 生成。
 	infos, err := registry.SubAgentToolInfos(ctx, spec.tools...)
 	if err != nil {
