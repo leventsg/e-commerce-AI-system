@@ -11,6 +11,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -35,6 +36,17 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 	if stream == nil {
 		return fmt.Errorf("stream 为空")
 	}
+	if in == nil {
+		return sendConfirmError(stream, "", fmt.Errorf("确认请求参数不完整"))
+	}
+	if l.svcCtx != nil {
+		ctx, end := l.svcCtx.Observation.Start(l.ctx, "ConfirmAction", uint64(in.UserId), in.ConversationId, "")
+		ctx = obs.Correlate(ctx, map[string]string{"confirmation_id": in.ConfirmationId})
+		l.ctx = ctx
+		observed := &observedSender{agentEventSender: stream, ctx: ctx, status: "success"}
+		stream = observed
+		defer func() { obs.Result(ctx, observed.status, observed.output); end(observed.output) }()
+	}
 	l.Infow("ai confirmation action start",
 		logx.Field("component", "confirm_action_logic"),
 		logx.Field("stage", "request_received"),
@@ -51,19 +63,31 @@ func (l *ConfirmActionLogic) ConfirmAction(in *aiagent.ConfirmActionRequest, str
 		return sendConfirmError(stream, in.ConversationId, fmt.Errorf("确认服务暂不可用"))
 	}
 	// 更新确认状态为已处理
-	decided, err := l.svcCtx.ConfirmationManager.Decide(l.ctx, confirmation.DecisionRequest{
+	decisionCtx, endDecision := obs.Start(l.ctx, "confirmation.decision", nil)
+	decided, err := l.svcCtx.ConfirmationManager.Decide(decisionCtx, confirmation.DecisionRequest{
 		UserID:         uint64(in.UserId),
 		ConversationID: in.ConversationId,
 		ConfirmationID: in.ConfirmationId,
 		Approved:       in.Approved,
 	})
 	if err != nil {
+		endDecision("blocked")
 		l.Errorw("ai confirmation decision failed", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_decision"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", in.ConfirmationId), logx.Field("approved", in.Approved), logx.Field("err", err))
 		return sendConfirmError(stream, in.ConversationId, err)
 	}
 	if decided == nil {
+		endDecision("failed")
 		l.Errorw("ai confirmation decision empty", logx.Field("component", "confirm_action_logic"), logx.Field("stage", "confirmation_decision"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("confirmation_id", in.ConfirmationId))
 		return sendConfirmError(stream, in.ConversationId, fmt.Errorf("确认记录为空"))
+	}
+	endDecision(decided.Status)
+	l.ctx = obs.Correlate(l.ctx, map[string]string{"run_id": decided.RunID, "checkpoint_id": decided.CheckpointID})
+	if !decided.CreatedAt.IsZero() {
+		waitSeconds := time.Since(decided.CreatedAt).Seconds()
+		if waitSeconds < 0 {
+			waitSeconds = 0
+		}
+		obs.Event(l.ctx, "confirmation.user_wait", decided.Status, map[string]string{"duration_seconds": fmt.Sprint(waitSeconds)})
 	}
 	l.Infow("ai confirmation decision",
 		logx.Field("component", "confirm_action_logic"),

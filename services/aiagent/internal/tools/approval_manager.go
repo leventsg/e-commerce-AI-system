@@ -8,6 +8,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 )
 
@@ -38,6 +39,11 @@ func (m *ApprovalManager) RequiresConfirmation(toolName string) bool {
 
 // 用于创建高风险操作的确认请求
 func (m *ApprovalManager) RequestConfirmation(ctx context.Context, req core.ExecuteRequest) (event domain.AgentEvent) {
+	ctx, end := obs.Start(ctx, "confirmation.create", map[string]string{"tool": req.ToolName, "tool_call_id": req.ToolCallID, "run_id": req.RunID, "checkpoint_id": req.CheckpointID})
+	defer func() {
+		obs.Correlate(ctx, map[string]string{"confirmation_id": event.ConfirmationID})
+		end(event.Status)
+	}()
 	startedAt := time.Now()
 	// 前置检查
 	if m == nil || m.registry == nil {

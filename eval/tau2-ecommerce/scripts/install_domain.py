@@ -286,7 +286,7 @@ def resolve_auto_confirm(auto_confirm: str, task_id: str | None = None) -> str:
         return auto_confirm
     if task_id in REJECT_CONFIRMATION_TASK_IDS:
         return "reject"
-    return "approve"
+    return "wait"
 
 
 def print_event_diagnostics(state) -> None:
@@ -547,9 +547,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--auto-confirm",
-        choices=["auto", "approve", "reject", "none"],
+        choices=["auto", "approve", "reject", "none", "wait"],
         default="auto",
-        help="How the adapter responds to confirmation_required events. auto rejects reject-confirmation tasks and approves the rest.",
+        help="How the adapter responds to confirmation_required events. auto rejects reject-confirmation tasks and waits otherwise.",
     )
     parser.add_argument(
         "--new-conversation-task-id",
@@ -563,7 +563,7 @@ if __name__ == "__main__":
         "--num-trials",
         type=int,
         default=1,
-        help="Trials to run per task. Summary reports pass^1, and pass^3 when this is at least 3.",
+        help="Trials to run per task. Summary reports any_of_1, and any_of_3 / all_of_3 when this is at least 3.",
     )
     args = parser.parse_args()
     if args.num_trials < 1:

@@ -31,6 +31,7 @@ class EvalSummary:
     trial_count: int
     passed_trial_count: int
     pass_at_k: dict[int, PassAtK | None]
+    pass_all_k: dict[int, PassAtK | None]
 
     @property
     def trial_pass_rate(self) -> float:
@@ -53,23 +54,30 @@ def build_eval_summary(
         by_task.setdefault(result.task_id, []).append(result)
 
     pass_at_k: dict[int, PassAtK | None] = {}
+    pass_all_k: dict[int, PassAtK | None] = {}
     for k in requested_pass_ks:
         if any(len(task_results) < k for task_results in by_task.values()):
             pass_at_k[k] = None
+            pass_all_k[k] = None
             continue
 
         passed = 0
+        all_passed = 0
         for task_results in by_task.values():
             ordered = sorted(task_results, key=lambda item: item.trial_index)
             if any(reward_passed(item.reward) for item in ordered[:k]):
                 passed += 1
+            if all(reward_passed(item.reward) for item in ordered[:k]):
+                all_passed += 1
         pass_at_k[k] = PassAtK(passed=passed, total=len(by_task))
+        pass_all_k[k] = PassAtK(passed=all_passed, total=len(by_task))
 
     return EvalSummary(
         task_count=len(by_task),
         trial_count=len(result_list),
         passed_trial_count=sum(1 for result in result_list if reward_passed(result.reward)),
         pass_at_k=pass_at_k,
+        pass_all_k=pass_all_k,
     )
 
 
@@ -91,7 +99,10 @@ def format_eval_summary(
     ]
     for k, value in summary.pass_at_k.items():
         if value is None:
-            lines.append(f"pass^{k}: N/A (--num-trials >= {k} required)")
+            lines.append(f"any_of_{k}: N/A (--num-trials >= {k} required)")
+            lines.append(f"all_of_{k}: N/A (--num-trials >= {k} required)")
         else:
-            lines.append(f"pass^{k}: {_format_rate(value.passed, value.total)}")
+            lines.append(f"any_of_{k}: {_format_rate(value.passed, value.total)}")
+            all_value = summary.pass_all_k[k]
+            lines.append(f"all_of_{k}: {_format_rate(all_value.passed, all_value.total)}")
     return "\n".join(lines)

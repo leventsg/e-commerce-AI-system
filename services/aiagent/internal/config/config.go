@@ -19,6 +19,18 @@ type EinoConfig struct {
 	Temperature float64
 }
 
+type LangfuseConfig struct {
+	Enabled      bool    `json:",default=false"`
+	Host         string  `json:",optional"`
+	PublicKey    string  `json:",optional"`
+	SecretKey    string  `json:",optional"`
+	UserHashSalt string  `json:",optional"`
+	Environment  string  `json:",default=development"`
+	Release      string  `json:",optional"`
+	SampleRate   float64 `json:",default=1"`
+	ContentMode  string  `json:",default=summary"`
+}
+
 type ToolTimeoutConfig struct {
 	QuerySeconds int64
 	WriteSeconds int64
@@ -60,6 +72,7 @@ type Config struct {
 	RedisConf    redis.RedisConf
 	Cache        cache.CacheConf
 	Eino         EinoConfig
+	Langfuse     LangfuseConfig `json:",optional"`
 	SummaryModel EinoConfig
 	ProfileModel EinoConfig
 	KafkaMQ      config.KafkaConfig

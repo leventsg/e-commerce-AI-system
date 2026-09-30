@@ -36,6 +36,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/proc"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/zrpc"
@@ -72,10 +73,24 @@ type ServiceContext struct {
 	ProfileExtractor      *profileextractor.Extractor
 	MemoryEventExtractor  *memoryeventextractor.Extractor
 	AgentRunner           eino.Runner
+	Observation           *eino.Observation
 	RAGService            *rag.Service
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
+	observation, observationErr := eino.NewObservation(context.Background(), c.Langfuse)
+	if observationErr != nil {
+		logx.Error("Langfuse initialization failed; continuing with observation disabled")
+	}
+	if observation != nil {
+		proc.AddShutdownListener(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			if err := observation.Shutdown(ctx); err != nil {
+				logx.Error("Langfuse shutdown failed or timed out")
+			}
+		})
+	}
 	mysql := sqlx.NewMysql(c.MysqlConfig.DataSource)
 	productRPC := productcatalogservice.NewProductCatalogService(zrpc.MustNewClient(c.ProductRpc))
 	inventoryRPC := inventoryclient.NewInventory(zrpc.MustNewClient(c.InventoryRpc))
@@ -191,6 +206,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	}
 
 	return &ServiceContext{
+		Observation:           observation,
 		Config:                c,
 		Mysql:                 mysql,
 		RedisClient:           redisClient,

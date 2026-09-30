@@ -15,6 +15,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/config"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	aimemory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 	agentprompt "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/prompts/agent"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	helper "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/helper"
@@ -297,6 +298,7 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 	runID := checkpointID
 	req.RunID = runID
 	req.CheckpointID = checkpointID
+	ctx = obs.Correlate(ctx, map[string]string{"run_id": runID, "checkpoint_id": checkpointID, "conversation_id": req.ConversationID})
 	ctx = helper.WithToolExecutionContext(ctx, helper.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
@@ -352,6 +354,7 @@ func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan dom
 	req.RunID = runID
 	req.CheckpointID = checkpointID
 	logx.Infow("ai agent resume start", append(baseResumeLogFields(req), logx.Field("stage", "resume_start"))...)
+	ctx = obs.Correlate(ctx, map[string]string{"run_id": runID, "checkpoint_id": checkpointID, "confirmation_id": req.ConfirmationID, "conversation_id": req.ConversationID})
 	ctx = helper.WithToolExecutionContext(ctx, helper.ToolExecutionContext{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
@@ -810,6 +813,7 @@ func (r *agent) handleIteratorAssistantMessage(event *adk.AgentEvent, req RunReq
 			_ = send(a2uiToolUpdate(req.ConversationID, messageID, toolName, "running", progressContent, progressDataJSON, false))
 			_ = send(domain.AgentEvent{
 				Type:           domain.EventToolProgress,
+				ToolCallID:     toolCall.ID,
 				ConversationID: req.ConversationID,
 				MessageID:      messageID,
 				Tool:           toolName,

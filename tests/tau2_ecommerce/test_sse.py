@@ -203,7 +203,7 @@ class SseParserTest(unittest.TestCase):
                     ),
                 )
 
-        agent = EcommerceGoAgent(base_url="http://unused")
+        agent = EcommerceGoAgent(base_url="http://unused",auto_confirm="approve")
         agent.client = FakeClient()
 
         message, state = agent.generate_next_message(
@@ -497,7 +497,7 @@ class SseParserTest(unittest.TestCase):
         message, state = agent.generate_next_message({"content": "hello"}, EcommerceGoAgentState())
 
         self.assertEqual(agent.client.metadata["scenario_id"], "bench_timeout_before_cart_add")
-        self.assertEqual(agent.client.metadata["failure_injection"]["point"], "before_execute")
+        self.assertNotIn("failure_injection",agent.client.metadata)
         raw_data = getattr(message, "raw_data", None)
         self.assertIsNotNone(raw_data)
         self.assertEqual(raw_data["conversation_id"], "conv_1")

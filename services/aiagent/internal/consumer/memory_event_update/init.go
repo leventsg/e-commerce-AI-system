@@ -24,7 +24,8 @@ func Init(c config.Config) error {
 	if err != nil {
 		return err
 	}
-	handler := NewConsumer(svc.NewServiceContext(c).MemoryEventExtractor)
+	serviceCtx := svc.NewServiceContext(c)
+	handler := NewConsumer(serviceCtx.MemoryEventExtractor, serviceCtx.Observation)
 	go func() {
 		if err := kafkaConsumer.Consume(context.Background(), kafkaConf.Topic, kafkaConf.Group+"-memory-events", handler, nil); err != nil {
 			logx.Errorw("ai user memory event update consumer stopped", logx.Field("err", err))

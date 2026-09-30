@@ -21,6 +21,9 @@ class ChatResult:
     events: list[dict[str, Any]] = field(default_factory=list)
     confirmations: list[dict[str, Any]] = field(default_factory=list)
     raw_lines: list[str] = field(default_factory=list)
+    trajectory: list[dict[str, Any]] = field(default_factory=list)
+    state: dict[str, Any] = field(default_factory=dict)
+    trace_id: str = ""
 
 
 class AiCustomerServiceClient:

@@ -658,3 +658,6 @@ AI 智能客服的高风险订单写操作统一通过 order-api 内部 HTTP 入
 这两个入口只允许内部服务调用，不增加 token。order-api 必须基于 HTTP 连接来源 `RemoteAddr` 做 IP 白名单校验，不能把 `X-Real-IP`、`X-Forwarded-For` 等可伪造请求头作为授权依据。内部请求体携带 `user_id`，order-api 校验来源 IP 后把该 `user_id` 注入服务端 context，再复用现有创建订单和取消订单 logic。
 
 `services/aiagent` 侧保留 Execution Guard 作为可信用户 ID 来源，模型参数中的 `user_id` 继续被忽略。`order_create` 和 `order_cancel` handler 都把 Guard 注入的用户 ID 写入内部 HTTP 请求体，并通过 common HTTP JSON client 统一发送和解析 `{code,msg,data}` 响应。
+# Langfuse 与模拟评测架构增补
+
+观测采用隔离在 `internal/eino` 的官方 callback v2.0.2 和独立 TracerProvider；普通观测辅助结构位于 `internal/observability`。保持原有审计、确认、RPC 和数据库契约。独立 `cmd/evalrunner` 复用正式编排与 Guard，在一次试验内隔离模拟状态，不向正式服务增加模拟开关。数据采集、关联、任务契约和评分规则见 [观测与评测说明](ai-observability-evaluation.md)。

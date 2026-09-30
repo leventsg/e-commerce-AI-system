@@ -24,7 +24,8 @@ func Init(c config.Config) error {
 	if err != nil {
 		return err
 	}
-	handler := NewConsumer(svc.NewServiceContext(c).ProfileExtractor)
+	serviceCtx := svc.NewServiceContext(c)
+	handler := NewConsumer(serviceCtx.ProfileExtractor, serviceCtx.Observation)
 	go func() {
 		if err := kafkaConsumer.Consume(context.Background(), kafkaConf.Topic, kafkaConf.Group, handler, nil); err != nil {
 			logx.Errorw("ai user profile update consumer stopped", logx.Field("err", err))

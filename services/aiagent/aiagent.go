@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"time"
 
 	"github.com/leventsg/e-commerce-AI-system/common/logfmt"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/aiagent"
@@ -30,6 +32,13 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c, conf.UseEnv())
 	ctx := svc.NewServiceContext(c)
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := ctx.Observation.Shutdown(flushCtx); err != nil {
+			logx.Error("Langfuse shutdown did not finish within its deadline")
+		}
+	}()
 
 	s := zrpc.MustNewServer(c.RpcServerConf, func(grpcServer *grpc.Server) {
 		aiagent.RegisterAiAgentServer(grpcServer, server.NewAiAgentServer(ctx))

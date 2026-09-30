@@ -36,3 +36,11 @@ devlog/
 key/
 
 .tmp/
+
+# Local evaluation artifacts and Python caches
+eval-results/
+__pycache__/
+*.pyc
+
+# docs
+docs/

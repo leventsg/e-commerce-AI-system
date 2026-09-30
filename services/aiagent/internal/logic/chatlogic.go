@@ -17,6 +17,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/rag"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/svc"
 
@@ -49,6 +50,16 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 		return errors.New("stream 为空")
 	}
 	// 参数校验
+	if in == nil {
+		return sendErrorEvent(stream, "", errors.New("用户身份无效"))
+	}
+	if l.svcCtx != nil {
+		ctx, end := l.svcCtx.Observation.Start(l.ctx, "Chat", uint64(in.UserId), in.ConversationId, in.Content)
+		l.ctx = ctx
+		observed := &observedSender{agentEventSender: stream, ctx: ctx, status: "success"}
+		stream = observed
+		defer func() { obs.Result(ctx, observed.status, observed.output); end(observed.output) }()
+	}
 	if err := l.validateRequest(in); err != nil {
 		l.Errorw("ai chat request invalid", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "validate_request"), logx.Field("conversation_id", in.ConversationId), logx.Field("user_id", in.UserId), logx.Field("err", err))
 		return sendErrorEvent(stream, "", err)
@@ -62,11 +73,13 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 	}
 	metadata, _ := json.Marshal(map[string]string{"source": source})
 	// 保存用户消息、幂等控制、新会话初始化
-	prepared, err := l.svcCtx.ConversationManager.Prepare(l.ctx, conversation.PrepareRequest{
+	prepareCtx, endPrepare := obs.Start(l.ctx, "conversation.prepare", nil)
+	prepared, err := l.svcCtx.ConversationManager.Prepare(prepareCtx, conversation.PrepareRequest{
 		UserID: uint64(in.UserId), ConversationID: in.ConversationId, MessageID: in.MessageId, ClientMessageID: in.ClientMessageId,
 		Content: strings.TrimSpace(in.Content), Metadata: sql.NullString{String: string(metadata), Valid: true},
 	})
 	if err != nil || prepared == nil {
+		endPrepare("failed")
 		if err == nil {
 			err = errors.New("会话初始化失败")
 		}
@@ -74,13 +87,18 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 		return sendErrorEvent(stream, in.ConversationId, err)
 	}
 	if prepared.Duplicate {
+		endPrepare("duplicate")
 		l.Infow("ai chat duplicate replay", logx.Field("component", "ai_chat_logic"), logx.Field("stage", "duplicate_replay"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("client_message_id", prepared.ClientMessageID))
 		return l.replayDuplicateResponse(stream, prepared, uint64(in.UserId))
 	}
 	var ragContext []domain.ContextMessage
+	endPrepare("success")
+	l.svcCtx.Observation.SetSession(l.ctx, prepared.ConversationID)
+	l.ctx = obs.Correlate(l.ctx, map[string]string{"conversation_id": prepared.ConversationID, "message_id": prepared.UserMessageID})
 	var ragSources []domain.AgentSource
 	if l.svcCtx.RAGService != nil {
-		ragResult, ragErr := l.svcCtx.RAGService.Prepare(l.ctx, rag.PrepareRequest{
+		ragCtx, endRAG := obs.Start(l.ctx, "rag.retrieve", nil)
+		ragResult, ragErr := l.svcCtx.RAGService.Prepare(ragCtx, rag.PrepareRequest{
 			UserID:           uint64(in.UserId),
 			ConversationID:   prepared.ConversationID,
 			CurrentMessageID: prepared.UserMessageID,
@@ -88,8 +106,10 @@ func (l *ChatLogic) Chat(in *aiagent.ChatRequest, stream agentEventSender) error
 			Content:          rag.EmbeddingRequest{Query: strings.TrimSpace(in.Content), EmbeddingModel: l.svcCtx.RAGService.Config().EmbeddingModel},
 		})
 		if ragErr != nil {
+			endRAG("failed")
 			l.Errorw("rag prepare failed, skip rag", logx.Field("component", "rag"), logx.Field("stage", "prepare"), logx.Field("conversation_id", prepared.ConversationID), logx.Field("user_id", in.UserId), logx.Field("err", ragErr))
 		} else if ragResult != nil {
+			endRAG("success")
 			ragContext = ragResult.ContextMessages
 			ragSources = ragResult.Sources
 			l.Infow("rag 检索结果",
@@ -117,6 +137,10 @@ func (l *ChatLogic) updateConversationMemory(prepared *conversation.PreparedConv
 	}
 	ctx, cancel := context.WithTimeout(contextWithoutCancel(l.ctx), 2*time.Minute)
 	defer cancel()
+	sourceTraceID := obs.TraceID(l.ctx)
+	ctx, endTrace := l.svcCtx.Observation.Start(obs.Detached(ctx), "memory.summary", userID, prepared.ConversationID, "")
+	defer endTrace("")
+	ctx = obs.Correlate(ctx, map[string]string{"source_trace_id": sourceTraceID, "conversation_id": prepared.ConversationID})
 
 	result, err := l.svcCtx.SummaryManager.MaybeRefresh(ctx, contextmanager.SummaryRefreshRequest{
 		UserID:         userID,
@@ -135,6 +159,7 @@ func (l *ChatLogic) updateConversationMemory(prepared *conversation.PreparedConv
 		return
 	}
 	event := memoryupdate.UpdateEvent{
+		SourceTraceID:  sourceTraceID,
 		EventID:        "memory_evt_" + uuid.NewString(),
 		UserID:         userID,
 		ConversationID: prepared.ConversationID,

@@ -44,8 +44,8 @@ class MetricsTest(unittest.TestCase):
         text = format_eval_summary(results, requested_pass_ks=(1, 3))
 
         self.assertIn("Summary:", text)
-        self.assertIn("pass^1: 1/2 = 50.00%", text)
-        self.assertIn("pass^3: N/A (--num-trials >= 3 required)", text)
+        self.assertIn("any_of_1: 1/2 = 50.00%", text)
+        self.assertIn("any_of_3: N/A (--num-trials >= 3 required)", text)
 
 
 if __name__ == "__main__":

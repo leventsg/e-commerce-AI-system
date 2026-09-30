@@ -1535,3 +1535,6 @@ go test ./apis/order/...
 go test ./apis/ai/...
 go test ./services/aiagent/internal/tools/business/order
 ```
+# Langfuse 与多维评测实施增补
+
+实施顺序：独立 Compose 与官方 callback → 独立 Go 模拟环境与 tau2 接入 → 确定性评分、语义裁判与实验关联。当前已落地观测、模拟入口、20 项任务和评分基础实现，真实模型单项试验通过；部署、跨轮确认、UI 关联和裁判校准仍待完整验收，不标记全量完成。具体运行命令和证据见 [观测与评测说明](ai-observability-evaluation.md)。所有新增测试位于根目录 `tests/`。

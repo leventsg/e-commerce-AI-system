@@ -8,6 +8,7 @@ const TopicKeyAiMemoryUpdates = "AiMemoryUpdates"
 
 // UpdateEvent is published once after a rolling summary compresses messages.
 type UpdateEvent struct {
+	SourceTraceID  string    `json:"source_trace_id,omitempty"`
 	EventID        string    `json:"event_id"`
 	UserID         uint64    `json:"user_id"`
 	ConversationID string    `json:"conversation_id"`

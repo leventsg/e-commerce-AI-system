@@ -160,3 +160,14 @@ AuditRpc:
   Target: consul://${CONSUL_HOST}/audit.rpc?wait=14s
   NonBlock: true
   Timeout: 3000
+
+# Enable locally with generated development project credentials.
+Langfuse:
+  Enabled: false
+  Host: "http://localhost:3001"
+  PublicKey: "${LANGFUSE_PUBLIC_KEY}"
+  SecretKey: "${LANGFUSE_SECRET_KEY}"
+  UserHashSalt: "${LANGFUSE_USER_HASH_SALT}"
+  Environment: development
+  SampleRate: 1
+  ContentMode: summary

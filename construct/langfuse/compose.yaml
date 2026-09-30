@@ -1,0 +1,158 @@
+name: ecommerce-langfuse
+
+x-runtime: &runtime
+  restart: unless-stopped
+  networks: [langfuse]
+
+x-dependencies: &dependencies
+  postgres: {condition: service_healthy}
+  clickhouse: {condition: service_healthy}
+  redis: {condition: service_healthy}
+  minio: {condition: service_healthy}
+
+x-environment: &environment
+  HOSTNAME: 0.0.0.0
+  NEXTAUTH_URL: http://localhost:3001
+  DATABASE_URL: postgresql://langfuse:${POSTGRES_PASSWORD:?Run manage.py init}@postgres:5432/langfuse
+  SALT: ${SALT:?Run manage.py init}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Run manage.py init}
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Run manage.py init}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${REDIS_PASSWORD:?Run manage.py init}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-langfuse}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?Run manage.py init}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-langfuse}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?Run manage.py init}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+  LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
+  LANGFUSE_S3_BATCH_EXPORT_PREFIX: exports/
+  LANGFUSE_S3_BATCH_EXPORT_REGION: auto
+  LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: http://localhost:9090
+  LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-langfuse}
+  LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?Run manage.py init}
+  LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+
+services:
+  langfuse-web:
+    <<: *runtime
+    image: docker.langfuse.com/langfuse/langfuse:4.46.0
+    depends_on: *dependencies
+    ports: ["127.0.0.1:3001:3000"]
+    environment:
+      <<: *environment
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Run manage.py init}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9090
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://minio:9000
+      LANGFUSE_INIT_ORG_ID: ecommerce-local
+      LANGFUSE_INIT_ORG_NAME: Ecommerce Local
+      LANGFUSE_INIT_PROJECT_ID: ecommerce-dev
+      LANGFUSE_INIT_PROJECT_NAME: Development Observability
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_DEV_PUBLIC_KEY:?Run manage.py init}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_DEV_SECRET_KEY:?Run manage.py init}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL:-admin@localhost.local}
+      LANGFUSE_INIT_USER_NAME: Local Admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:?Run manage.py init}
+      AUTH_DISABLE_SIGNUP: "true"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/public/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 30
+
+  langfuse-worker:
+    <<: *runtime
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.46.0
+    depends_on: *dependencies
+    environment: *environment
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3030/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 30
+
+  postgres:
+    <<: *runtime
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run manage.py init}
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    <<: *runtime
+    image: clickhouse/clickhouse-server:25.12.1.649
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Run manage.py init}
+    volumes: [clickhouse:/var/lib/clickhouse, clickhouse-logs:/var/log/clickhouse-server]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    <<: *runtime
+    image: redis:7.4.5-alpine
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run manage.py init}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDISCLI_AUTH\" --maxmemory-policy noeviction --appendonly yes"]
+    volumes: [redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    <<: *runtime
+    image: cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b
+    entrypoint: ["sh", "-c"]
+    command: ["mkdir -p /data/langfuse && exec minio server --address :9000 --console-address :9001 /data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-langfuse}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Run manage.py init}
+    ports: ["127.0.0.1:9090:9000"]
+    volumes: [minio:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+networks:
+  langfuse:
+    driver: bridge
+volumes:
+  postgres:
+  clickhouse:
+  clickhouse-logs:
+  redis:
+  minio:

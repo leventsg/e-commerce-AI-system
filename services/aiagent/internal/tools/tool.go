@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -25,8 +26,10 @@ func (t *invokableToolAdapter) Info(context.Context) (*schema.ToolInfo, error) {
 }
 
 func (t *invokableToolAdapter) InvokableRun(ctx context.Context, arguments string, _ ...einotool.Option) (string, error) {
+	obs.Event(ctx, "tool.requested", "requested", map[string]string{"tool": t.tool.Name})
 	execution, ok := helper.ToolExecutionFromContext(ctx)
 	if !ok || execution.UserID == 0 {
+		obs.Event(ctx, "guard.identity", "blocked", map[string]string{"guard_success": "true"})
 		return "", helper.ErrToolExecutionContext
 	}
 	if t.executor == nil {
@@ -39,6 +42,7 @@ func (t *invokableToolAdapter) InvokableRun(ctx context.Context, arguments strin
 		return event.DataJSON, nil
 	}
 	event := t.executor.Execute(ctx, helper.ExecuteRequestFromContext(execution, t.tool.Name, args), t.tool.Handler)
+	obs.Result(ctx, event.Status, event.DataJSON)
 	if event.Status != toolStatusSuccess {
 		return event.DataJSON, nil
 	}

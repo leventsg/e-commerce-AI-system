@@ -103,8 +103,8 @@ class InstallDomainTest(unittest.TestCase):
             self.assertIn("default=\"auto\"", example_text)
             self.assertIn("--num-trials", example_text)
             self.assertIn("format_eval_summary", example_text)
-            self.assertIn("pass^1", example_text)
-            self.assertIn("pass^3", example_text)
+            self.assertIn("any_of_1", example_text)
+            self.assertIn("all_of_3", example_text)
             self.assertIn("bench_pronoun_cancel_latest_unpaid_order", example_text)
             py_compile.compile(str(example), doraise=True)
 

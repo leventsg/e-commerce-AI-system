@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	aimemory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -46,7 +47,8 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	if !ok {
 		return ctx, state, nil
 	}
-	result, err := m.provider.Retrieve(ctx, &aimemory.RetrieveRequest{
+	retrieveCtx, endRetrieve := obs.Start(ctx, "context.assemble", map[string]string{"agent": m.agentName, "run_id": meta.RunID})
+	result, err := m.provider.Retrieve(retrieveCtx, &aimemory.RetrieveRequest{
 		UserID:           meta.UserID,
 		ConversationID:   meta.ConversationID,
 		AgentName:        m.agentName,
@@ -56,6 +58,11 @@ func (m *memoryMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 		Messages:         schemaMessagesToContext(state.Messages),
 		RAGContext:       meta.RAGContext,
 	})
+	if err != nil {
+		endRetrieve("failed")
+	} else {
+		endRetrieve("success")
+	}
 	logx.Infof("上下文组装结果：%s, userid: %d, conversation_id: %s", result, meta.UserID, meta.ConversationID)
 	if err != nil || result == nil {
 		return ctx, state, err

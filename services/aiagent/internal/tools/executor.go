@@ -10,6 +10,7 @@ import (
 
 	"github.com/leventsg/e-commerce-AI-system/common/utils/argx"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
+	obs "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/observability"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/core"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -107,7 +108,9 @@ func NewExecutor(registry *Registry, opts ...ExecutorOption) *Executor {
 }
 
 // Execute 执行指定的工具，并返回执行结果事件
-func (e *Executor) Execute(ctx context.Context, req core.ExecuteRequest, handler core.HandlerFunc) domain.AgentEvent {
+func (e *Executor) Execute(ctx context.Context, req core.ExecuteRequest, handler core.HandlerFunc) (final domain.AgentEvent) {
+	ctx, end := obs.Start(ctx, "tool.execution", map[string]string{"tool": req.ToolName, "tool_call_id": req.ToolCallID, "run_id": req.RunID, "checkpoint_id": req.CheckpointID})
+	defer func() { obs.Result(ctx, final.Status, final.DataJSON); end(final.Status) }()
 	startedAt := time.Now()
 	var tool core.Tool
 	metadata, err := e.registry.Metadata(req.ToolName)
@@ -159,6 +162,10 @@ func (e *Executor) Execute(ctx context.Context, req core.ExecuteRequest, handler
 		attemptCount++
 		attemptStartedAt := time.Now()
 		handlerCtx, cancel := context.WithTimeout(ctx, timeout)
+		handlerCtx, endAttempt := obs.Start(handlerCtx, "handler.attempt", map[string]string{"tool": req.ToolName, "attempt": fmt.Sprint(attemptCount)})
+		if blocked, _ := ctx.Value(rejectedExecutionKey{}).(bool); !blocked {
+			obs.Event(handlerCtx, "handler.started", "started", nil)
+		}
 		result, err := runHandlerWithTimeout(handlerCtx, handler, core.HandlerRequest{
 			UserID:         req.UserID,
 			ConversationID: req.ConversationID,
@@ -167,6 +174,11 @@ func (e *Executor) Execute(ctx context.Context, req core.ExecuteRequest, handler
 			Metadata:       metadata,
 		})
 		cancel()
+		attemptStatus := "success"
+		if err != nil {
+			attemptStatus = "failed"
+		}
+		endAttempt(attemptStatus)
 		attemptLatency := time.Since(attemptStartedAt)
 		// 如果执行成功，记录成功事件并返回
 		if err == nil {
@@ -298,10 +310,14 @@ func (e *Executor) Execute(ctx context.Context, req core.ExecuteRequest, handler
 }
 
 func (e *Executor) Reject(ctx context.Context, req core.ExecuteRequest, cause error) domain.AgentEvent {
+	obs.Event(ctx, "guard.validation", "blocked", map[string]string{"tool": req.ToolName, "guard_success": "true", "business_outcome": BusinessOutcomeNotExecuted})
+	ctx = context.WithValue(ctx, rejectedExecutionKey{}, true)
 	return e.Execute(ctx, req, func(context.Context, core.HandlerRequest) (core.HandlerResult, error) {
 		return core.HandlerResult{}, cause
 	})
 }
+
+type rejectedExecutionKey struct{}
 
 type handlerResponse struct {
 	result core.HandlerResult

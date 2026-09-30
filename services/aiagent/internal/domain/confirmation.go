@@ -14,5 +14,6 @@ type Confirmation struct {
 	CheckpointID   string
 	InterruptID    string
 	ExpiresAt      time.Time
+	CreatedAt      time.Time
 	ExecutedAt     *time.Time
 }

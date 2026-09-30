@@ -207,6 +207,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*domain.Confir
 		RunId:          strings.TrimSpace(req.RunID),
 		CheckpointId:   strings.TrimSpace(req.CheckpointID),
 		ExpiresAt:      now.Add(m.confirmationTTL),
+		CreatedAt:      now,
 	}
 	if strings.TrimSpace(row.Id) == "" {
 		return nil, fmt.Errorf("%w: confirmation id is empty", ErrInvalidConfirmation)
@@ -393,6 +394,7 @@ func confirmationFromRow(row *aiconfirmations.AiConfirmations) (*domain.Confirma
 		CheckpointID:   row.CheckpointId,
 		InterruptID:    row.InterruptId,
 		ExpiresAt:      row.ExpiresAt,
+		CreatedAt:      row.CreatedAt,
 	}
 	if row.ExecutedAt.Valid {
 		executedAt := row.ExecutedAt.Time
