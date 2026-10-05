@@ -74,6 +74,8 @@ type supervisorOptions struct {
 	checkpointStore adk.CheckPointStore
 	// memoryProvider 提供会话记忆功能
 	memoryProvider aimemory.MemoryProvider
+	// skills 提供 trial 级 Skill 覆盖；为 nil 时使用内嵌默认绑定。
+	skills *skillOverride
 }
 
 type SupervisorOption func(*supervisorOptions)
@@ -93,6 +95,22 @@ func WithCheckpointStore(store adk.CheckPointStore) SupervisorOption {
 func WithMemoryProvider(provider aimemory.MemoryProvider) SupervisorOption {
 	return func(opts *supervisorOptions) {
 		opts.memoryProvider = provider
+	}
+}
+
+// WithSkills 覆盖 Skill 集合（外置目录加载的正文 + 配置绑定），不改变进程级
+// agentSkillBindings。Bindings/Documents 为空时回退内嵌默认，用于生产配置化加载。
+func WithSkills(set SkillSet) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.skills = &skillOverride{set: set}
+	}
+}
+
+// withSkillOverride 供包内（评测 trial）使用，覆盖 Skill 集合并可附带真实
+// 加载记录回调；不改变进程级 agentSkillBindings。
+func withSkillOverride(override *skillOverride) SupervisorOption {
+	return func(opts *supervisorOptions) {
+		opts.skills = override
 	}
 }
 
@@ -155,7 +173,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	agentTools := make([]einotool.BaseTool, 0, len(supervisorSubAgentSpecs))
 	// 创建子agent
 	for _, spec := range supervisorSubAgentSpecs {
-		subAgent, err := newBusinessAgent(ctx, factory, cfg, registry, opts.approvalManager, opts.memoryProvider, spec)
+		subAgent, err := newBusinessAgent(ctx, factory, cfg, registry, opts.approvalManager, opts.memoryProvider, opts.skills, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +196,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	if opts.memoryProvider != nil {
 		rootHandlers = append(rootHandlers, NewMemoryMiddlewareForAgent(opts.memoryProvider, supervisorAgentName))
 	}
-	skillMiddleware, err := newSkillMiddleware(ctx, supervisorAgentName)
+	skillMiddleware, err := newSkillMiddleware(ctx, supervisorAgentName, opts.skills)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +225,7 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 }
 
 // newBusinessAgent 按业务职责绑定工具和上下文，创建子 Agent。
-func newBusinessAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, memoryProvider aimemory.MemoryProvider, spec agentSpec) (adk.Agent, error) {
+func newBusinessAgent(ctx context.Context, factory ModelFactory, cfg config.EinoConfig, registry *aitools.Registry, approvalManager *aitools.ApprovalManager, memoryProvider aimemory.MemoryProvider, skillOverride *skillOverride, spec agentSpec) (adk.Agent, error) {
 	// 这里获取的是子 agent 内部可调用的业务工具 schema；子 agent 自身作为 root 工具的 ToolInfo 由 adk.NewAgentTool 根据 Name/Description 生成。
 	infos, err := registry.SubAgentToolInfos(ctx, spec.tools...)
 	if err != nil {
@@ -228,7 +246,7 @@ func newBusinessAgent(ctx context.Context, factory ModelFactory, cfg config.Eino
 	if approvalManager != nil {
 		handlers = append(handlers, newHighRiskApprovalMiddleware(approvalManager))
 	}
-	skillMiddleware, err := newSkillMiddleware(ctx, spec.name)
+	skillMiddleware, err := newSkillMiddleware(ctx, spec.name, skillOverride)
 	if err != nil {
 		return nil, err
 	}

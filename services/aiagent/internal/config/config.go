@@ -36,6 +36,13 @@ type ToolTimeoutConfig struct {
 	WriteSeconds int64
 }
 
+// SkillConfig 配置化加载 Skill：Dir 指向外置 SKILL.md 目录（覆盖同名内嵌、
+// 追加新 Skill），Bindings 覆盖进程级 agent→skill 绑定。二者为空时回退内嵌默认。
+type SkillConfig struct {
+	Dir      string              `json:",optional"`
+	Bindings map[string][]string `json:",optional"`
+}
+
 type ConfirmationConfig struct {
 	ExpireSeconds     int64
 	LockExpireSeconds int64
@@ -73,6 +80,7 @@ type Config struct {
 	Cache        cache.CacheConf
 	Eino         EinoConfig
 	Langfuse     LangfuseConfig `json:",optional"`
+	Skill        SkillConfig    `json:",optional"`
 	SummaryModel EinoConfig
 	ProfileModel EinoConfig
 	KafkaMQ      config.KafkaConfig

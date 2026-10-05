@@ -4,9 +4,13 @@
 package skills
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -55,6 +59,46 @@ func Names() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// Hash returns a stable content hash for a parsed Document. It covers the name,
+// description and body so that a same-name document with different content
+// produces a different hash, which is what A/B loading evidence relies on.
+func Hash(document Document) string {
+	sum := sha256.Sum256([]byte(document.Name + "\n" + document.Description + "\n" + document.Content))
+	return hex.EncodeToString(sum[:])
+}
+
+// LoadDir 扫描目录下每个子目录的 SKILL.md，返回 name→Document 映射。
+// 用于配置化加载：外置目录可覆盖同名内嵌 Skill、追加新 Skill。子目录名必须与
+// frontmatter 的 name 一致，否则报错；不含 SKILL.md 的子目录被跳过。
+func LoadDir(dir string) (map[string]Document, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]Document{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, entry.Name(), "SKILL.md"))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		document, err := Parse(string(raw))
+		if err != nil {
+			return nil, fmt.Errorf("skill dir %q: %w", entry.Name(), err)
+		}
+		if document.Name != entry.Name() {
+			return nil, fmt.Errorf("skill dir %q has frontmatter name %q", entry.Name(), document.Name)
+		}
+		out[document.Name] = document
+	}
+	return out, nil
 }
 
 // Parse 解析 SKILL.md：frontmatter 仅支持 name/description 单行字段。

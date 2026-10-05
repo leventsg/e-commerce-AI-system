@@ -23,6 +23,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryupdate"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/profileextractor"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/rag"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/skills"
 	aitools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools"
 	order_tools "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/tools/business/order"
 	"github.com/leventsg/e-commerce-AI-system/services/audit/auditclient"
@@ -195,10 +196,15 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	)
 	var agentRunner eino.Runner
 	checkpointTTL := time.Duration(c.Confirmation.ExpireSeconds) * time.Second
+	skillSet, skillErr := loadConfiguredSkills(c.Skill)
+	if skillErr != nil {
+		logx.Errorw("ai skill config load failed", logx.Field("component", "skill"), logx.Field("stage", "initialize"), logx.Field("err", skillErr))
+	}
 	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry,
 		eino.WithApprovalManager(approvalManager),
 		eino.WithCheckpointStore(eino.NewPersistentCheckpointStore(redisClient, agentRunsModel, checkpointTTL)),
 		eino.WithMemoryProvider(memoryProvider),
+		eino.WithSkills(skillSet),
 	); err == nil {
 		agentRunner = runner
 	} else {
@@ -273,4 +279,19 @@ func modelBaseURLHost(raw string) string {
 		return "<invalid>"
 	}
 	return parsed.Hostname()
+}
+
+// loadConfiguredSkills 把配置里的外置 Skill 目录与绑定转换为 trial 级 SkillSet。
+// 配置为空时返回空 SkillSet（回退内嵌默认），不改代码即可挂载/覆盖 Skill。
+func loadConfiguredSkills(skillConfig config.SkillConfig) (eino.SkillSet, error) {
+	set := eino.SkillSet{Bindings: skillConfig.Bindings}
+	if skillConfig.Dir == "" {
+		return set, nil
+	}
+	documents, err := skills.LoadDir(skillConfig.Dir)
+	if err != nil {
+		return eino.SkillSet{}, err
+	}
+	set.Documents = documents
+	return set, nil
 }

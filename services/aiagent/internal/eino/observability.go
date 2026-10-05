@@ -35,10 +35,22 @@ func newObservation(ctx context.Context, c config.LangfuseConfig, synthetic bool
 	if c.UserHashSalt == "" {
 		return nil, errors.New("Langfuse UserHashSalt is required")
 	}
-	if c.ContentMode != "" && c.ContentMode != "summary" && !(synthetic && c.ContentMode == "synthetic") {
-		return nil, errors.New("Langfuse content mode must be summary (synthetic is evaluation only)")
+	mode := obs.ModeSummary
+	switch c.ContentMode {
+	case "", "summary":
+	case "redacted":
+		// Explicit production opt-in; summary remains the default. Never enabled
+		// implicitly, and never borrows the synthetic path to collect production.
+		mode = obs.ModeRedacted
+	case "synthetic":
+		if !synthetic {
+			return nil, errors.New("Langfuse content mode synthetic is evaluation only")
+		}
+		mode = obs.ModeSynthetic
+	default:
+		return nil, errors.New("Langfuse content mode must be summary, redacted or synthetic")
 	}
-	p := obs.Policy{Salt: c.UserHashSalt, Synthetic: synthetic && c.ContentMode == "synthetic"}
+	p := obs.Policy{Salt: c.UserHashSalt, Mode: mode}
 	exporter, err := obs.NewExporter(ctx, c.Host, c.PublicKey, c.SecretKey, p)
 	if err != nil {
 		return nil, err

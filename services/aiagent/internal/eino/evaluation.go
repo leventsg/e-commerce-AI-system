@@ -109,6 +109,7 @@ type EvaluationResponse struct {
 	Trajectory     []EvaluationTrajectory `json:"trajectory"`
 	State          *evaluation.State      `json:"state"`
 	TraceID        string                 `json:"trace_id"`
+	SkillLoads     []SkillLoad            `json:"skill_loads,omitempty"`
 	Error          string                 `json:"error,omitempty"`
 }
 
@@ -131,9 +132,22 @@ type EvaluationTrial struct {
 	calls                     map[string]int
 	clock                     time.Time
 	turn                      int
+	skillLoads                []SkillLoad
 }
 
-func NewEvaluationTrial(ctx context.Context, req EvaluationRequest, cfg config.EinoConfig, factory ModelFactory, observation *Observation) (*EvaluationTrial, error) {
+// EvaluationTrialOption 允许评测 trial 覆盖 Skill 集合（候选加载）。
+type EvaluationTrialOption func(*evaluationTrialOptions)
+
+type evaluationTrialOptions struct {
+	skills SkillSet
+}
+
+// WithSkillSet 为 trial 覆盖 Skill 集合；用于修改/新增候选的 A/B 评测。
+func WithSkillSet(set SkillSet) EvaluationTrialOption {
+	return func(opts *evaluationTrialOptions) { opts.skills = set }
+}
+
+func NewEvaluationTrial(ctx context.Context, req EvaluationRequest, cfg config.EinoConfig, factory ModelFactory, observation *Observation, options ...EvaluationTrialOption) (*EvaluationTrial, error) {
 	if strings.TrimSpace(req.TrialID) == "" {
 		return nil, fmt.Errorf("trial_id required")
 	}
@@ -149,6 +163,12 @@ func NewEvaluationTrial(ctx context.Context, req EvaluationRequest, cfg config.E
 		case "timeout", "business_failure", "outcome_unknown", "audit_failure":
 		default:
 			return nil, fmt.Errorf("unknown failure kind %q", f.Kind)
+		}
+	}
+	var trialOptions evaluationTrialOptions
+	for _, option := range options {
+		if option != nil {
+			option(&trialOptions)
 		}
 	}
 	t := &EvaluationTrial{ID: req.TrialID, experimentID: req.ExperimentID, rootTraceID: req.RootTraceID, ConversationID: "eval_" + req.TrialID, UserID: req.UserID, state: state, observation: observation, failures: req.Failures, calls: map[string]int{}, clock: time.Now(), trajectory: []EvaluationTrajectory{}}
@@ -195,7 +215,12 @@ func NewEvaluationTrial(ctx context.Context, req EvaluationRequest, cfg config.E
 	if factory == nil {
 		factory = NewModelFactory()
 	}
-	t.runner, err = NewSupervisorAgent(ctx, factory, cfg, registry, WithApprovalManager(tools.NewApprovalManager(registry, executor, t.confirmations)), WithCheckpointStore(newMemoryCheckpointStore()), WithMemoryProvider(t))
+	skillOverrideArg := &skillOverride{set: trialOptions.skills, onGet: func(name, hash string) {
+		t.mu.Lock()
+		t.skillLoads = append(t.skillLoads, SkillLoad{Name: name, Hash: hash})
+		t.mu.Unlock()
+	}}
+	t.runner, err = NewSupervisorAgent(ctx, factory, cfg, registry, WithApprovalManager(tools.NewApprovalManager(registry, executor, t.confirmations)), WithCheckpointStore(newMemoryCheckpointStore()), WithMemoryProvider(t), withSkillOverride(skillOverrideArg))
 	if err != nil {
 		return nil, err
 	}
@@ -429,6 +454,7 @@ func (t *EvaluationTrial) Execute(ctx context.Context, req EvaluationRequest) Ev
 	}
 	t.mu.Lock()
 	response.Trajectory = append([]EvaluationTrajectory{}, t.trajectory...)
+	response.SkillLoads = append([]SkillLoad{}, t.skillLoads...)
 	b, _ := json.Marshal(t.state)
 	_ = json.Unmarshal(b, &response.State)
 	t.mu.Unlock()

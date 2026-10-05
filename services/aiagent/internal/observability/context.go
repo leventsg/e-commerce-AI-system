@@ -17,9 +17,26 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ContentMode selects how free-text and structured payloads are handled before
+// export. It is fixed at provider construction and never taken from user input.
+type ContentMode string
+
+const (
+	// ModeSummary is the production default: arbitrary text is omitted and only
+	// byte counts and structured run metadata are retained.
+	ModeSummary ContentMode = "summary"
+	// ModeRedacted is an explicit production opt-in that keeps redacted dialogue,
+	// tool arguments and results while stripping credentials and best-effort
+	// personal information. It is never enabled implicitly.
+	ModeRedacted ContentMode = "redacted"
+	// ModeSynthetic is reserved for the standalone evaluation executable; it keeps
+	// content but still filters credentials.
+	ModeSynthetic ContentMode = "synthetic"
+)
+
 type Policy struct {
-	Salt      string
-	Synthetic bool
+	Salt string
+	Mode ContentMode
 }
 type contextKey struct{}
 type state struct {
@@ -50,6 +67,17 @@ func (p Policy) UserID(id uint64) string {
 
 var credential = regexp.MustCompile(`(?i)(bearer\s+[^\s"\\]+|\bsk-[a-z0-9_-]+|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|authorization|secret)\s*[:=]\s*[^\s,;]+)`)
 
+// piiPatterns is a best-effort detector for common structured personal
+// information. It cannot reliably identify all names or addresses in free text;
+// callers must not claim otherwise. Missing/un-redacted PII is handled by the
+// analysis layer marking samples as unknown rather than fabricating content.
+var piiPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`1[3-9]\d{9}`),                                  // mainland mobile
+	regexp.MustCompile(`(?i)[\w.+-]+@[\w-]+\.[\w.-]+`),                 // email
+	regexp.MustCompile(`\b\d{17}[\dXx]\b`),                             // resident ID card
+	regexp.MustCompile(`\b0\d{2,3}-\d{7,8}\b`),                         // landline with area code
+}
+
 func secretKey(key string) bool {
 	key = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
 	for _, part := range []string{"token", "apikey", "password", "secret", "authorization", "credential", "cookie"} {
@@ -59,20 +87,24 @@ func secretKey(key string) bool {
 	}
 	return false
 }
-func scrub(value any) any {
+
+// redactValue recursively redacts credential-named keys and, when pii is set,
+// personal information inside string values. Nested JSON strings are decoded and
+// redacted in place so that no credential or PII escapes inside a nested payload.
+func redactValue(value any, pii bool) any {
 	switch v := value.(type) {
 	case map[string]any:
 		for k, x := range v {
 			if secretKey(k) {
 				v[k] = "[REDACTED]"
 			} else {
-				v[k] = scrub(x)
+				v[k] = redactValue(x, pii)
 			}
 		}
 		return v
 	case []any:
 		for i, x := range v {
-			v[i] = scrub(x)
+			v[i] = redactValue(x, pii)
 		}
 		return v
 	case string:
@@ -80,32 +112,58 @@ func scrub(value any) any {
 		if json.Unmarshal([]byte(v), &nested) == nil {
 			switch nested.(type) {
 			case map[string]any, []any:
-				b, _ := json.Marshal(scrub(nested))
+				b, _ := json.Marshal(redactValue(nested, pii))
 				return string(b)
 			}
 		}
-		return credential.ReplaceAllString(v, "[REDACTED]")
+		return redactText(v, pii)
 	default:
 		return v
 	}
 }
 
-// Production collection omits arbitrary text entirely: regex redaction cannot
-// reliably identify all addresses/names in natural language. Full payloads are
-// explicitly reserved for the standalone synthetic evaluation entry point.
+func redactText(s string, pii bool) string {
+	s = credential.ReplaceAllString(s, "[REDACTED]")
+	if pii {
+		for _, re := range piiPatterns {
+			s = re.ReplaceAllString(s, "[REDACTED]")
+		}
+	}
+	return s
+}
+
+// redactContent applies the redacted/synthetic content policy. When raw is a JSON
+// object or array it is redacted field by field; otherwise it is treated as text.
+func redactContent(raw string, pii bool) string {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) == nil {
+		switch value.(type) {
+		case map[string]any, []any:
+			b, _ := json.Marshal(redactValue(value, pii))
+			return string(b)
+		}
+	}
+	return redactText(raw, pii)
+}
+
+// Content applies the configured content policy.
+//   - summary (default) omits arbitrary text entirely: regex redaction cannot
+//     reliably identify all addresses/names in natural language.
+//   - redacted keeps structured and free-text content but strips credentials and
+//     best-effort personal information; it is production opt-in only.
+//   - synthetic keeps content and filters credentials (evaluation only).
 func (p Policy) Content(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	if !p.Synthetic {
+	switch p.Mode {
+	case ModeSynthetic:
+		return redactContent(raw, false)
+	case ModeRedacted:
+		return redactContent(raw, true)
+	default:
 		return fmt.Sprintf(`{"content_omitted":true,"bytes":%d}`, len(raw))
 	}
-	var value any
-	if json.Unmarshal([]byte(raw), &value) == nil {
-		b, _ := json.Marshal(scrub(value))
-		return string(b)
-	}
-	return credential.ReplaceAllString(raw, "[REDACTED]")
 }
 func Content(ctx context.Context, value any) string {
 	s, ok := ctx.Value(contextKey{}).(state)

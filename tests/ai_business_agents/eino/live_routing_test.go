@@ -35,7 +35,7 @@ func TestLiveBusinessAgentRouting(t *testing.T) {
 	registry := aitools.NewRegistry(aitools.DefaultBusinessTools(aitools.DefaultToolClients{}, config.ToolTimeoutConfig{}))
 	var infos []*schema.ToolInfo
 	for _, spec := range supervisorSubAgentSpecs {
-		child, err := newBusinessAgent(ctx, factory, cfg, registry, nil, nil, spec)
+		child, err := newBusinessAgent(ctx, factory, cfg, registry, nil, nil, nil, spec)
 		if err != nil {
 			t.Fatal("failed to construct live child model")
 		}

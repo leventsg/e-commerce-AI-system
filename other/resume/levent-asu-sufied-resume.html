@@ -337,7 +337,7 @@
             </div>
             <p><strong>业务背景：</strong>实习期间参与直播中控台与年度报告等业务后端迭代，围绕年报内容构建、数据导出和线上问题治理。</p>
             <ul>
-              <li><strong>年报数据链路优化：</strong>统一 Web/App/小程序等多端年报数据入口，针对多个独立下游查询采用 Goroutine 并发拉取 + 按需加载；对访问数据增加 Redis 缓存，缓存命中时直接返回聚合结果，减少重复数据查询，测试环境下接口平均响应由约 280ms 降至 <strong>60ms</strong>。</li>
+              <li><strong>年报数据链路优化：</strong>统一 Web/App/小程序等多端年报数据入口，针对多个独立下游查询采用 Goroutine 并发拉取 + 按需加载；对访问数据增加 Redis 缓存，减少重复数据查询，测试环境下接口平均响应约 280ms，缓存命中情况下约<strong>60ms</strong>。</li>
               <li><strong>异步导出链路：</strong>针对大数据量导出耗时较长的问题，将同步导出改造为异步任务模式，通过 Redis 队列调度任务、Doris 流式读取并经 Kafka 分批回传数据；测试环境下千条级明细平均导出耗时约 <strong>4s</strong>，任务成功率约 <strong>99%</strong>。</li>
               <li><strong>线上问题治理：</strong>处理指标口径差异、源表结构变更、数据同步延迟等一致性问题，通过链路日志核对、上下游字段排查和口径对齐，保障核心看板与运营分析数据稳定交付。</li>
             </ul>
@@ -356,11 +356,11 @@
             <ul>
               <li><strong>多 Agent 业务编排：</strong>基于 Eino 构建 Supervisor + 子 Agent，将商品、购物车、订单、支付、售后等能力封装为工具，由 Supervisor 完成跨域任务拆解、依赖排序与结果汇聚；结合动态工具暴露和场景化 Skill，减少无关工具干扰并固化复杂任务流程。</li>
               <li><strong>上下文与长期记忆：</strong>设计三层上下文管理机制，对近期消息、会话记忆、长期记忆进行分层注入，并通过滑动窗口会话摘要、按需注入记忆与工具结果压缩控制长会话 Token 消耗。</li>
-              <li><strong>安全与可靠执行：</strong>构建统一工具执行入口，对真实业务操作进行身份注入、权限校验、风险确认和审计记录；结合幂等恢复、Checkpoint 与 Human-in-the-loop，处理工具超时、未知执行状态及高风险操作中断续跑。</li>
-              <li><strong>模型流量治理：</strong>针对模型调用高延迟及突发并发，设计基于 Redis + Lua 的公平排队与并发控制机制，并结合 SSE 返回等待状态；引入模型熔断与候选模型切换，降低上游模型异常对任务执行链路的影响。</li>
+              <li><strong>可靠执行与稳定性：</strong>针对 Agent 真实业务执行中的越权、误操作与模型波动问题，统一收敛工具执行入口，对身份、权限、风险确认和写操作进行集中校验，并支持高风险任务中断后继续执行；同时对模型侧突发并发和异常进行排队、限流与降级处理，降低模型不稳定对业务执行链路的影响</li>
+              <li><strong>自进化skill：</strong>构建自进化闭环，从 Langfuse 脱敏轨迹自动分析失败归因并生成 Skill 候选，在 24 例固定测试集上以 trial 级覆盖 + 加载哈希做 A/B，用确定性断言 + 匿名裁判输出 improved / not_improved / inconclusive；产出候选 SKILL.md + diff + 证据报告，让能力演进可审计、可回滚。</li>
               <li><strong>离线评测：</strong>记录 Agent 规划、工具调用、跨 Agent 协作及最终状态的完整 Trace，基于 tau2-bench 对任务完成状态和工具执行链路进行离线判分，支持 Prompt、Tool Schema 与 Context 的持续迭代。</li>
             </ul>
-            <p><strong>成果：</strong>平均上下文 Token 消耗 <strong>8.1K</strong> -> <strong>5.6K</strong>；pass^1：<strong>77.3%</strong> -> <strong>92.9%</strong>，pass^3：<strong>64.3%</strong> -> <strong>82.1%</strong></p>
+            <p><strong>成果：</strong>平均上下文 Token 消耗 <strong>8.1K</strong> -> <strong>5.6K</strong>; pass^1：<strong>77.3%</strong> -> <strong>92.9%</strong>，pass^3：<strong>64.3%</strong> -> <strong>82.1%</strong>; purchase-advisor 触发率：<strong>6.67%</strong> -> <strong>100%</strong></p>
           </article>
 
           <article class="entry">

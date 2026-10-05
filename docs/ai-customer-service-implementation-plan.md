@@ -1,5 +1,17 @@
 # AI 智能客服实施计划
 
+## Self-Evolving 最小版实施增补（2026-10-01，待实现）
+
+依据 [Self-Evolving 最小技术设计](ai-agent-self-evolving-design.md) v3，当前仅完成文档设计：
+
+- [ ] 生产 Langfuse redacted 脱敏采集与最小关联信息。
+- [ ] 独立维护、固定版本的 Skill 专项测试集及评分项。
+- [ ] evalrunner 的 trial 级候选覆盖、真实加载记录和 A/B 对比。
+- [ ] Eino 生产轨迹分析、Skill 候选生成及单次命令串联。
+- [ ] 候选文件、diff、逐例结果和报告，完成端到端验收。
+
+新增测试全部放在根目录 `tests/`。覆盖来源隔离、脱敏、证据不足、候选校验、A/B 状态隔离、误触发、行为退化与裁判缺失；运行相关测试及 `go test ./...` 并记录阻塞。固定专项集不进入生成输入，生产案例不自动转换为测试。首版不建设新数据库、后台任务平台或自动发布。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 基于现有电商微服务新增 AI 智能客服能力，支持 SSE 多轮对话、业务查询、商品推荐、低风险自动操作、高风险确认执行和审计追踪。
