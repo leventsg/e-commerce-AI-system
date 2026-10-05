@@ -1,0 +1,89 @@
+{
+  "version": "1",
+  "cases": [
+    {
+      "id": "issue_triage_order_query",
+      "skill_name": "issue-triage",
+      "target_agent": "supervisor_agent",
+      "capability": "订单状态查询",
+      "input": "帮我查一下订单 O123 现在是什么状态",
+      "fixture": {
+        "orders": {
+          "O123": { "order_id": "O123", "user_id": 7, "status": "pending_payment", "amount": 199900 }
+        }
+      },
+      "expect_tool": "order_get"
+    },
+    {
+      "id": "issue_triage_order_list",
+      "skill_name": "issue-triage",
+      "target_agent": "supervisor_agent",
+      "capability": "订单列表定位",
+      "input": "我名下都有哪些订单，帮我列一下",
+      "fixture": {
+        "orders": {
+          "O123": { "order_id": "O123", "user_id": 7, "status": "pending_payment", "amount": 199900 },
+          "O124": { "order_id": "O124", "user_id": 7, "status": "shipped", "amount": 88000 }
+        }
+      },
+      "expect_tool": "order_list"
+    },
+    {
+      "id": "issue_triage_coupon_query",
+      "skill_name": "issue-triage",
+      "target_agent": "supervisor_agent",
+      "capability": "优惠券查询",
+      "input": "看看我账户里都有哪些优惠券",
+      "fixture": {
+        "coupons": {
+          "C1": { "coupon_id": "C1", "user_id": 7, "discount": 5000, "min_spend": 100000, "expired": false },
+          "C2": { "coupon_id": "C2", "user_id": 7, "discount": 2000, "min_spend": 50000, "expired": false }
+        },
+        "claimed_coupons": { "C1": true, "C2": true }
+      },
+      "expect_tool": "coupon_my_list"
+    },
+    {
+      "id": "purchase_advisor_budget_search",
+      "skill_name": "purchase-advisor",
+      "target_agent": "shopping_decision_agent",
+      "capability": "按预算选购",
+      "input": "2000 以内帮我挑一款手机",
+      "fixture": {
+        "products": {
+          "101": { "product_id": 101, "name": "轻旗舰手机A", "category": "手机", "price": 199900, "description": "6.7寸屏 256G" },
+          "102": { "product_id": 102, "name": "轻旗舰手机B", "category": "手机", "price": 299900, "description": "6.8寸屏 512G" }
+        },
+        "inventory": { "101": 50, "102": 30 }
+      },
+      "expect_tool": "product_search"
+    },
+    {
+      "id": "purchase_advisor_product_detail",
+      "skill_name": "purchase-advisor",
+      "target_agent": "shopping_decision_agent",
+      "capability": "商品详情",
+      "input": "帮我看看商品 101 的详细信息和价格",
+      "fixture": {
+        "products": {
+          "101": { "product_id": 101, "name": "轻旗舰手机A", "category": "手机", "price": 199900, "description": "6.7寸屏 256G" }
+        }
+      },
+      "expect_tool": "product_detail"
+    },
+    {
+      "id": "purchase_advisor_inventory",
+      "skill_name": "purchase-advisor",
+      "target_agent": "shopping_decision_agent",
+      "capability": "库存查询",
+      "input": "商品 101 现在还有货吗",
+      "fixture": {
+        "products": {
+          "101": { "product_id": 101, "name": "轻旗舰手机A", "category": "手机", "price": 199900, "description": "6.7寸屏 256G" }
+        },
+        "inventory": { "101": 50 }
+      },
+      "expect_tool": "inventory_get"
+    }
+  ]
+}

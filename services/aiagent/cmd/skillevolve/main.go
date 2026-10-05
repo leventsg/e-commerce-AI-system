@@ -1,8 +1,8 @@
-// skillevolve runs a single Self-Evolving pass: read redacted production
-// Langfuse traces, derive one Skill candidate, and A/B it against the fixed
-// Skill-specific dataset. It writes all artifacts locally and never modifies the
-// production Skill set. Credentials come from environment variables and are never
-// written into artifacts.
+// skillevolve runs a single Self-Evolving pass: read redacted production traces,
+// derive one Skill candidate from failure/detour experience, and replay the
+// original traces to verify the candidate's effectiveness. It writes all artifacts
+// locally and never modifies the production Skill set. Credentials come from
+// environment variables and are never written into artifacts.
 package main
 
 import (
@@ -20,27 +20,28 @@ import (
 func main() {
 	logx.SetWriter(logx.NewWriter(os.Stderr))
 	var (
-		from         = flag.String("from", "", "production window start (RFC3339, required)")
-		to           = flag.String("to", "", "production window end (RFC3339, required)")
+		from         = flag.String("from", "", "production window start (RFC3339, required unless --traces-file)")
+		to           = flag.String("to", "", "production window end (RFC3339, required unless --traces-file)")
 		agent        = flag.String("agent", "", "target agent")
 		maxSessions  = flag.Int("max-sessions", 20, "max sessions to analyze")
-		dataset      = flag.String("dataset", "tests/skill_eval/dataset.json", "skill-specific dataset path")
-		trials       = flag.Int("trials", 3, "trials per case per group")
+		trials       = flag.Int("trials", 3, "reserved")
 		output       = flag.String("output", ".tmp/skill-evolution", "output directory")
-		evaluateOnly = flag.Bool("evaluate-only", false, "re-run A/B for an existing candidate")
-		shadow       = flag.Bool("shadow", false, "shadow-execute production traces (no real business RPC)")
-		genericEval  = flag.Bool("generic-eval", false, "run four-layer generic evaluation for any skill")
-		candidate    = flag.String("candidate", "", "candidate.json path (evaluate-only / shadow / generic-eval)")
+		evaluateOnly = flag.Bool("evaluate-only", false, "replay verification for an existing candidate")
+		shadow       = flag.Bool("shadow", false, "shadow-replay production traces only (no analysis/generation)")
+		candidate    = flag.String("candidate", "", "candidate.json path (evaluate-only / shadow)")
+		tracesFile   = flag.String("traces-file", "", "local SessionEvidence JSON file (closed-loop verify without Langfuse)")
+		regression   = flag.String("regression", "", "regression test set path (optional; add regression guard after replay)")
 	)
 	flag.Parse()
 
 	opts := evolution.Options{
-		Agent:        *agent,
-		MaxSessions:  *maxSessions,
-		DatasetPath:  *dataset,
-		Trials:       *trials,
-		OutputDir:    *output,
-		EvaluateOnly: *evaluateOnly,
+		Agent:         *agent,
+		MaxSessions:   *maxSessions,
+		TracesFile:    *tracesFile,
+		RegressionPath: *regression,
+		Trials:        *trials,
+		OutputDir:     *output,
+		EvaluateOnly:  *evaluateOnly,
 		CandidatePath: *candidate,
 		Langfuse: config.LangfuseConfig{
 			Host:      os.Getenv("AI_EVOLVE_LANGFUSE_HOST"),
@@ -62,17 +63,11 @@ func main() {
 			Model: os.Getenv("AI_EVAL_MODEL"), BaseURL: os.Getenv("AI_EVAL_BASE_URL"),
 			Timeout: 60, MaxTokens: 4096,
 		},
-		Judge: config.EinoConfig{
-			Provider: "openai", APIKey: os.Getenv("AI_EVAL_JUDGE_API_KEY"),
-			Model: os.Getenv("AI_EVAL_JUDGE_MODEL"), BaseURL: os.Getenv("AI_EVAL_JUDGE_BASE_URL"),
-			Timeout: 60, MaxTokens: 2048,
-		},
-		JudgeEnabled: os.Getenv("AI_EVAL_JUDGE_API_KEY") != "" && os.Getenv("AI_EVAL_JUDGE_MODEL") != "",
 	}
 
-	if !*evaluateOnly && !*genericEval {
+	if !*evaluateOnly && *tracesFile == "" {
 		if *from == "" || *to == "" {
-			fmt.Fprintln(os.Stderr, "--from and --to are required unless --evaluate-only or --generic-eval is set")
+			fmt.Fprintln(os.Stderr, "--from and --to are required unless --evaluate-only or --traces-file is set")
 			os.Exit(2)
 		}
 		opts.From, _ = time.Parse(time.RFC3339, *from)
@@ -84,9 +79,7 @@ func main() {
 	}
 
 	var outcome evolution.Outcome
-	if *genericEval {
-		outcome = evolution.RunGenericEval(context.Background(), opts)
-	} else if *shadow {
+	if *shadow {
 		outcome = evolution.RunShadowOnly(context.Background(), opts)
 	} else {
 		outcome = evolution.Run(context.Background(), opts)

@@ -17,32 +17,31 @@ import (
 // Options configures a single run. Credentials are injected through environment
 // or existing config and are never written to artifacts.
 type Options struct {
-	From         time.Time
-	To           time.Time
-	Agent        string
-	MaxSessions  int
-	DatasetPath  string
-	Trials       int
-	OutputDir    string
-	EvaluateOnly bool
-	CandidatePath string
+	From           time.Time
+	To             time.Time
+	Agent          string
+	MaxSessions    int
+	TracesFile     string // 本地轨迹文件（SessionEvidence 数组 JSON），无 Langfuse 时用于端到端验证
+	RegressionPath string // 回归测试集路径（可选；提供则在重放校验后追加回归护栏）
+	Trials         int
+	OutputDir      string
+	EvaluateOnly   bool
+	CandidatePath  string
 
 	Langfuse   config.LangfuseConfig
 	Analysis   config.EinoConfig
 	Generation config.EinoConfig
 	Tested     config.EinoConfig
-	Judge      config.EinoConfig
-	JudgeEnabled bool
 }
 
 // Outcome reports what a run produced and where it wrote artifacts.
 type Outcome struct {
-	RunID     string     `json:"run_id"`
-	OutputDir string     `json:"output_dir"`
-	Stage     string     `json:"stage"` // no_candidate | evaluated | error | no_source
-	Conclusion string    `json:"conclusion,omitempty"`
-	Files     []string   `json:"files,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	RunID      string   `json:"run_id"`
+	OutputDir  string   `json:"output_dir"`
+	Stage      string   `json:"stage"` // no_candidate | evaluated | error | no_source
+	Conclusion string   `json:"conclusion,omitempty"`
+	Files      []string `json:"files,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 // Run executes the full pipeline. It preserves completed artifacts on failure and
@@ -56,15 +55,10 @@ func Run(ctx context.Context, opts Options) Outcome {
 	outDir = filepath.Join(outDir, runID)
 	outcome := Outcome{RunID: runID, OutputDir: outDir}
 
-	dataset, datasetHash, err := LoadDataset(opts.DatasetPath)
-	if err != nil {
-		outcome.Stage = "error"
-		outcome.Error = err.Error()
-		return outcome
-	}
-
 	modelFactory := eino.NewModelFactory()
 	var candidate *Candidate
+	var sessions []SessionEvidence
+	var err error
 
 	if opts.EvaluateOnly {
 		candidate, err = loadCandidate(opts.CandidatePath, outDir)
@@ -73,9 +67,19 @@ func Run(ctx context.Context, opts Options) Outcome {
 			outcome.Error = err.Error()
 			return outcome
 		}
+		// 重放需要原轨迹；EvaluateOnly 模式从 traces-file 读（无 Langfuse 时间窗）。
+		if opts.TracesFile != "" {
+			sessions, err = readTracesFile(opts.TracesFile)
+			if err != nil {
+				outcome.Stage = "error"
+				outcome.Error = err.Error()
+				return outcome
+			}
+		}
 	} else {
 		// 1. Read production evidence.
-		sessions, sourceErr := readProductionSessions(ctx, opts)
+		var sourceErr error
+		sessions, sourceErr = readProductionSessions(ctx, opts)
 		if sourceErr != nil {
 			// Preserve the error in analysis but continue to a no_source stage.
 			outcome.Stage = "no_source"
@@ -114,48 +118,73 @@ func Run(ctx context.Context, opts Options) Outcome {
 		_ = writeSkillFiles(outDir, *candidate)
 	}
 
-	// 4. A/B evaluation.
-	ab, err := RunAB(ctx, dataset, datasetHash, *candidate, ABConfig{
+	// 4. 重放校验（用候选 skill 重放原轨迹，对比工具调用与结果）
+	skillSet, _ := candidate.SkillSet()
+	summary, err := RunShadow(ctx, ABConfig{
 		TestedFactory: modelFactory,
 		TestedConfig:  opts.Tested,
-		JudgeEnabled:  opts.JudgeEnabled,
-		JudgeFactory:  modelFactory,
-		JudgeConfig:   opts.Judge,
-		Trials:        opts.Trials,
-	})
+	}, sessions, skillSet)
 	if err != nil {
 		outcome.Stage = "error"
-		outcome.Error = "A/B evaluation failed: " + err.Error()
+		outcome.Error = "shadow replay failed: " + err.Error()
 		return outcome
 	}
 	outcome.Stage = "evaluated"
-	outcome.Conclusion = ab.Conclusion
-	_ = writeJSON(outDir, "ab-results.json", ab)
+	outcome.Conclusion = fmt.Sprintf("tool_reduced=%d/%d, outcome_improved=%d/%d", summary.ToolReduced, summary.Total, summary.OutcomeImproved, summary.Total)
+	_ = writeJSON(outDir, "shadow-results.json", summary)
+
+	// 5. 回归校验（可选）：在固定典型能力测试集上跑 A/B，确认候选没有让原本正常的能力退化。
+	reportBody := shadowReport(summary)
+	if opts.RegressionPath != "" {
+		set, hash, loadErr := LoadRegressionSet(opts.RegressionPath)
+		if loadErr != nil {
+			outcome.Stage = "error"
+			outcome.Error = "regression set load failed: " + loadErr.Error()
+			_ = writeManifest(outDir, manifest{Stage: outcome.Stage, Error: outcome.Error, Candidate: candidate, Trials: opts.Trials, ModelConfigs: modelConfigView(opts)})
+			return outcome
+		}
+		r, runErr := RunRegression(ctx, ABConfig{TestedFactory: modelFactory, TestedConfig: opts.Tested}, set, hash, *candidate, opts.Trials)
+		if runErr != nil {
+			outcome.Stage = "error"
+			outcome.Error = "regression failed: " + runErr.Error()
+			_ = writeManifest(outDir, manifest{Stage: outcome.Stage, Error: outcome.Error, Candidate: candidate, Trials: opts.Trials, ModelConfigs: modelConfigView(opts)})
+			return outcome
+		}
+		_ = writeJSON(outDir, "regression-results.json", r)
+		outcome.Conclusion = outcome.Conclusion + fmt.Sprintf(", regression=%s", r.Conclusion)
+		reportBody += "\n\n" + regressionReport(r)
+	}
+
 	_ = writeManifest(outDir, manifest{
-		Stage:          outcome.Stage,
-		DatasetVersion: dataset.Version,
-		DatasetHash:    datasetHash,
-		Candidate:      candidate,
-		Trials:         opts.Trials,
-		ModelConfigs:   modelConfigView(opts),
+		Stage:        outcome.Stage,
+		Candidate:    candidate,
+		Trials:       opts.Trials,
+		ModelConfigs: modelConfigView(opts),
 	})
-	_ = writeMarkdown(outDir, "report.md", abReport(*candidate, analysisView(outcome), ab, dataset))
+	_ = writeMarkdown(outDir, "report.md", reportBody)
 	return outcome
 }
 
-func analysisView(outcome Outcome) AnalysisOutput {
-	// Best-effort: the analysis file is already on disk; the report reads it again.
-	var analysis AnalysisOutput
-	raw, err := os.ReadFile(filepath.Join(outcome.OutputDir, "analysis.json"))
-	if err == nil {
-		_ = json.Unmarshal(raw, &analysis)
-	}
-	return analysis
-}
-
 func readProductionSessions(ctx context.Context, opts Options) ([]SessionEvidence, error) {
+	if opts.TracesFile != "" {
+		return readTracesFile(opts.TracesFile)
+	}
 	reader := &LangfuseReader{Host: opts.Langfuse.Host, PublicKey: opts.Langfuse.PublicKey, SecretKey: opts.Langfuse.SecretKey}
 	return reader.FetchSessions(ctx, opts.From, opts.To, opts.Agent, opts.MaxSessions)
+}
+
+// readTracesFile 从本地 JSON 读取 SessionEvidence 数组，用于无真实 Langfuse 时的
+// 端到端验证（轨迹学习 → 提炼 skill → 重放校验）。
+func readTracesFile(path string) ([]SessionEvidence, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read traces file: %w", err)
+	}
+	var sessions []SessionEvidence
+	if err := json.Unmarshal(raw, &sessions); err != nil {
+		return nil, fmt.Errorf("parse traces file: %w", err)
+	}
+	return sessions, nil
 }
 
 func loadCandidate(path, outDir string) (*Candidate, error) {
@@ -275,72 +304,6 @@ func RunShadowOnly(ctx context.Context, opts Options) Outcome {
 	return outcome
 }
 
-// RunGenericEval 对候选 Skill 运行四层通用评测（触发/安全/有效性/鲁棒性），不依赖
-// skill-specific 数据集。它读取候选，从 SKILL.md 提取画像并生成通用用例，输出
-// generic-report.json 与 generic-report.md。
-func RunGenericEval(ctx context.Context, opts Options) Outcome {
-	runID := time.Now().UTC().Format("20060102T150405.000000000")
-	outDir := opts.OutputDir
-	if outDir == "" {
-		outDir = ".tmp/skill-evolution"
-	}
-	outDir = filepath.Join(outDir, runID)
-	outcome := Outcome{RunID: runID, OutputDir: outDir, Stage: "generic"}
-
-	candidate, err := loadCandidate(opts.CandidatePath, outDir)
-	if err != nil {
-		outcome.Stage = "error"
-		outcome.Error = err.Error()
-		_ = writeManifest(outDir, manifest{Stage: outcome.Stage, Error: outcome.Error})
-		return outcome
-	}
-
-	factory := eino.NewModelFactory()
-	report, err := GenericEval(ctx, *candidate, ABConfig{
-		TestedFactory: factory,
-		TestedConfig:  opts.Tested,
-		JudgeEnabled:  opts.JudgeEnabled,
-		JudgeFactory:  factory,
-		JudgeConfig:   opts.Judge,
-		Trials:        opts.Trials,
-	}, opts.Trials)
-	if err != nil {
-		outcome.Stage = "error"
-		outcome.Error = err.Error()
-		_ = writeManifest(outDir, manifest{Stage: outcome.Stage, Error: outcome.Error})
-		return outcome
-	}
-	outcome.Conclusion = report.Conclusion
-	_ = writeJSON(outDir, "generic-report.json", report)
-	_ = writeManifest(outDir, manifest{Stage: outcome.Stage, Trials: opts.Trials, Candidate: candidate, ModelConfigs: modelConfigView(opts)})
-	_ = writeMarkdown(outDir, "generic-report.md", genericReportMarkdown(report))
-	return outcome
-}
-
-// genericReportMarkdown renders the four-layer generic evaluation as Markdown.
-func genericReportMarkdown(r GenericReport) string {
-	var b strings.Builder
-	b.WriteString("# 通用 Skill 评测报告\n\n")
-	b.WriteString(fmt.Sprintf("- Skill：%s（只读声明：%t）\n", r.SkillName, r.ReadOnly))
-	b.WriteString(fmt.Sprintf("- 适用样例：%s\n", r.ApplicableSample))
-	b.WriteString(fmt.Sprintf("- 每组每例次数：%d\n\n", r.Trials))
-	b.WriteString(fmt.Sprintf("## 结论：%s\n\n", r.Conclusion))
-	b.WriteString("## 触发边界\n\n| 指标 | A 组 | B 组 |\n|---|---|---|\n")
-	b.WriteString(fmt.Sprintf("| 适用场景加载率 | %.0f%% | %.0f%% |\n", r.Trigger.ApplicableLoadRateA*100, r.Trigger.ApplicableLoadRateB*100))
-	b.WriteString(fmt.Sprintf("| 不适用误触发率 | %.0f%% | %.0f%% |\n\n", r.Trigger.NotApplicableTriggerRateA*100, r.Trigger.NotApplicableTriggerRateB*100))
-	b.WriteString("## 安全\n\n| 指标 | A 组 | B 组 |\n|---|---|---|\n")
-	b.WriteString(fmt.Sprintf("| 写违规 | %d | %d |\n", r.Safety.WriteViolationsA, r.Safety.WriteViolationsB))
-	b.WriteString(fmt.Sprintf("| 注入抵抗 | %s | %s |\n", r.Safety.InjectionResistA, r.Safety.InjectionResistB))
-	b.WriteString(fmt.Sprintf("| 越权抵抗 | %s | %s |\n\n", r.Safety.OverreachResistA, r.Safety.OverreachResistB))
-	b.WriteString("## 有效性\n\n| 指标 | A 组 | B 组 |\n|---|---|---|\n")
-	b.WriteString(fmt.Sprintf("| 平均工具调用 | %.2f | %.2f |\n", r.Effectiveness.AvgToolCallsA, r.Effectiveness.AvgToolCallsB))
-	b.WriteString(fmt.Sprintf("| 澄清比例 | %.0f%% | %.0f%% |\n\n", r.Effectiveness.ClarificationRateA*100, r.Effectiveness.ClarificationRateB*100))
-	b.WriteString("## 鲁棒性\n\n| 指标 | A 组 | B 组 |\n|---|---|---|\n")
-	b.WriteString(fmt.Sprintf("| 信息不足标 unknown | %s | %s |\n", r.Robustness.InsufficientUnknownA, r.Robustness.InsufficientUnknownB))
-	b.WriteString(fmt.Sprintf("| 能力外正确拒绝 | %s | %s |\n", r.Robustness.OutOfScopeRejectA, r.Robustness.OutOfScopeRejectB))
-	return b.String()
-}
-
 // modelConfigView records model names (never credentials) for reproducibility.
 func modelConfigView(opts Options) map[string]string {
 	out := map[string]string{}
@@ -352,9 +315,6 @@ func modelConfigView(opts Options) map[string]string {
 	}
 	if opts.Tested.Model != "" {
 		out["tested"] = opts.Tested.Model
-	}
-	if opts.JudgeEnabled && opts.Judge.Model != "" {
-		out["judge"] = opts.Judge.Model
 	}
 	return out
 }

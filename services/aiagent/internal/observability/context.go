@@ -72,10 +72,10 @@ var credential = regexp.MustCompile(`(?i)(bearer\s+[^\s"\\]+|\bsk-[a-z0-9_-]+|(?
 // callers must not claim otherwise. Missing/un-redacted PII is handled by the
 // analysis layer marking samples as unknown rather than fabricating content.
 var piiPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`1[3-9]\d{9}`),                                  // mainland mobile
-	regexp.MustCompile(`(?i)[\w.+-]+@[\w-]+\.[\w.-]+`),                 // email
-	regexp.MustCompile(`\b\d{17}[\dXx]\b`),                             // resident ID card
-	regexp.MustCompile(`\b0\d{2,3}-\d{7,8}\b`),                         // landline with area code
+	regexp.MustCompile(`1[3-9]\d{9}`),                  // mainland mobile
+	regexp.MustCompile(`(?i)[\w.+-]+@[\w-]+\.[\w.-]+`), // email
+	regexp.MustCompile(`\b\d{17}[\dXx]\b`),             // resident ID card
+	regexp.MustCompile(`\b0\d{2,3}-\d{7,8}\b`),         // landline with area code
 }
 
 func secretKey(key string) bool {
@@ -196,6 +196,8 @@ func Correlate(ctx context.Context, fields map[string]string) context.Context {
 	}
 	return context.WithValue(ctx, contextKey{}, s)
 }
+
+// 业务span启动
 func Start(ctx context.Context, name string, fields map[string]string) (context.Context, func(string)) {
 	s, ok := ctx.Value(contextKey{}).(state)
 	if !ok {
@@ -218,19 +220,23 @@ func Start(ctx context.Context, name string, fields map[string]string) (context.
 		span.End()
 	}
 }
+
+// 处理没有耗时的瞬间业务事件，比如guard拦截、confirmation批准/拒绝，不需要span持续（没有开始->结束的耗时）
 func Event(ctx context.Context, name, status string, fields map[string]string) {
 	_, end := Start(ctx, name, fields)
 	end(status)
 }
+
+// 业务结果埋点
 func Result(ctx context.Context, status, output string) {
 	if !Active(ctx) {
 		return
 	}
 	span := trace.SpanFromContext(ctx)
 	var envelope struct {
-		BusinessOutcome string `json:"business_outcome"`
-		AttemptCount    int    `json:"attempt_count"`
-		RetryCount      int    `json:"retry_count"`
+		BusinessOutcome string `json:"business_outcome"` // 业务结果状态码
+		AttemptCount    int    `json:"attempt_count"`    // 业务尝试次数
+		RetryCount      int    `json:"retry_count"`      // 业务重试次数
 	}
 	if json.Unmarshal([]byte(output), &envelope) == nil && envelope.BusinessOutcome != "" {
 		span.SetAttributes(attribute.String("langfuse.observation.metadata.business_outcome", envelope.BusinessOutcome), attribute.Int("langfuse.observation.metadata.attempt_count", envelope.AttemptCount), attribute.Int("langfuse.observation.metadata.retry_count", envelope.RetryCount))

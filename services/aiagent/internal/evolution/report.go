@@ -36,46 +36,6 @@ func noCandidateReport(analysis AnalysisOutput) string {
 	return b.String()
 }
 
-func abReport(candidate Candidate, analysis AnalysisOutput, ab ABResult, dataset Dataset) string {
-	var b strings.Builder
-	b.WriteString("# Self-Evolving A/B 评测报告\n\n")
-	b.WriteString("## 结论\n\n")
-	b.WriteString(fmt.Sprintf("- **判定**：`%s`\n", ab.Conclusion))
-	b.WriteString(fmt.Sprintf("- 操作：`%s`（Skill：`%s`，宿主 Agent：`%s`）\n", candidate.Operation, candidate.SkillName, candidate.TargetAgent))
-	b.WriteString(fmt.Sprintf("- 覆盖：`%s`\n", ab.Coverage))
-	if len(ab.Reasons) > 0 {
-		b.WriteString("- 原因：\n")
-		for _, r := range ab.Reasons {
-			b.WriteString(fmt.Sprintf("  - %s\n", r))
-		}
-	}
-	b.WriteString("\n## 指标\n\n")
-	m := ab.Metrics
-	b.WriteString("| 指标 | A 组（原版） | B 组（候选） |\n|---|---|---|\n")
-	b.WriteString(fmt.Sprintf("| required 加载率 | %.2f | %.2f |\n", m.RequiredLoadRateA, m.RequiredLoadRateB))
-	b.WriteString(fmt.Sprintf("| forbidden 误触发率 | %.2f | %.2f |\n", m.ForbiddenTriggerRateA, m.ForbiddenTriggerRateB))
-	b.WriteString(fmt.Sprintf("| 核心行为通过率 | %.2f | %.2f |\n", m.BehaviorPassRateA, m.BehaviorPassRateB))
-	b.WriteString(fmt.Sprintf("| 安全违规数 | %d | %d |\n", m.SafetyViolationsA, m.SafetyViolationsB))
-	b.WriteString(fmt.Sprintf("| 语义裁判 | %s | %s |\n", m.SemanticScoreA, m.SemanticScoreB))
-	b.WriteString(fmt.Sprintf("| 平均工具调用 | %.1f | %.1f |\n", m.AvgToolCallsA, m.AvgToolCallsB))
-	b.WriteString("\n## 逐例结果\n\n")
-	b.WriteString("| 用例 | 类别 | 期望 | A 行为 | B 行为 | 改善 | 退化 |\n|---|---|---|---|---|---|---|\n")
-	for _, c := range ab.Cases {
-		b.WriteString(fmt.Sprintf("| %s | %s | %s | %.2f (%d/%d) | %.2f (%d/%d) | %t | %t |\n",
-			c.CaseID, c.Category, c.ExpectedSkillUse,
-			behaviorRate(c.GroupA), c.GroupA.BehaviorPass, c.GroupA.BehaviorTotal,
-			behaviorRate(c.GroupB), c.GroupB.BehaviorPass, c.GroupB.BehaviorTotal,
-			c.Improved, c.Regressed))
-	}
-	b.WriteString("\n## 数据与限制\n\n")
-	b.WriteString(fmt.Sprintf("- 数据集版本：%s（哈希 %s），用例数 %d\n", dataset.Version, ab.DatasetHash, len(dataset.Cases)))
-	b.WriteString(fmt.Sprintf("- 每组每用例运行 %d 次，交错执行，状态隔离\n", ab.Trials))
-	b.WriteString("- 语义评分为 `unknown` 时表示缺失裁判或证据，未计入通过\n")
-	b.WriteString("- 该评测使用模拟业务环境，不访问真实业务 RPC；`improved` 不是正式晋升资格，也不是统计显著结论\n")
-	b.WriteString("- 生产轨迹用于学习，测试集用于评测，二者输入隔离\n")
-	return b.String()
-}
-
 func shadowReport(summary ShadowSummary) string {
 	var b strings.Builder
 	b.WriteString("# 生产影子执行报告\n\n")
@@ -98,5 +58,29 @@ func shadowReport(summary ShadowSummary) string {
 	b.WriteString("- 下限（安全）：工具一致 + 无额外写操作，保证不退化、不越权、不误触发。\n")
 	b.WriteString("- 有效性信号：结果改善（原失败/未知→影子成功）或结果未变差但工具更少，用于判断新 skill 是否真的有效。\n")
 	b.WriteString("- 澄清为启发式判断（最终回复含问句与澄清词），不是精确的轮次统计；该对比仍不是真实生产执行的等价证明。\n")
+	return b.String()
+}
+
+func regressionReport(report RegressionReport) string {
+	var b strings.Builder
+	b.WriteString("## 回归校验\n\n")
+	b.WriteString(fmt.Sprintf("- 结论：`%s`\n", report.Conclusion))
+	b.WriteString(fmt.Sprintf("- 回归集版本：%s（哈希 %s），匹配用例 %d\n", report.Version, report.Hash, report.MatchedCases))
+	b.WriteString(fmt.Sprintf("- 每组每例运行 %d 次（A 原版 / B 候选交错）\n", report.Trials))
+	if len(report.RegressedCases) > 0 {
+		b.WriteString(fmt.Sprintf("- 退化用例：%v\n", report.RegressedCases))
+	}
+	b.WriteString("\n| 用例 | 能力 | A 通过 | B 通过 | 判定 |\n|---|---|---|---|---|\n")
+	for _, c := range report.Cases {
+		verdict := "无退化"
+		if c.Skipped {
+			verdict = "跳过（原版基准不成立）"
+		} else if c.Regressed {
+			verdict = "退化"
+		}
+		b.WriteString(fmt.Sprintf("| %s | %s | %d/%d | %d/%d | %s |\n", c.CaseID, c.Capability, c.PassA, c.Runs, c.PassB, c.Runs, verdict))
+	}
+	b.WriteString("\n- 回归护栏回答「候选有没有把原本正常的能力改坏」，与重放校验回答「失败 case 有没有修好」互补。\n")
+	b.WriteString("- 若 B 组在任一典型能力上通过率下降，即使重放显示失败 case 已修复，也应判「不能采纳」。\n")
 	return b.String()
 }
