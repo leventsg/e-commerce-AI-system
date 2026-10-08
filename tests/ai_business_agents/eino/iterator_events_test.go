@@ -21,14 +21,18 @@ func TestConsumeEventsConvertsIteratorReasoningToThinkingDelta(t *testing.T) {
 		}),
 	})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want 1; events=%+v", len(events), events)
+	// 兜底语义：只有思考增量、没有最终助手消息时，流末尾补发兜底 assistant 消息。
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventAssistantThinkingDelta || events[0].Content != "我需要先分析用户想买什么。" || events[0].Done {
 		t.Fatalf("event = %+v, want assistant_thinking_delta", events[0])
 	}
 	if events[0].MessageID != "" {
 		t.Fatalf("thinking message id = %q, want empty", events[0].MessageID)
+	}
+	if events[1].Type != domain.EventAssistantMessage || !events[1].Done {
+		t.Fatalf("event = %+v, want fallback assistant_message", events[1])
 	}
 }
 
@@ -46,14 +50,18 @@ func TestConsumeEventsConvertsIteratorToolCallsToProgress(t *testing.T) {
 		}),
 	})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want 1; events=%+v", len(events), events)
+	// 兜底语义：只有工具进度、没有最终助手消息时，流末尾补发兜底 assistant 消息。
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventToolProgress || events[0].Tool != domain.ToolProductSearch || events[0].Status != "running" || events[0].Done {
 		t.Fatalf("event = %+v, want tool_progress", events[0])
 	}
 	if !strings.Contains(events[0].DataJSON, "无线耳机") {
 		t.Fatalf("data_json = %q, want tool arguments", events[0].DataJSON)
+	}
+	if events[1].Type != domain.EventAssistantMessage || !events[1].Done {
+		t.Fatalf("event = %+v, want fallback assistant_message", events[1])
 	}
 }
 
@@ -82,11 +90,15 @@ func TestConsumeEventsMatchesRepeatedToolResultsByToolCallID(t *testing.T) {
 		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-1", `{"products":[],"total":0}`),
 	})
 
-	if len(events) != 4 {
-		t.Fatalf("events len = %d, want 4; events=%+v", len(events), events)
+	// 4 个工具事件 + 1 个兜底 assistant 消息。
+	if len(events) != 5 {
+		t.Fatalf("events len = %d, want 5; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventToolProgress || events[1].Type != domain.EventToolProgress || events[2].Type != domain.EventToolResult || events[3].Type != domain.EventToolResult {
 		t.Fatalf("events = %+v, want progress, progress, result, result", events)
+	}
+	if events[4].Type != domain.EventAssistantMessage || !events[4].Done {
+		t.Fatalf("event = %+v, want fallback assistant_message", events[4])
 	}
 	if events[0].MessageID == events[1].MessageID {
 		t.Fatalf("progress ids should be distinct: %q", events[0].MessageID)
@@ -104,8 +116,9 @@ func TestConsumeEventsConvertsIteratorToolMessageToResult(t *testing.T) {
 		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-1", `{"products":[],"total":0}`),
 	})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want tool_result only; events=%+v", len(events), events)
+	// 1 个工具结果 + 1 个兜底 assistant 消息。
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventToolResult {
 		t.Fatalf("event = %+v, want tool_result", events[0])
@@ -116,6 +129,9 @@ func TestConsumeEventsConvertsIteratorToolMessageToResult(t *testing.T) {
 	if events[0].DataJSON != `{"products":[],"total":0}` {
 		t.Fatalf("data_json = %q, want raw object", events[0].DataJSON)
 	}
+	if events[1].Type != domain.EventAssistantMessage || !events[1].Done {
+		t.Fatalf("event = %+v, want fallback assistant_message", events[1])
+	}
 }
 
 func TestConsumeEventsKeepsFailedToolEnvelopeFailed(t *testing.T) {
@@ -123,8 +139,9 @@ func TestConsumeEventsKeepsFailedToolEnvelopeFailed(t *testing.T) {
 		toolIteratorEvent("product_discovery_agent", domain.ToolProductSearch, "call-1", `{"status":"failed","tool_name":"product_search","attempt_count":3,"retry_count":2,"error":{"kind":"transient","code":"rpc_unavailable","message":"商品查询暂时不可用","retryable_in_current_run":false},"business_outcome":"not_executed"}`),
 	})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want tool_result only; events=%+v", len(events), events)
+	// 1 个失败工具结果 + 1 个兜底 assistant 消息。
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventToolResult || events[0].Status != "failed" {
 		t.Fatalf("event = %+v, want failed tool_result", events[0])
@@ -134,6 +151,9 @@ func TestConsumeEventsKeepsFailedToolEnvelopeFailed(t *testing.T) {
 	}
 	if !strings.Contains(events[0].Content, "商品查询暂时不可用") {
 		t.Fatalf("content = %q, want safe failure message", events[0].Content)
+	}
+	if events[1].Type != domain.EventAssistantMessage || events[1].BusinessExecuted {
+		t.Fatalf("event = %+v, want fallback without business executed", events[1])
 	}
 }
 
@@ -224,7 +244,7 @@ func TestConsumeEventsHandlesStreamingToolCallAsCompleteProgress(t *testing.T) {
 			Type:  "function",
 			Function: schema.FunctionCall{
 				Name:      domain.ToolOrderCreate,
-				Arguments: `{"request":"confirm`,
+				Arguments: `{"pre_order_id":"pre`,
 			},
 		}},
 	}, nil)
@@ -236,7 +256,7 @@ func TestConsumeEventsHandlesStreamingToolCallAsCompleteProgress(t *testing.T) {
 			Type:  "function",
 			Function: schema.FunctionCall{
 				Name:      domain.ToolOrderCreate,
-				Arguments: ` order"}`,
+				Arguments: `_42","address_id":1}`,
 			},
 		}},
 	}, nil)
@@ -251,21 +271,25 @@ func TestConsumeEventsHandlesStreamingToolCallAsCompleteProgress(t *testing.T) {
 		}},
 	}})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want one complete tool progress; events=%+v", len(events), events)
+	// 1 个工具进度 + 1 个兜底 assistant 消息。
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventToolProgress || events[0].Tool != domain.ToolOrderCreate {
 		t.Fatalf("event = %+v, want order_create tool progress", events[0])
 	}
-	if events[0].DataJSON != `{"request":"confirm order"}` {
+	if events[0].DataJSON != `{"pre_order_id":"pre_42","address_id":1}` {
 		t.Fatalf("data_json = %q, want complete arguments", events[0].DataJSON)
+	}
+	if events[1].Type != domain.EventAssistantMessage || !events[1].Done {
+		t.Fatalf("event = %+v, want fallback assistant_message", events[1])
 	}
 }
 
 func TestConsumeEventsHandlesStreamingToolResultAsCompleteResult(t *testing.T) {
 	reader, writer := schema.Pipe[*schema.Message](2)
 	writer.Send(schema.ToolMessage(`{"summary":"created`, "call-1", schema.WithToolName(domain.ToolOrderCreate)), nil)
-	writer.Send(schema.ToolMessage(` order"}`, "call-1", schema.WithToolName(domain.ToolOrderCreate)), nil)
+	writer.Send(schema.ToolMessage(`_42","address_id":1}`, "call-1", schema.WithToolName(domain.ToolOrderCreate)), nil)
 	writer.Close()
 
 	events := consumeTestAgentEvents(t, []*adk.AgentEvent{{
@@ -278,14 +302,18 @@ func TestConsumeEventsHandlesStreamingToolResultAsCompleteResult(t *testing.T) {
 		}},
 	}})
 
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want one complete tool result; events=%+v", len(events), events)
+	// 1 个工具结果 + 1 个兜底 assistant 消息。
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; events=%+v", len(events), events)
 	}
 	if events[0].Type != domain.EventToolResult || events[0].Tool != domain.ToolOrderCreate {
 		t.Fatalf("event = %+v, want order_create tool result", events[0])
 	}
-	if events[0].DataJSON != `{"summary":"created order"}` {
+	if events[0].DataJSON != `{"summary":"created_42","address_id":1}` {
 		t.Fatalf("data_json = %q, want complete result", events[0].DataJSON)
+	}
+	if events[1].Type != domain.EventAssistantMessage || !events[1].Done {
+		t.Fatalf("event = %+v, want fallback assistant_message", events[1])
 	}
 }
 
@@ -375,8 +403,12 @@ func TestConsumeEventsIgnoresAgentToolProgressAndResult(t *testing.T) {
 		toolIteratorEvent(supervisorAgentName, "product_discovery_agent", "agent-call-1", "内部 agent 已完成"),
 	})
 
-	if len(events) != 0 {
-		t.Fatalf("events len = %d, want agent tool events hidden; events=%+v", len(events), events)
+	// agent 工具事件被隐藏，但没有最终消息时兜底仍会补发 assistant 消息。
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want fallback only; events=%+v", len(events), events)
+	}
+	if events[0].Type != domain.EventAssistantMessage || !events[0].Done {
+		t.Fatalf("events = %+v, want fallback assistant_message", events[0])
 	}
 }
 

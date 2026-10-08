@@ -43,7 +43,7 @@ func scriptedEvaluation(t *testing.T, scripts map[string][]*schema.Message, fail
 func TestEvaluationConfirmationSecurity(t *testing.T) {
 	for _, mode := range []string{"approve", "reject", "expired", "cross_user"} {
 		t.Run(mode, func(t *testing.T) {
-			trial := scriptedEvaluation(t, map[string][]*schema.Message{supervisorAgentName: {businessCall("shopping_decision_agent", `{"request":"delete cart item 8"}`), businessReply("finished")}, "shopping_decision_agent": {businessCall("cart_delete", `{"cart_item_id":8}`), businessReply("deleted")}}, nil)
+			trial := scriptedEvaluation(t, map[string][]*schema.Message{supervisorAgentName: {businessCall("shopping_decision_agent", `{"task":{"intent":"cart_delete","objective":"delete cart item 8"}}`), businessReply("finished")}, "shopping_decision_agent": {businessCall("cart_delete", `{"cart_item_id":8}`), businessChildReply("deleted")}}, nil)
 			response := trial.Execute(context.Background(), EvaluationRequest{Op: "chat", TrialID: "test", Content: "delete cart item 8"})
 			if response.Error != "" {
 				t.Fatal(response.Error)
@@ -87,7 +87,7 @@ func TestEvaluationConfirmationSecurity(t *testing.T) {
 func TestEvaluationActualParametersAndFailureInjection(t *testing.T) {
 	for _, kind := range []string{"business_failure", "outcome_unknown", "audit_failure"} {
 		t.Run(kind, func(t *testing.T) {
-			trial := scriptedEvaluation(t, map[string][]*schema.Message{supervisorAgentName: {businessCall("shopping_decision_agent", `{"request":"add product 42 quantity 2"}`), businessReply("review outcome")}, "shopping_decision_agent": {businessCall("cart_add", `{"product_id":42,"quantity":2,"user_id":999}`), businessReply("review outcome")}}, []EvaluationFailure{{Tool: "cart_add", Call: 1, Kind: kind}})
+			trial := scriptedEvaluation(t, map[string][]*schema.Message{supervisorAgentName: {businessCall("shopping_decision_agent", `{"task":{"intent":"cart_add","objective":"add product 42 quantity 2"}}`), businessReply("review outcome")}, "shopping_decision_agent": {businessCall("cart_add", `{"product_id":42,"quantity":2,"user_id":999}`), businessChildReply("review outcome")}}, []EvaluationFailure{{Tool: "cart_add", Call: 1, Kind: kind}})
 			result := trial.Execute(context.Background(), EvaluationRequest{Op: "chat", TrialID: "test", Content: "add two product 42"})
 			if result.Error != "" {
 				t.Fatal(result.Error)

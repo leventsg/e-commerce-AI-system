@@ -39,7 +39,11 @@ func TestLiveBusinessAgentRouting(t *testing.T) {
 		if err != nil {
 			t.Fatal("failed to construct live child model")
 		}
-		info, err := adk.NewAgentTool(ctx, child).Info(ctx)
+		inputSchema, err := buildDelegationSchema(ctx, spec, registry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := adk.NewAgentTool(ctx, child, adk.WithAgentInputSchema(inputSchema)).Info(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

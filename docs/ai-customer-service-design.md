@@ -1,5 +1,22 @@
 # AI 智能客服技术方案
 
+## 结构化子 Agent 委派（2026-10-07）
+
+AgentTool 输入不再接受 `{"request":"..."}`。顶层仅 `task` 必填，内部 `intent`、`objective` 必填，`done_when` 可选；`inputs`、`constraints`、`context`、`gaps`、`scope` 可选，不含 `schema_version`。可选对象一旦提供，其条目必要字段仍须完整；所有对象拒绝未知字段。最小输入为 `{"task":{"intent":"order_get","objective":"核实订单 O123 状态"}}`。
+
+- 意图使用目标 Agent 的业务工具名称枚举，另有 `shopping_compare`、`inspect_order_issue`、`explain_policy`、`general_consultation`。inputs 复用实际业务字段类型及枚举；缺失参数可在只读查询后补齐，执行前仍需满足业务工具要求。
+- 约束强度为 `must | prefer`；gap 的 resolution 为 `lookup | ask_user | return_to_parent`，blocks 为 `task | write`，field 使用目标 Agent 输入路径枚举。先前动作使用注册业务工具名枚举，排除动作使用目标 Agent 工具枚举。
+- scope.mode 为 `read_only | prepare | execute`。未提供时读取及比较、诊断、咨询意图为只读，写意图为 execute；read_only 和 prepare 都拒绝写工具。checkout_prepare 可能占库存，属于写操作。execute 不是确认凭据，exclusions 在执行前强制检查。
+- 省略 done_when 使用意图最低完成要求；省略集合按空集合处理，不补造证据、数量、ID 或批准状态。原始参数最多 32 KiB，单段文本最多 2,000 字符，上下文数组最多 20 项，业务条目最多 50 项；拒绝超限，不静默截断。
+- message:<id>、tool_call:<id> 必须由服务端按认证用户及当前会话解析。缺失、损坏或跨归属引用统一不可用；存储故障保留错误语义。同轮未落库工具结果保存在可信运行上下文中，解析不依赖落库时序。合并引用最多 20 个，解析内容最多 64 KiB。
+- 子 Agent 输入由本次委派及证据投影组成，引用内容按数据处理，不覆盖系统规则；不再次注入整段历史。可信用户、会话、确认状态和权限不属于模型输入契约。
+- 结果包含 status、summary、evidence_refs、actions、missing_inputs、remaining_work。状态为 `completed | partial | needs_input | confirmation_required | failed`；真实动作区分 success、failed、unknown、not_executed，由服务端校验并补全，不能用模型声明替代真实记录。格式错误不自动重跑任务，仍保留已执行动作。
+- 沿用原生 AgentTool 中断恢复；checkpoint 保存原委派范围、证据及动作，恢复时保留限制并验证确认。成功或结果未知的相同写操作不能直接重放，仍需业务幂等与真实状态核实。Supervisor 汇总自然语言最终回复。
+
+实现取舍：业务 inputs 使用具体委派 struct 中的动态字段映射，其 schema 和执行前校验复用 Registry 的真实工具定义，避免维护第二份业务枚举。查询补缺目前仅自动接受简单字段路径、成功证据中的唯一匹配值；嵌套对象和数组缺口需要父 Agent 或用户补齐后重新委派。比较、诊断及咨询意图即使显式指定 execute 也不能发起写入；需要单独委派明确的写入意图。工具调用 ID 在当前运行中不可复用，原生确认恢复除外；数值等价的写参数按同一操作检查，拒绝重放时保留原始审计证据。
+
+切换前排空旧版本确认中断任务，不兼容旧 request 或旧 checkpoint；公共 API、RPC 和数据库结构保持不变。观测只记录 Agent、校验错误码、状态及延迟，不记录未经脱敏的完整交接内容。
+
 ## Self-Evolving 最小架构增补（2026-10-01，最小版本已实现）
 
 生产 Langfuse 新增显式 redacted 内容策略，保留 summary 默认值；采集脱敏对话、工具和业务证据。单次 Go 命令通过 Eino 独立分析生产轨迹并生成一个 Skill 候选，结果保存为本地文件，不增加 MySQL 演化表、常驻 worker、租约或复杂恢复系统。
@@ -224,7 +241,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - 动态 ToolFact、库存、价格、订单、优惠券状态等业务事实只用于定位对象和理解历史，写操作或状态结论前必须重新调用对应业务 RPC 精确核实。
 - `internal/memory` 不包含 Eino 类型；只有 `internal/eino` 的 MemoryMiddleware 可以把领域消息转换为 `schema.Message`。
 
-当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 和各业务/通用客服 SubAgent 均通过按 AgentName 分作用域的 MemoryMiddleware 自动注入上下文。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
+当前在线链路不再由 ChatLogic 手动调用 `ContextManager.Build()`。Conversation Manager 继续负责会话归属校验和原始用户消息持久化；Supervisor Agent root 通过 MemoryMiddleware 自动注入上下文。业务/通用客服 SubAgent 通过结构化委派及服务端解析的证据获得上下文，不再次加载会话历史。旧 `contextmanager` store 继续作为 `CustomerServiceProvider` 的数据源。
 
 ### 3.5 Supervisor Agent
 职责：
@@ -249,7 +266,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 实现方式：
 - 使用 Eino ADK `ChatModelAgent + AgentTool`，不使用 `prebuilt/supervisor` / AgentTransfer。
 - Supervisor Agent 不直接绑定业务 RPC 工具，只通过 AgentTool 调度 SubAgent。
-- SubAgent 默认仍只接收 Supervisor 传入的紧凑 `request`，但会在自身模型调用前按 `AgentName` 注入受控上下文，避免完全依赖 Supervisor 对 request 的一次性总结。
+- SubAgent 接收结构化任务契约与服务端解析的证据；AgentTool 使用自定义输入 schema，调用前校验，不再接受旧 `request`。
 - SubAgent 只绑定上述业务白名单及 Registry 允许的共享能力工具，子 Agent 不直接互相调用。
 - 工具调用必须经过 Eino InvokableTool、Execution Guard、确认拦截和审计链路。
 - Prompt 文本集中放在 `services/aiagent/internal/prompts`，Eino 编排代码不得直接硬编码长 prompt。
@@ -259,7 +276,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 - 搜索、推荐、找商品优先进入商品发现；比较、取舍、优惠和购物车进入购物决策。购物决策可自行补查商品，避免为补充信息反复转交。
 - 结算、下单、地址和普通订单状态查询进入订单履约；取消订单、订单异常和售后政策进入售后服务；资料维护与闲聊进入 general。
 - 多意图请求按依赖执行，只调用必要 Agent。修改购物车后下单时先决策再履约；直接下单或查询订单不必经过选购阶段。
-- 紧凑 `request` 携带真实 `product_id`、明确数量、用户约束、必要工具结果引用、已完成动作和待解决事项。缺失信息先澄清，不默认补齐；交接信息不包含可信用户身份或用户批准的替代凭据。
+- 任务契约顶层仅 `task` 必填，内部 `intent`、`objective` 必填，`done_when` 可选；`inputs`、`constraints`、`context`、`gaps`、`scope` 全部可选，无 `schema_version`。按需要传真实商品 ID、数量、约束、证据及先前动作；省略业务参数不等于允许猜测。身份与批准状态只来自服务端。
 - 最终金额、库存和优惠资格以结算链路重新校验的真实结果为准。`checkout_prepare` 可能占用库存，只用于明确结算意图，不用于比较试算。
 - 高风险操作产生 `confirmation_required` 后暂停依赖它的后续步骤，批准后走既有 checkpoint 恢复链路。拒绝、过期和失败不得总结为成功。
 - 未接入退款、退换货、物流操作，明确告知能力边界，不以其他写工具替代执行。政策解释使用现有知识上下文，无依据时说明无法核实。
@@ -267,7 +284,7 @@ AI 客服上下文工程已采用 `docs/model-context.md` 的分层范式，详�
 Skill 与迁移约束：
 
 - `purchase-advisor` 绑定 `shopping_decision_agent`，选购阶段保持只读；阶段结束后宿主按用户意图处理领券和购物车操作。`issue-triage` 继续绑定 Supervisor。
-- MemoryMiddleware 使用上述新 AgentName 注入上下文；事件过滤、日志、前端展示和 mock 同步使用新名称，最终回答仍只来自 Supervisor。历史消息与工具调用记录保留原样。
+- MemoryMiddleware 为 Supervisor 注入上下文，子 Agent 只接收本次委派和相关证据；事件过滤、日志、前端展示和 mock 使用上述 AgentName，最终回答仍只来自 Supervisor。历史消息与工具调用记录保留原样。
 - 本次按当前没有待确认任务的部署前提替换旧 Agent 结构，不增加旧版本 checkpoint 兼容路径。公共 API/RPC、工具参数、数据库和底层业务 handler 分层保持现状。
 
 ### 3.6 Tool Registry

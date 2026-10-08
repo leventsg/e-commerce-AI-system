@@ -53,8 +53,8 @@ func TestConcludeRegression(t *testing.T) {
 func TestRegressionRunPass(t *testing.T) {
 	// supervisor 委派 order_fulfillment_agent，子 Agent 内部调 order_get。
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":        {toolCall("order_fulfillment_agent", `{"request":"查订单 O123"}`), reply("订单 O123 待支付")},
-		"order_fulfillment_agent": {toolCall("order_get", `{"order_id":"O123"}`), reply("订单 O123 待支付")},
+		"supervisor_agent":        {toolCall("order_fulfillment_agent", `{"task":{"intent":"order_get","objective":"查订单 O123"},"inputs":{"order_id":"O123"}}`), reply("订单 O123 待支付")},
+		"order_fulfillment_agent": {toolCall("order_get", `{"order_id":"O123"}`), childReply("订单 O123 待支付")},
 	}
 	c := RegressionCase{
 		ID: "order_query", SkillName: "issue-triage", TargetAgent: "supervisor_agent",
@@ -73,7 +73,7 @@ func TestRegressionRunPass(t *testing.T) {
 func TestRegressionRunMissingTool(t *testing.T) {
 	// 模型没有调用期望的核心工具（调了别的），应判不通过。
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":        {toolCall("general_agent", `{"request":"随便聊聊"}`), reply("闲聊")},
+		"supervisor_agent":        {toolCall("general_agent", `{"task":{"intent":"general_consultation","objective":"随便聊聊"}}`), reply("闲聊")},
 	}
 	c := RegressionCase{
 		ID: "order_query", SkillName: "issue-triage", TargetAgent: "supervisor_agent",
@@ -92,8 +92,8 @@ func TestRegressionRunMissingTool(t *testing.T) {
 func TestRunRegressionNotRegressed(t *testing.T) {
 	// A/B 都用同一脚本调 order_get，均通过 → not_regressed。
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":        {toolCall("order_fulfillment_agent", `{"request":"查订单 O123"}`), reply("订单 O123 待支付")},
-		"order_fulfillment_agent": {toolCall("order_get", `{"order_id":"O123"}`), reply("订单 O123 待支付")},
+		"supervisor_agent":        {toolCall("order_fulfillment_agent", `{"task":{"intent":"order_get","objective":"查订单 O123"},"inputs":{"order_id":"O123"}}`), reply("订单 O123 待支付")},
+		"order_fulfillment_agent": {toolCall("order_get", `{"order_id":"O123"}`), childReply("订单 O123 待支付")},
 	}
 	set := &RegressionSet{Version: "1", Cases: []RegressionCase{{
 		ID: "order_query", SkillName: "issue-triage", TargetAgent: "supervisor_agent",
@@ -138,4 +138,10 @@ func TestRunRegressionInsufficientCoverage(t *testing.T) {
 	if report.Conclusion != "insufficient_coverage" {
 		t.Fatalf("conclusion = %q, want insufficient_coverage", report.Conclusion)
 	}
+}
+
+func childReply(summary string) *schema.Message {
+    raw, err := json.Marshal(map[string]any{"status":"completed", "summary":summary, "evidence_refs":[]string{}, "actions":[]any{}, "missing_inputs":[]any{}, "remaining_work":[]string{}})
+    if err != nil { panic(err) }
+    return reply(string(raw))
 }

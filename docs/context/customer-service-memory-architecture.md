@@ -1,5 +1,15 @@
 # AI 客服 MemoryProvider 上下文架构
 
+## 主 Agent 与子 Agent 的上下文边界（2026-10-07）
+
+MemoryProvider / MemoryMiddleware 的历史和长期上下文注入保留在 Supervisor。子 Agent 不再重复加载历史；AgentTool 用自定义 schema 接收本次任务，由服务端补充已校验归属的证据。契约与默认值见 [技术方案](../ai-customer-service-design.md) 的「结构化子 Agent 委派」。
+
+顶层仅 task 必填，task.intent 和 task.objective 必填；inputs、constraints、context、gaps、scope 及 task.done_when 可省略，无 schema_version。省略字段不代表信息已经充分，也不能用 assumptions 补齐写操作关键参数。引用使用 message:<id> 或 tool_call:<id>，服务端依据认证 user ID、当前 conversation ID 和记录 ID 读取并再次验证归属。不可用引用不泄露其他用户记录是否存在，基础设施故障保留错误语义。
+
+同轮尚未落库的业务工具结果保存于可信 ADK 运行上下文；后续委派可立即引用。工具记录的真实 arguments/status/result 用于核实先前动作，模型摘要不能覆盖记录。引用内容以数据投影注入，隐藏归属字段，不提升为系统指令；合并引用最多 20 个、内容最多 64 KiB，超限要求缩小任务，不破坏性截断 JSON。
+
+原生 checkpoint 保存委派参数、范围、证据和真实动作；确认恢复继续使用原范围，不能恢复成无约束任务。结果未知或成功的同一写操作不得因模型输出格式失败而重放。真实确认及幂等仍由原有服务端链路负责。最终回复只由 Supervisor 产生，结构化子 Agent JSON 不作为用户最终答案。
+
 ## 目标
 
 本项目的 AI 客服上下文工程已从手动 `ContextManager.Build()` 组装，重构为 AGGO 风格的 `MemoryProvider + MemoryMiddleware + ADK session values` 分层，并由 `ChatLogic` 统一触发异步长期上下文更新。

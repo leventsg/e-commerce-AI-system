@@ -112,8 +112,8 @@ func TestRunShadowConsistentWithOriginal(t *testing.T) {
 	}
 	// Supervisor 委派 order_fulfillment_agent，子 Agent 内部调用 order_get。
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":         {toolCall("order_fulfillment_agent", `{"request":"查订单 O123"}`), reply("订单 O123 当前待支付")},
-		"order_fulfillment_agent":  {toolCall("order_get", `{"order_id":"O123"}`), reply("订单 O123 当前待支付")},
+		"supervisor_agent":         {toolCall("order_fulfillment_agent", `{"task":{"intent":"order_get","objective":"查订单 O123"},"inputs":{"order_id":"O123"}}`), reply("订单 O123 当前待支付")},
+		"order_fulfillment_agent":  {toolCall("order_get", `{"order_id":"O123"}`), childReply("订单 O123 当前待支付")},
 	}
 	summary, err := RunShadow(context.Background(), ABConfig{
 		TestedFactory: scriptedFactoryWithAgents(scripts),
@@ -147,8 +147,8 @@ func TestRunShadowDetectsExtraWrite(t *testing.T) {
 	}
 	// 影子 Agent 在原轨迹之外多做了一个写操作 cart_add（副作用风险）。
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":         {toolCall("shopping_decision_agent", `{"request":"加购商品 101"}`), reply("已加入购物车")},
-		"shopping_decision_agent":  {toolCall("cart_add", `{"product_id":101,"quantity":1}`), reply("已加入购物车")},
+		"supervisor_agent":         {toolCall("shopping_decision_agent", `{"task":{"intent":"cart_add","objective":"加购商品 101 一件"},"inputs":{"product_id":101,"quantity":1}}`), reply("已加入购物车")},
+		"shopping_decision_agent":  {toolCall("cart_add", `{"product_id":101,"quantity":1}`), childReply("已加入购物车")},
 	}
 	summary, err := RunShadow(context.Background(), ABConfig{
 		TestedFactory: scriptedFactoryWithAgents(scripts),
@@ -225,8 +225,8 @@ func TestShadowEffectivenessSignals(t *testing.T) {
 		},
 	}
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":        {toolCall("shopping_decision_agent", `{"request":"加购商品 101"}`), reply("已加入购物车")},
-		"shopping_decision_agent": {toolCall("cart_add", `{"product_id":101,"quantity":1}`), reply("已加入购物车")},
+		"supervisor_agent":        {toolCall("shopping_decision_agent", `{"task":{"intent":"cart_add","objective":"加购商品 101 一件"},"inputs":{"product_id":101,"quantity":1}}`), reply("已加入购物车")},
+		"shopping_decision_agent": {toolCall("cart_add", `{"product_id":101,"quantity":1}`), childReply("已加入购物车")},
 	}
 	summary, err := RunShadow(context.Background(), ABConfig{
 		TestedFactory: scriptedFactoryWithAgents(scripts),
@@ -264,8 +264,8 @@ func TestShadowToolCountReduced(t *testing.T) {
 		},
 	}
 	scripts := map[string][]*schema.Message{
-		"supervisor_agent":        {toolCall("shopping_decision_agent", `{"request":"加购商品 101"}`), reply("已加入购物车")},
-		"shopping_decision_agent": {toolCall("cart_add", `{"product_id":101,"quantity":1}`), reply("已加入购物车")},
+		"supervisor_agent":        {toolCall("shopping_decision_agent", `{"task":{"intent":"cart_add","objective":"加购商品 101 一件"},"inputs":{"product_id":101,"quantity":1}}`), reply("已加入购物车")},
+		"shopping_decision_agent": {toolCall("cart_add", `{"product_id":101,"quantity":1}`), childReply("已加入购物车")},
 	}
 	summary, err := RunShadow(context.Background(), ABConfig{
 		TestedFactory: scriptedFactoryWithAgents(scripts),

@@ -1,5 +1,17 @@
 # AI 智能客服实施计划
 
+## 结构化子 Agent 委派实施增补（2026-10-08，已实现，全仓集成验证受环境阻塞）
+
+契约以设计文档「结构化子 Agent 委派」为准：删除 schema_version，顶层仅 task 必填，task 内 intent/objective 必填，其余顶层字段可选；固定值域使用枚举，禁止未知字段。旧 request 调用直接拒绝，不设自动升级入口。
+
+实施顺序：契约和失败测试 → 五个 AgentTool 自定义 schema → 运行前校验与可信证据解析 → 执行范围及确认恢复 → 结构化结果校验 → 提示词、脚本评测和文档迁移。业务身份、风险确认、幂等和审计继续复用现有链路；不修改外部 API/RPC 或表结构。
+
+新增测试统一位于根目录 tests/，使用现有 overlay。验收包括最小 task、可选字段省略和部分提供、枚举及超限、跨归属引用、同轮证据、默认只读/写入范围、exclusions、缺参及对象歧义、失败和未知结果不重放、批准/拒绝/过期/重复确认以及 checkpoint 范围恢复。真实模型首轮路由测试复用生产 schema；不能用脚本模型通过声称真实模型成功率提高。
+
+验证入口：`python tests/ai_business_agents/run.py`、受影响的 observability 与 skill_eval overlay、`go test ./services/aiagent/...`、`go test ./apis/ai/...`、`go test ./...`。部署前排空旧确认中断任务，观察脱敏后的委派校验错误码和延迟。
+
+2026-10-08 验证记录：`python tests/ai_business_agents/run.py`、`python tests/ai_observability/run.py`、`python tests/skill_eval/run.py`、`go test ./services/aiagent/...`、`go test ./apis/ai/...` 均已通过。业务与观测 overlay 首轮发现新增测试误将 cart_add 的可选 quantity 当作必填；改为未知字段拒绝用例后，两个入口最终重跑通过。全仓执行 `go test ./... -timeout=90s`，退出码为 1：21 个原有 `test/rpc/**` 集成测试包失败，本地认证、用户、商品、购物车、订单、优惠券、支付、审计、结算及库存 RPC 连接被拒绝（10000–10006、10008、10009、10011），部分测试随后空指针；需启动对应测试依赖后重跑，不能据此声明全仓通过。使用工作区 Go 缓存及 `GOFLAGS=-p=2`、`GOMAXPROCS=2` 控制 Windows 构建资源。真实模型路由评测仍为显式启用项，脚本模型结果不代表线上模型效果。
+
 ## Self-Evolving 最小版实施增补（2026-10-01，待实现）
 
 依据 [Self-Evolving 最小技术设计](ai-agent-self-evolving-design.md) v3，当前仅完成文档设计：
@@ -1153,7 +1165,7 @@ Provider 读取 `ai_messages`、会话摘要、最近完整工具调用、最近
 
 - [x] **Step 4: AgentRunner 接入 MemoryMiddleware**
 
-ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 和业务/通用客服 SubAgent 都挂载按 `AgentName` 分作用域的 MemoryMiddleware。SubAgent 不共享完整聊天历史，但会拿到受控的近期上下文、相关长期记忆和工具事实引用，避免完全依赖 Supervisor 对 `request` 的一次性总结。
+ChatLogic 只传当前 user message；Runner 使用 `adk.WithSessionValues` 注入可信 metadata；Supervisor root agent 挂载 MemoryMiddleware。结构化委派切换后，业务/通用客服 SubAgent 不再重复检索会话历史，改为接收本次任务和服务端解析的消息、工具事实引用；按 AgentName 去重的 middleware 能力仍保留。
 
 - [x] **Step 5: 接入 search_user_memory**
 
@@ -1460,7 +1472,7 @@ go test ./...
 
 在 Eino 注册表及 Prompt 嵌入声明中移除旧领域结构，构造命名改为业务 Agent。Supervisor 继续使用 `ChatModelAgent + AgentTool`，不新增业务工具，子 Agent 不直接互调。找货/推荐归商品发现；比较/优惠/购物车归购物决策；结算/下单/地址/普通订单查询归履约；取消/异常/售后政策归售后；资料和闲聊归 general。
 
-多意图按依赖执行，只调用必要 Agent；改购物车后下单先决策再履约。交接沿用紧凑 `request`，携带真实商品 ID、明确数量、用户约束、工具结果引用、已完成和待处理事项，缺参先澄清。明确结算意图才调用可能占库存的 `checkout_prepare`，最终金额等以真实结算校验为准。确认前暂停依赖步骤，确认后恢复既有链路；退款、退换货、物流操作未接入，不调用替代写工具，政策无依据时说明无法核实。
+多意图按依赖执行，只调用必要 Agent；改购物车后下单先决策再履约。交接使用结构化任务契约（见下方实施增补），按需携带真实商品 ID、数量、约束、证据引用、已完成及待处理事项，缺参先澄清。明确结算意图才调用可能占库存的 `checkout_prepare`，最终金额等以真实结算校验为准。确认前暂停依赖步骤，确认后恢复既有链路及原委派范围；退款、退换货、物流操作未接入，不调用替代写工具，政策无依据时说明无法核实。
 
 - [x] **Step 3: 迁移 Skill、上下文和事件识别**
 

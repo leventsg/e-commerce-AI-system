@@ -70,8 +70,9 @@ type agent struct {
 }
 
 type supervisorOptions struct {
-	approvalManager *aitools.ApprovalManager
-	checkpointStore adk.CheckPointStore
+	evidenceResolver *DelegationEvidenceResolver
+	approvalManager  *aitools.ApprovalManager
+	checkpointStore  adk.CheckPointStore
 	// memoryProvider 提供会话记忆功能
 	memoryProvider aimemory.MemoryProvider
 	// skills 提供 trial 级 Skill 覆盖；为 nil 时使用内嵌默认绑定。
@@ -177,7 +178,11 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 		if err != nil {
 			return nil, err
 		}
-		agentTools = append(agentTools, adk.NewAgentTool(ctx, subAgent))
+		delegated, err := newDelegationTool(ctx, subAgent, spec, registry, opts.evidenceResolver)
+		if err != nil {
+			return nil, err
+		}
+		agentTools = append(agentTools, delegated)
 	}
 	agentTools = append(agentTools, invokableToolsToBaseTools(registry.RootAgentTools())...)
 	agentTools = append(agentTools, invokableToolsToBaseTools(registry.AllAgentTools())...)
@@ -203,12 +208,15 @@ func NewSupervisorAgent(ctx context.Context, factory ModelFactory, cfg config.Ei
 	if skillMiddleware != nil {
 		rootHandlers = append(rootHandlers, skillMiddleware)
 	}
+	// 迭代耗尽兜底：最后一次模型调用清空工具并强制总结，避免 ErrExceedMaxIterations 直接报错终止
+	rootHandlers = append(rootHandlers, newFinalSummaryMiddleware(supervisorAgentName))
 	// 创建supervisor agent
 	root, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        supervisorAgentName,
-		Description: agentprompt.SupervisorAgentDesc,
-		Instruction: agentprompt.SupervisorSystemPrompt,
-		Model:       supervisorModel,
+		Name:          supervisorAgentName,
+		Description:   agentprompt.SupervisorAgentDesc,
+		Instruction:   agentprompt.SupervisorSystemPrompt,
+		GenModelInput: literalAgentModelInput,
+		Model:         supervisorModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: agentTools,
@@ -240,9 +248,10 @@ func newBusinessAgent(ctx context.Context, factory ModelFactory, cfg config.Eino
 		return nil, fmt.Errorf("%w: %v", ErrModelUnavailable, err)
 	}
 	handlers := []adk.ChatModelAgentMiddleware{adk.NewEventSenderModelWrapper(), newToolCallContextMiddleware()}
-	if memoryProvider != nil {
-		handlers = append(handlers, NewMemoryMiddlewareForAgent(memoryProvider, spec.name))
-	}
+	// Child agents receive a bounded delegation and resolved evidence; full
+	// conversation history remains owned by the supervisor.
+	delegationGuard := newDelegationGuardMiddleware(registry)
+	handlers = append(handlers, delegationGuard)
 	if approvalManager != nil {
 		handlers = append(handlers, newHighRiskApprovalMiddleware(approvalManager))
 	}
@@ -252,12 +261,16 @@ func newBusinessAgent(ctx context.Context, factory ModelFactory, cfg config.Eino
 	}
 	if skillMiddleware != nil {
 		handlers = append(handlers, skillMiddleware)
+		delegationGuard.allowSkill = true
 	}
+	// 迭代耗尽兜底：子 agent 同样在最后一次模型调用清空工具并强制总结
+	handlers = append(handlers, newFinalSummaryMiddleware(spec.name))
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        spec.name,
-		Description: spec.description,
-		Instruction: spec.instruction,
-		Model:       model,
+		Name:          spec.name,
+		Description:   spec.description,
+		Instruction:   spec.instruction,
+		GenModelInput: literalAgentModelInput,
+		Model:         model,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: invokableToolsToBaseTools(tools),
@@ -305,6 +318,7 @@ func (r *agent) Resume(ctx context.Context, req ResumeRequest) ([]domain.AgentEv
 }
 
 func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.AgentEvent, error) {
+	ctx = withDelegationRunLock(ctx)
 	if r == nil || r.root == nil {
 		return nil, ErrModelUnavailable
 	}
@@ -357,6 +371,7 @@ func (r *agent) Stream(ctx context.Context, req RunRequest) (<-chan domain.Agent
 }
 
 func (r *agent) ResumeStream(ctx context.Context, req ResumeRequest) (<-chan domain.AgentEvent, error) {
+	ctx = withDelegationRunLock(ctx)
 	if r == nil || r.root == nil {
 		return nil, ErrModelUnavailable
 	}
@@ -566,6 +581,34 @@ func (r *agent) consumeEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.
 			Content:        ErrEmptyModelResponse.Error(),
 			Status:         "failed",
 			Done:           true,
+		})
+		return
+	}
+	// 迭代耗尽兜底：有事件（如工具结果）但始终没有最终助手消息。eino 在
+	// MaxIterations 耗尽时返回 ErrExceedMaxIterations 硬错误走上面的错误分支；
+	// 这里覆盖其余静默结束的场景（如子 agent 委派链中断、最终模型输出为空），
+	// 保证用户始终能收到一条收尾消息，而不是停留在工具事件上。
+	if !hasAssistant && hasAny {
+		logx.Infow("agent 结束但没有最终助手消息，发送兜底总结",
+			append(baseAgentLogFields(req), logx.Field("stage", "final_summary_fallback"), logx.Field("business_executed", businessExecuted))...)
+		// 先关闭仍处于 running 状态的悬空工具调用，避免前端转圈不结束。
+		failPendingToolCalls()
+		content := "我已尽力处理您的请求，但本次未能生成完整的总结。已执行的操作结果请以上方的工具执行情况为准，请勿重复操作；如需继续，请补充说明您的需求。"
+		dataJSON := ""
+		if businessExecuted {
+			dataJSON = `{"business_executed":true}`
+		}
+		messageID := newAgentMessageID()
+		_ = send(a2uiAssistantDelta(req.ConversationID, messageID, content))
+		_ = send(a2uiAssistantDone(req.ConversationID, messageID))
+		_ = send(domain.AgentEvent{
+			Type:             domain.EventAssistantMessage,
+			ConversationID:   req.ConversationID,
+			MessageID:        messageID,
+			Content:          content,
+			DataJSON:         dataJSON,
+			Done:             true,
+			BusinessExecuted: businessExecuted,
 		})
 	}
 }

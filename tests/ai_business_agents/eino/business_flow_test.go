@@ -5,6 +5,7 @@ package eino
 import (
 	"context"
 	"errors"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -49,6 +50,19 @@ func businessCall(name, args string) *schema.Message {
 }
 func businessReply(content string) *schema.Message {
 	return &schema.Message{Role: schema.Assistant, Content: content}
+}
+
+// Child replies follow the production delegation result contract. Supervisor
+// replies intentionally remain natural language.
+func businessChildReply(summary string) *schema.Message {
+    raw, err := json.Marshal(map[string]any{"status":"completed", "summary":summary, "evidence_refs":[]string{}, "actions":[]any{}, "missing_inputs":[]any{}, "remaining_work":[]string{}})
+    if err != nil { panic(err) }
+    return businessReply(string(raw))
+}
+func businessDelegation(intent, objective string) string {
+    raw, err := json.Marshal(map[string]any{"task":map[string]string{"intent":intent,"objective":objective}})
+    if err != nil { panic(err) }
+    return string(raw)
 }
 
 type businessFlowRecorder struct{ calls []aitools.ToolCallRecord }
@@ -131,10 +145,10 @@ func assertNoBusinessFlowErrors(t *testing.T, events []domain.AgentEvent) {
 
 func TestBusinessAgentDelegationSequence(t *testing.T) {
 	scripts := map[string][]*schema.Message{
-		supervisorAgentName:       {businessCall("product_discovery_agent", `{"request":"Find headphones under 500"}`), businessCall("shopping_decision_agent", `{"request":"Selected product_id=42, quantity=2; add to cart"}`), businessCall("order_fulfillment_agent", `{"request":"product_id=42 quantity=2 already added; prepare checkout"}`), businessReply("final supervisor summary")},
-		"product_discovery_agent": {businessCall("product_search", `{"keyword":"headphones"}`), businessReply("candidate product_id=42")},
-		"shopping_decision_agent": {businessCall("cart_add", `{"product_id":42,"quantity":2,"user_id":999}`), businessReply("cart addition complete")},
-		"order_fulfillment_agent": {businessCall("checkout_prepare", `{"order_items":[{"product_id":42,"quantity":2}],"user_id":999}`), businessReply("checkout prepared")},
+		supervisorAgentName:       {businessCall("product_discovery_agent", `{"task":{"intent":"product_search","objective":"Find headphones under 500"},"inputs":{"keyword":"headphones"}}`), businessCall("shopping_decision_agent", `{"task":{"intent":"cart_add","objective":"Selected product_id=42, quantity=2; add to cart"},"inputs":{"product_id":42,"quantity":2}}`), businessCall("order_fulfillment_agent", `{"task":{"intent":"checkout_prepare","objective":"product_id=42 quantity=2 already added; prepare checkout"},"inputs":{"order_items":[{"product_id":42,"quantity":2}]}}`), businessReply("final supervisor summary")},
+		"product_discovery_agent": {businessCall("product_search", `{"keyword":"headphones"}`), businessChildReply("candidate product_id=42")},
+		"shopping_decision_agent": {businessCall("cart_add", `{"product_id":42,"quantity":2,"user_id":999}`), businessChildReply("cart addition complete")},
+		"order_fulfillment_agent": {businessCall("checkout_prepare", `{"order_items":[{"product_id":42,"quantity":2}],"user_id":999}`), businessChildReply("checkout prepared")},
 	}
 	runner, recorder, _, calls := newBusinessFlowRunner(t, scripts)
 	events, err := runner.Run(context.Background(), businessFlowRequest())
@@ -190,8 +204,8 @@ func TestBusinessAgentsHighRiskInterruptAndResume(t *testing.T) {
 		for _, approved := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/approved=%v", tc.tool, approved), func(t *testing.T) {
 				scripts := map[string][]*schema.Message{
-					supervisorAgentName: {businessCall(tc.agent, `{"request":"perform requested action"}`), businessReply("supervisor completed")},
-					tc.agent:            {businessCall(tc.tool, tc.args), businessReply("subagent completed")},
+					supervisorAgentName: {businessCall(tc.agent, businessDelegation(tc.tool, "perform requested action")), businessReply("supervisor completed")},
+					tc.agent:            {businessCall(tc.tool, tc.args), businessChildReply("subagent completed")},
 				}
 				runner, recorder, confirmations, calls := newBusinessFlowRunner(t, scripts)
 				req := businessFlowRequest()
@@ -270,12 +284,17 @@ func TestBusinessAgentsDirectRequests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.agent+"/"+tc.tool, func(t *testing.T) {
-			child := []*schema.Message{businessReply("response for supervisor")}
+			intent := tc.tool
+			if intent == "" {
+				intent = "general_consultation"
+				if tc.agent == "after_sales_agent" { intent = "explain_policy" }
+			}
+			child := []*schema.Message{businessChildReply("response for supervisor")}
 			if tc.tool != "" {
 				child = append([]*schema.Message{businessCall(tc.tool, tc.args)}, child...)
 			}
 			runner, _, _, calls := newBusinessFlowRunner(t, map[string][]*schema.Message{
-				supervisorAgentName: {businessCall(tc.agent, `{"request":"direct request"}`), businessReply("final response")},
+				supervisorAgentName: {businessCall(tc.agent, businessDelegation(intent, "direct request")), businessReply("final response")},
 				tc.agent:            child,
 			})
 			events, err := runner.Run(context.Background(), businessFlowRequest())
@@ -296,7 +315,7 @@ func TestBusinessAgentsDirectRequests(t *testing.T) {
 
 func TestBusinessAgentCannotExecuteAnotherAgentsWrite(t *testing.T) {
 	runner, _, _, calls := newBusinessFlowRunner(t, map[string][]*schema.Message{
-		supervisorAgentName:       {businessCall("product_discovery_agent", `{"request":"find product"}`)},
+		supervisorAgentName:       {businessCall("product_discovery_agent", `{"task":{"intent":"product_search","objective":"find product"}}`)},
 		"product_discovery_agent": {businessCall("order_cancel", `{"order_id":"order_42"}`)},
 	})
 	events, err := runner.Run(context.Background(), businessFlowRequest())
@@ -323,8 +342,8 @@ func TestBusinessAgentModelUnavailableDoesNotExecuteTools(t *testing.T) {
 		t.Fatalf("factory error must support unavailable fallback: %v", err)
 	}
 	runner, _, _, calls := newBusinessFlowRunner(t, map[string][]*schema.Message{
-		supervisorAgentName: {businessCall("general_agent", `{"request":"read profile"}`)},
-		"general_agent":     {businessReply("internal answer")},
+		supervisorAgentName: {businessCall("general_agent", `{"task":{"intent":"user_get","objective":"read profile"}}`)},
+		"general_agent":     {businessChildReply("internal answer")},
 	})
 	// Root's script ends after delegation, simulating a failed final model call.
 	events, err := runner.Run(context.Background(), businessFlowRequest())

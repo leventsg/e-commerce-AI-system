@@ -40,8 +40,8 @@ func TestOfficialCallbackStreamingHierarchyAndPrivacy(t *testing.T){
  if err!=nil{t.Fatal(err)}
  ctx,end:=o.Start(context.Background(),"Chat",7,"conv_trace","13812345678 123 Main Street sk-sensitive")
  runner,_,_,_:=newBusinessFlowRunner(t,map[string][]*schema.Message{
-  supervisorAgentName:{businessCall("general_agent",`{"request":"inspect profile"}`),businessReply("final response")},
-  "general_agent":{businessCall("user_get",`{}`),businessReply("profile read")},
+  supervisorAgentName:{businessCall("general_agent",`{"task":{"intent":"user_get","objective":"inspect profile"}}`),businessReply("final response")},
+  "general_agent":{businessCall("user_get",`{}`),businessChildReply("profile read")},
  })
  events,err:=runner.Run(ctx,businessFlowRequest());if err!=nil{t.Fatal(err)}
  assertNoBusinessFlowErrors(t,events)

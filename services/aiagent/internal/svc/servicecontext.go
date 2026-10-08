@@ -204,6 +204,10 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		eino.WithApprovalManager(approvalManager),
 		eino.WithCheckpointStore(eino.NewPersistentCheckpointStore(redisClient, agentRunsModel, checkpointTTL)),
 		eino.WithMemoryProvider(memoryProvider),
+		eino.WithDelegationEvidenceResolver(&eino.DelegationEvidenceResolver{
+			FindToolCall: toolCallStore.FindToolCallByCallID,
+			FindMessages: messagesModel.FindMessagesByIDs,
+		}),
 		eino.WithSkills(skillSet),
 	); err == nil {
 		agentRunner = runner
