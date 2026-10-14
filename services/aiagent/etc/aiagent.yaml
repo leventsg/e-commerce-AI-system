@@ -112,6 +112,19 @@ RAG:
   RecentMessages: 6
   EmbeddingModel: "qwen-emb-8b"
 
+# 上下文 token 预算：决策依据从"消息条数"切换为"token 预算"。
+TokenBudget:
+  TotalTokens: 8000
+  RecentWindowTokens: 3000
+  SummaryMaxTokens: 2000
+  LatestToolResultMaxTokens: 1500
+  ToolHistoryMaxTokens: 1200
+  TaskStateMaxTokens: 600
+  UserProfileMaxTokens: 600
+  MinRecentMessages: 2
+  SummaryTriggerTokens: 4000
+  SafetyFactor: 0.9
+
 Confirmation:
   ExpireSeconds: 300
   LockExpireSeconds: 5

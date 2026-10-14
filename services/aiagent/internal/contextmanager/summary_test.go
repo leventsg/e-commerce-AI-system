@@ -96,14 +96,14 @@ func TestSummaryManagerCompactsMultipleRoundsWhenBacklogExceedsTrigger(t *testin
 	if err != nil {
 		t.Fatalf("MaybeRefresh() error = %v", err)
 	}
-	if !result.Created || len(store.saved) != 2 || summarizer.calls != 2 {
-		t.Fatalf("created=%v saved=%d calls=%d, want two rounds", result.Created, len(store.saved), summarizer.calls)
+	if !result.Created || len(store.saved) != 3 || summarizer.calls != 3 {
+		t.Fatalf("created=%v saved=%d calls=%d, want three rounds until retain window reached", result.Created, len(store.saved), summarizer.calls)
 	}
-	if store.saved[0].CoveredUntilMessageID != "m010" || store.saved[1].CoveredUntilMessageID != "m020" {
-		t.Fatalf("watermarks = %s,%s want m010,m020", store.saved[0].CoveredUntilMessageID, store.saved[1].CoveredUntilMessageID)
+	if store.saved[0].CoveredUntilMessageID != "m010" || store.saved[1].CoveredUntilMessageID != "m020" || store.saved[2].CoveredUntilMessageID != "m025" {
+		t.Fatalf("watermarks = %s,%s,%s want m010,m020,m025", store.saved[0].CoveredUntilMessageID, store.saved[1].CoveredUntilMessageID, store.saved[2].CoveredUntilMessageID)
 	}
-	if len(result.CompressedMessageIDs) != 20 || result.CompressedMessageIDs[0] != "m001" || result.CompressedMessageIDs[19] != "m020" {
-		t.Fatalf("compressed message ids = %+v, want m001..m020", result.CompressedMessageIDs)
+	if len(result.CompressedMessageIDs) != 25 || result.CompressedMessageIDs[0] != "m001" || result.CompressedMessageIDs[24] != "m025" {
+		t.Fatalf("compressed message ids = %+v, want m001..m025", result.CompressedMessageIDs)
 	}
 	if len(result.RecentMessages) != 20 || result.RecentMessages[0].MsgId != "m026" || result.RecentMessages[19].MsgId != "m045" {
 		t.Fatalf("recent window = %s..%s len=%d, want m026..m045 len=20",

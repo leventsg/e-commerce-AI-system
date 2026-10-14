@@ -45,6 +45,11 @@ type BuildContextResult struct {
 	LatestToolCallID             string
 	RecentToolCallCount          int
 	EstimatedInputTokens         int
+	// 以下为 token 预算观测字段：用于在 Langfuse/日志中记录预算使用情况，供后续调参。
+	BudgetTotalTokens     int // 输入侧总预算（已乘安全边际）
+	BudgetUsedTokens      int // 本次实际估算用量
+	BudgetRemainingTokens int // 剩余预算（>=0）
+	SpilledMessageCount   int // 因预算溢出未注入、待摘要覆盖的旧消息条数
 }
 
 type ConversationSummary struct {

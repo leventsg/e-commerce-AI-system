@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	aiagentruns "github.com/leventsg/e-commerce-AI-system/dal/model/ai/agent_runs"
 	aiconfirmations "github.com/leventsg/e-commerce-AI-system/dal/model/ai/confirmations"
 	aiconversationsummaries "github.com/leventsg/e-commerce-AI-system/dal/model/ai/conversation_summaries"
@@ -17,6 +18,7 @@ import (
 	aiconfirmation "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/confirmation"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/contextmanager"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/conversation"
+	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/eino"
 	aimemory "github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memory"
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/memoryeventextractor"
@@ -118,27 +120,65 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		conversationsModel,
 		messagesModel,
 	)
+	tokenBudget := domain.TokenBudget{
+		TotalTokens:               c.TokenBudget.TotalTokens,
+		RecentWindowTokens:        c.TokenBudget.RecentWindowTokens,
+		SummaryMaxTokens:          c.TokenBudget.SummaryMaxTokens,
+		LatestToolResultMaxTokens: c.TokenBudget.LatestToolResultMaxTokens,
+		ToolHistoryMaxTokens:      c.TokenBudget.ToolHistoryMaxTokens,
+		TaskStateMaxTokens:        c.TokenBudget.TaskStateMaxTokens,
+		UserProfileMaxTokens:      c.TokenBudget.UserProfileMaxTokens,
+		MinRecentMessages:         c.TokenBudget.MinRecentMessages,
+		SummaryTriggerTokens:      c.TokenBudget.SummaryTriggerTokens,
+		SafetyFactor:              c.TokenBudget.SafetyFactor,
+	}
 	contextManager := contextmanager.NewManager(
 		contextmanager.NewMessageStore(messagesModel),
 		toolCallStore,
 		contextmanager.WithSummaryStore(summaryStore),
 		contextmanager.WithUserProfileStore(userProfileStore),
+		contextmanager.WithTokenBudget(tokenBudget),
 	)
 	modelFactory := eino.NewModelFactory()
 	summaryManager := contextmanager.NewSummaryManager(
 		summaryStore,
 		contextmanager.NewSummaryMessageStore(messagesModel),
 		eino.NewSummarySummarizer(modelFactory, selectSummaryModelConfig(c.SummaryModel, c.Eino)),
+		contextmanager.WithSummaryTokenBudget(tokenBudget),
 	)
 	// 记忆更新事件发布器
 	memoryUpdatePublisher := memoryupdate.NewKafkaPublisher(c)
+	// 压缩回调：同步压缩后异步发布压缩消息 ID，供画像/记忆提取消费。
+	compressCallback := func(ctx context.Context, userID uint64, conversationID string, messageIDs []string) {
+		if memoryUpdatePublisher == nil || len(messageIDs) == 0 {
+			return
+		}
+		event := memoryupdate.UpdateEvent{
+			EventID:        "memory_evt_" + uuid.NewString(),
+			UserID:         userID,
+			ConversationID: conversationID,
+			MessageIDs:     messageIDs,
+			CreatedAt:      time.Now(),
+		}
+		if err := memoryUpdatePublisher.PublishMemoryUpdate(ctx, event); err != nil {
+			logx.Errorw("publish ai memory update failed",
+				logx.Field("component", "memory_update"),
+				logx.Field("stage", "compress_publish"),
+				logx.Field("conversation_id", conversationID),
+				logx.Field("user_id", userID),
+				logx.Field("err", err))
+		}
+	}
 	// 记忆提供器
 	memoryProvider := aimemory.NewCustomerServiceProvider(aimemory.CustomerServiceProviderConfig{
-		Messages:  contextmanager.NewMessageStore(messagesModel),
-		Summaries: summaryStore,
-		Tools:     toolCallStore,
-		Profiles:  userProfileStore,
-		Events:    eventStore,
+		Messages:     contextmanager.NewMessageStore(messagesModel),
+		Summaries:    summaryStore,
+		Tools:        toolCallStore,
+		Profiles:     userProfileStore,
+		Events:       eventStore,
+		Compressor:   summaryManager,
+		OnCompressed: compressCallback,
+		Budget:       tokenBudget,
 	})
 	ragRedisClient := goredis.NewClient(&goredis.Options{
 		Addr:     c.RedisConf.Host,

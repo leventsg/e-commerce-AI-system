@@ -331,8 +331,8 @@
           <h2 class="section-title">实习经历</h2>
           <article class="entry">
             <div class="entry-head">
-              <div><img src="https://commonresource-1252524126.cdn.xiaoeknow.com/image/lhyaurs50zil.ico" type="image/x-ico" style="height: 1em; vertical-align: middle; margin-right: 4px;">深圳小鹅网络技术有限公司&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div>
-              <!-- <div class="entry-title">深圳小鹅网络技术有限公司 · Golang 后端开发实习生 · 直播中控台/数据异步导出</div> -->
+              <div><img src="https://commonresource-1252524126.cdn.xiaoeknow.com/image/lhyaurs50zil.ico" type="image/x-ico" style="height: 1em; vertical-align: middle; margin-right: 4px;">深圳小鹅网络技术有限公司（私域 SaaS 头部公司）&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div>
+              <!-- <div class="entry-title">深圳小鹅网络技术有限公司（私域 SaaS 头部公司） · Golang 后端开发实习生 · 直播中控台/数据异步导出</div> -->
               <div class="date">2025.09 - 2026.01</div>
             </div>
             <p><strong>业务背景：</strong>实习期间参与直播中控台与年度报告等业务后端迭代，围绕年报内容构建、数据导出和线上问题治理。</p>
@@ -352,13 +352,13 @@
               <div class="date">2026.03 - 2026.08</div>
             </div>
             <p class="project-title">Go / Eino / RAG / MCP / Skill / SSE / MySQL / Redis / Elasticsearch / Langfuse</p>
-            <p><strong>项目简介：</strong>面向商品、购物车、订单、支付与售后等电商场景，构建可调用真实业务 RPC 的 Agent 执行层，重点解决跨域任务编排、长上下文成本、真实业务操作安全性和 Agent 执行稳定性问题。</p>
+            <p><strong>项目简介：</strong>面向商品、购物车、订单、支付与售后等电商场景，构建可调用真实业务的 Agent 执行层，重点解决跨域任务编排、长上下文成本、真实业务操作安全性和 Agent 执行稳定性问题。</p>
             <ul>
               <li><strong>多 Agent 业务编排：</strong>基于 Eino 构建 Supervisor + 子 Agent，将商品、购物车、订单、支付、售后等能力封装为工具，由 Supervisor 完成跨域任务拆解、依赖排序与结果汇聚；结合动态工具暴露和场景化 Skill，减少无关工具干扰并固化复杂任务流程。</li>
               <li><strong>上下文与长期记忆：</strong>设计三层上下文管理机制，对近期消息、会话记忆、长期记忆进行分层注入，并通过滑动窗口会话摘要、按需注入记忆与工具结果压缩控制长会话 Token 消耗。</li>
               <li><strong>可靠执行与稳定性：</strong>针对 Agent 真实业务执行中的越权、误操作与模型波动问题，统一收敛工具执行入口，对身份、权限、风险确认和写操作进行集中校验，并支持高风险任务中断后继续执行；同时对模型侧突发并发和异常进行排队、限流与降级处理，降低模型不稳定对业务执行链路的影响</li>
-              <li><strong>Skill演进：</strong>构建「轨迹学习 → 候选提炼 → 重放轨迹 → 回归校验」闭环，从 Langfuse 脱敏轨迹归因失败与绕路路径，生成 Skill 候选；基于数据快照重建原场景，重放验证候选是否修复失败并减少无效工具调用，产出 SKILL.md、diff 与证据报告。</li>
-              <li><strong>离线评测：</strong>记录 Agent 规划、工具调用、跨 Agent 协作及最终状态的完整 Trace，基于 tau2-bench 对任务完成状态和工具执行链路进行离线判分，支持 Prompt、Tool Schema 与 Context 的持续迭代。</li>
+              <li><strong>Skill演进：</strong>构建「轨迹学习 → 候选提炼 → 重放轨迹 → 回归校验」闭环，从脱敏轨迹归因失败与绕路路径，生成 Skill 候选；基于数据快照重建原场景，重放验证候选是否修复失败并减少无效工具调用，产出 SKILL.md、diff 与证据报告。</li>
+              <li><strong>离线评测：</strong>记录 Agent 规划、工具调用、跨 Agent 协作及最终状态的完整 Trace，搭建 Agent 离线评测闭环，以任务完成度和工具执行链路为核心判分维度，形成「离线评测 → 问题定位 → 定向迭代 → 回归验证」的持续优化循环。</li>
             </ul>
             <p><strong>成果：</strong>平均上下文 Token 消耗 <strong>8.1K</strong> -> <strong>5.6K</strong>; pass^1：<strong>77.3%</strong> -> <strong>92.9%</strong>，pass^3：<strong>64.3%</strong> -> <strong>82.1%</strong>; purchase-advisor 触发率：<strong>6.67%</strong> -> <strong>100%</strong></p>
           </article>
@@ -375,9 +375,9 @@
               <li><strong>问题理解与意图识别：</strong>对复杂问题或模糊问题引入 Query 改写 -> 子问题拆分 -> 意图树，并根据意图缩小候选知识库范围，降低无关召回对后续排序的干扰。</li>
               <li><strong>混合检索与排序：</strong>采用向量检索 + 关键词检索 + 知识图谱 + 联网检索四通道并行召回，经去重后使用加权 RRF 融合并通过 Cross-Encoder 精排，形成综合排序结果，并通过 chunk_id 回查对应文档及上下文内容，实现检索结果来源追溯。</li>
               <li><strong>Retrieval 服务化：</strong>设计统一 Retrieval OpenAPI，返回 Chunk、Score、来源文档；通过 API Key 绑定知识库访问范围，并使用 Redis Lua 原子维护 Key 级 QPS / 日配额，记录 HitCount、Latency、Status 等运行数据。</li>
-              <li><strong>检索质量闭环：</strong>统一计算 Recall@K、MRR、Context Precision 等指标，对 Chunk 策略、TopK、RRF 权重与 Rerank 候选数进行 A/B 回归，并记录不同召回通道及排序前后的结果用于问题归因。</li>
+              <li><strong>检索质量闭环：</strong>设计「评测指标 → A/B 实验 → 链路归因 → 迭代调优」的完整闭环，覆盖TopK、RRF 权重、Rerank 候选数等核心参数的系统化优化。</li>
             </ul>
-            <p><strong>成果：</strong>相较单路向量检索，Recall@5: <strong>69.8%</strong> → <strong>84.2%</strong>，Context Precision: <strong>67.5%</strong> → <strong>78.1%</strong>，形成「检索 → 评测 → 参数优化 → 回归验证」的质量迭代闭环。</p>
+            <p><strong>成果：</strong>相较单路向量检索，Recall@5: <strong>69.8%</strong> → <strong>84.2%</strong>，Context Precision: <strong>67.5%</strong> → <strong>78.1%</strong></p>
           </article>
         </section>
 

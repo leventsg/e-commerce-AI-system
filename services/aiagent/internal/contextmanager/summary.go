@@ -48,6 +48,15 @@ type SummaryManager struct {
 	summaries  SummaryPersistence
 	messages   SummaryMessagesStore
 	summarizer RollingSummarizer
+	budget     domain.TokenBudget
+	estimator  domain.TokenEstimator
+}
+
+type SummaryOption func(*SummaryManager)
+
+// WithSummaryTokenBudget 注入上下文 token 预算，用于摘要触发的 token 阈值判断。
+func WithSummaryTokenBudget(budget domain.TokenBudget) SummaryOption {
+	return func(m *SummaryManager) { m.budget = budget }
 }
 
 type SummaryRefreshRequest struct {
@@ -76,8 +85,26 @@ type SummarizeResult struct {
 	TotalTokens      int
 }
 
-func NewSummaryManager(summaries SummaryPersistence, messages SummaryMessagesStore, summarizer RollingSummarizer) *SummaryManager {
-	return &SummaryManager{summaries: summaries, messages: messages, summarizer: summarizer}
+func NewSummaryManager(summaries SummaryPersistence, messages SummaryMessagesStore, summarizer RollingSummarizer, opts ...SummaryOption) *SummaryManager {
+	m := &SummaryManager{
+		summaries: summaries, messages: messages, summarizer: summarizer,
+		budget: domain.TokenBudget{}.Normalized(), estimator: domain.HybridEstimator{},
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	m.budget = m.budget.Normalized()
+	return m
+}
+
+// CompressIfNeeded 判断未压缩对话流是否超阈值，超则同步压缩最旧部分并推进水位。
+// 返回本次压缩的消息 ID（nil 表示未发生压缩）。实现 memory.Compressor，供每次模型调用前的动态压缩调用。
+func (m *SummaryManager) CompressIfNeeded(ctx context.Context, userID uint64, conversationID string) ([]string, error) {
+	result, err := m.MaybeRefresh(ctx, SummaryRefreshRequest{UserID: userID, ConversationID: conversationID})
+	if err != nil {
+		return nil, err
+	}
+	return result.CompressedMessageIDs, nil
 }
 
 // MaybeRefresh 检查是否需要刷新摘要，如果需要则生成新的摘要并保存
@@ -108,13 +135,30 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 	if err != nil {
 		return SummaryRefreshResult{}, err
 	}
-	if unsummarizedCount < summaryTriggerMessageCount {
+	// 估算一批未压缩消息的 token（最多 summaryQueryMessageLimit 条），作为 token 触发判断依据。
+	sample, err := m.messages.FindUnsummarized(ctx, req.UserID, req.ConversationID, afterCreatedAt, afterMessageID, summaryQueryMessageLimit)
+	if err != nil {
+		return SummaryRefreshResult{}, err
+	}
+	sampleTokens := 0
+	for _, msg := range sample {
+		if msg != nil {
+			sampleTokens += m.estimator.Tokens(msg.Content)
+		}
+	}
+	// 触发条件：累计 token 达到阈值（主），或条数达到兜底阈值（防估算偏差导致 backlog 失控）。
+	if sampleTokens < m.budget.SummaryTriggerTokens && unsummarizedCount < summaryTriggerMessageCount {
 		return result, nil
 	}
 	logx.Infof("会话 %s 用户 %d 有 %d 条未压缩消息，触发摘要刷新", req.ConversationID, req.UserID, unsummarizedCount)
 
-	// 单次最多压缩 3 轮，每次压缩 10 条消息，最多压缩 30 条消息
-	for round := 0; round < maxSummaryRefreshRounds && unsummarizedCount >= summaryTriggerMessageCount; round++ {
+	// 从最旧往新压缩：只要未压缩条数仍超过保留窗口（summaryRecentMessageCount）就继续，
+	// 每轮最多压缩 summaryCompressMessageCount 条，最多 maxSummaryRefreshRounds 轮。
+	// 这样既能响应 token 触发的长消息会话（条数不足 30 也压），也保持条数兜底的记忆维护节奏。
+	for round := 0; round < maxSummaryRefreshRounds; round++ {
+		if unsummarizedCount <= summaryRecentMessageCount {
+			break
+		}
 		if m.summarizer == nil {
 			return result, ErrSummaryManagerUnavailable
 		}
@@ -122,16 +166,14 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 		if err != nil {
 			return result, err
 		}
-		// 如果未压缩的消息数量不足，则不进行压缩
-		if len(unsummarized) < summaryTriggerMessageCount {
-			recentMessages, recentErr := m.messages.FindRecentUnsummarized(ctx, req.UserID, req.ConversationID, afterCreatedAt, afterMessageID, summaryRecentMessageCount)
-			if recentErr != nil {
-				return result, recentErr
-			}
-			result.RecentMessages = recentMessages
-			return result, nil
+		if len(unsummarized) <= summaryRecentMessageCount {
+			break
 		}
-		toCompress := unsummarized[:summaryCompressMessageCount]
+		toCompressCount := summaryCompressMessageCount
+		if remain := len(unsummarized) - summaryRecentMessageCount; remain < toCompressCount {
+			toCompressCount = remain
+		}
+		toCompress := unsummarized[:toCompressCount]
 		summaryResult, err := m.summarizer.Summarize(ctx, SummarizeRequest{
 			UserID:         req.UserID,
 			ConversationID: req.ConversationID,
@@ -163,7 +205,7 @@ func (m *SummaryManager) MaybeRefresh(ctx context.Context, req SummaryRefreshReq
 		previous = next
 		afterCreatedAt = next.CoveredUntilCreatedAt
 		afterMessageID = next.CoveredUntilMessageID
-		unsummarizedCount -= summaryCompressMessageCount
+		unsummarizedCount -= int64(toCompressCount)
 	}
 
 	recentMessages, err = m.messages.FindRecentUnsummarized(ctx, req.UserID, req.ConversationID, afterCreatedAt, afterMessageID, summaryRecentMessageCount)
@@ -220,8 +262,7 @@ func estimateSummaryContentTokens(summary *domain.ConversationSummary) int {
 		return 0
 	}
 	raw, _ := json.Marshal(summary)
-	// 一个token大约是一到两个中文字符，向上取整
-	return (len([]rune(string(raw))) + 3) / 2
+	return domain.EstimateTokens(string(raw))
 }
 
 // compactStrings 过滤掉空字符串

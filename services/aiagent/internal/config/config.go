@@ -72,6 +72,22 @@ type RAGConfig struct {
 	EmbeddingModel            string
 }
 
+// TokenBudgetConfig 上下文 token 预算配置。将上下文压缩的决策依据从"消息条数"
+// 切换为"token 预算"：最近消息窗口按预算滑动、摘要触发按累计 token 阈值、各非消息层按 cap 截断。
+// 字段全部为 0 时由 contextmanager.TokenBudget.Normalized 填充默认值。
+type TokenBudgetConfig struct {
+	TotalTokens               int
+	RecentWindowTokens        int
+	SummaryMaxTokens          int
+	LatestToolResultMaxTokens int
+	ToolHistoryMaxTokens      int
+	TaskStateMaxTokens        int
+	UserProfileMaxTokens      int
+	MinRecentMessages         int
+	SummaryTriggerTokens      int
+	SafetyFactor              float64
+}
+
 type Config struct {
 	zrpc.RpcServerConf
 	Consul       consul.Conf
@@ -88,6 +104,7 @@ type Config struct {
 	Confirmation ConfirmationConfig
 	OrderAPI     OrderAPIConfig
 	RAG          RAGConfig
+	TokenBudget  TokenBudgetConfig
 	ProductRpc   zrpc.RpcClientConf
 	InventoryRpc zrpc.RpcClientConf
 	OrderRpc     zrpc.RpcClientConf

@@ -13,7 +13,7 @@ import (
 	"github.com/leventsg/e-commerce-AI-system/services/aiagent/internal/domain"
 )
 
-func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *testing.T) {
+func TestManagerBuildsAgentContextByTokenBudgetAndToolReferences(t *testing.T) {
 	rows := make([]*aimessages.AiMessages, 0, 23)
 	for i := 1; i <= 22; i++ {
 		rows = append(rows, contextMessage(
@@ -56,7 +56,7 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 	}
 
 	joined := joinContextContents(result.Messages)
-	for _, want := range []string{"更早的会话摘要", "recent-m3", "recent-m22", "call-latest", "cart_item_id", "call-old", "完成购物选择", `"categories":["手机"]`, `"brands":["品牌A"]`} {
+	for _, want := range []string{"更早的会话摘要", "recent-m1", "recent-m22", "call-latest", "cart_item_id", "call-old", "完成购物选择", `"categories":["手机"]`, `"brands":["品牌A"]`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("AgentContext missing %q", want)
 		}
@@ -64,21 +64,19 @@ func TestManagerBuildsAgentContextWithTwentyRecentMessagesAndToolReferences(t *t
 	if strings.Contains(joined, "预算 3000 元") {
 		t.Fatalf("AgentContext should not include removed user memories: %s", joined)
 	}
-	for _, forbidden := range []string{"recent-m1", "recent-m2"} {
-		if countContextContent(result.Messages, forbidden) != 0 {
-			t.Fatalf("AgentContext retained message outside latest 20: %q", forbidden)
-		}
+	// token 预算窗口内短消息应全部保留（不再死板截断到 20 条）
+	if result.RecentMessageStartID != "m1" || result.RecentMessageEndID != "m22" || result.SpilledMessageCount != 0 {
+		t.Fatalf("recent range = %q..%q spilled=%d, want m1..m22 spilled=0",
+			result.RecentMessageStartID, result.RecentMessageEndID, result.SpilledMessageCount)
 	}
 	if result.SummaryCoveredMessageID != "summary-10" ||
 		!result.SummaryCoveredUntilCreatedAt.Equal(baseTime()) ||
-		result.RecentMessageStartID != "m3" ||
-		result.RecentMessageEndID != "m22" ||
 		result.LatestToolCallID != "call-latest" ||
 		result.RecentToolCallCount != 1 {
 		t.Fatalf("build metadata = %+v", result)
 	}
-	if result.EstimatedInputTokens <= 0 {
-		t.Fatalf("EstimatedInputTokens = %d", result.EstimatedInputTokens)
+	if result.EstimatedInputTokens <= 0 || result.BudgetTotalTokens <= 0 || result.BudgetRemainingTokens < 0 {
+		t.Fatalf("budget observability = %+v", result)
 	}
 	for _, message := range result.Messages {
 		if message.Role == domain.ContextRoleTool {

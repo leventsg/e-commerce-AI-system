@@ -299,7 +299,7 @@
       <div class="resume-content" id="resumeContent" contenteditable="true" spellcheck="false">
         <header class="header">
           <h1 class="name">蓝松松</h1>
-          <p class="headline">后端开发 / AI Agent 应用工程师 </p>
+          <p class="headline">Golang 后端开发 / AI Agent 应用工程师 </p>
           <p class="contact-line">男 <span class="sep">|</span> 25岁 <span class="sep">|</span> 17369070912 <span class="sep">|</span> 1960155751@qq.com</p>
           <p class="contact-line">GitHub：https://github.com/leventsg </p>
           <label class="photo-box" contenteditable="false" title="点击替换证件照">
@@ -331,14 +331,14 @@
           <h2 class="section-title">实习经历</h2>
           <article class="entry">
             <div class="entry-head">
-              <div><img src="https://commonresource-1252524126.cdn.xiaoeknow.com/image/lhyaurs50zil.ico" type="image/x-ico" style="height: 1em; vertical-align: middle; margin-right: 4px;">深圳小鹅网络技术有限公司&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div>
-              <!-- <div class="entry-title">深圳小鹅网络技术有限公司 · Golang 后端开发实习生 · 直播中控台/数据异步导出</div> -->
+              <div><img src="https://commonresource-1252524126.cdn.xiaoeknow.com/image/lhyaurs50zil.ico" type="image/x-ico" style="height: 1em; vertical-align: middle; margin-right: 4px;">深圳小鹅网络技术有限公司（私域 SaaS 头部公司）&nbsp;&nbsp;&nbsp; Golang后端开发实习生</div>
+              <!-- <div class="entry-title">深圳小鹅网络技术有限公司（私域 SaaS 头部公司） · Golang 后端开发实习生 · 直播中控台/数据异步导出</div> -->
               <div class="date">2025.09 - 2026.01</div>
             </div>
             <p><strong>业务背景：</strong>实习期间参与直播中控台与年度报告等业务后端迭代，围绕年报内容构建、数据导出和线上问题治理。</p>
             <ul>
-              <li><strong>年报数据链路优化：</strong>统一 Web/App/小程序等多端年报数据入口，针对多个独立下游查询采用 Goroutine 并发拉取 + 按需加载；对访问数据增加 Redis 缓存，缓存命中时直接返回聚合结果，减少重复数据查询，测试环境下接口平均响应由约 280ms 降至 <strong>60ms</strong>。</li>
-              <li><strong>异步导出链路：</strong>针对大数据量导出耗时较长的问题，将同步导出改造为异步任务模式，通过 Redis 队列调度任务、Doris 流式读取并经 Kafka 分批回传数据；测试环境下千条级明细平均导出耗时约 <strong>4s</strong>，任务成功率约 <strong>99%</strong>。</li>
+              <li><strong>年报数据链路优化：</strong>统一 Web/App/小程序等多端年报数据入口，针对多个独立下游查询采用 Goroutine 并发拉取 + 按需加载；对访问数据增加 Redis 缓存，减少重复数据查询，测试环境下接口平均响应约 280ms，缓存命中情况下约<strong>60ms</strong>。</li>
+              <li><strong>异步导出链路：</strong>针对大数据量导出耗时较长的问题，通过 Redis 队列调度任务、Doris 流式读取并经 Kafka 分批回传数据；测试环境下千条级明细平均导出耗时约 <strong>4s</strong>，任务成功率约 <strong>99%</strong>。</li>
               <li><strong>线上问题治理：</strong>处理指标口径差异、源表结构变更、数据同步延迟等一致性问题，通过链路日志核对、上下游字段排查和口径对齐，保障核心看板与运营分析数据稳定交付。</li>
             </ul>
           </article>
@@ -352,15 +352,15 @@
               <div class="date">2026.03 - 2026.08</div>
             </div>
             <p class="project-title">Go / Eino / RAG / MCP / Skill / SSE / MySQL / Redis / Elasticsearch / Langfuse</p>
-            <p><strong>项目简介：</strong>面向商品、购物车、订单、支付与售后等电商场景，构建可调用真实业务 RPC 的 Agent 执行层，重点解决跨域任务编排、长上下文成本、真实业务操作安全性和 Agent 执行稳定性问题。</p>
+            <p><strong>项目简介：</strong>面向商品、购物车、订单、支付与售后等电商场景，构建可调用真实业务的 Agent 执行层，重点解决跨域任务编排、长上下文成本、真实业务操作安全性和 Agent 执行稳定性问题。</p>
             <ul>
               <li><strong>多 Agent 业务编排：</strong>基于 Eino 构建 Supervisor + 子 Agent，将商品、购物车、订单、支付、售后等能力封装为工具，由 Supervisor 完成跨域任务拆解、依赖排序与结果汇聚；结合动态工具暴露和场景化 Skill，减少无关工具干扰并固化复杂任务流程。</li>
               <li><strong>上下文与长期记忆：</strong>设计三层上下文管理机制，对近期消息、会话记忆、长期记忆进行分层注入，并通过滑动窗口会话摘要、按需注入记忆与工具结果压缩控制长会话 Token 消耗。</li>
-              <li><strong>安全与可靠执行：</strong>构建统一工具执行入口，对真实业务操作进行身份注入、权限校验、风险确认和审计记录；结合幂等恢复、Checkpoint 与 Human-in-the-loop，处理工具超时、未知执行状态及高风险操作中断续跑。</li>
-              <li><strong>模型流量治理：</strong>针对模型调用高延迟及突发并发，设计基于 Redis + Lua 的公平排队与并发控制机制，并结合 SSE 返回等待状态；引入模型熔断与候选模型切换，降低上游模型异常对任务执行链路的影响。</li>
-              <li><strong>离线评测：</strong>记录 Agent 规划、工具调用、跨 Agent 协作及最终状态的完整 Trace，基于 tau2-bench 对任务完成状态和工具执行链路进行离线判分，支持 Prompt、Tool Schema 与 Context 的持续迭代。</li>
+              <li><strong>可靠执行与稳定性：</strong>针对 Agent 真实业务执行中的越权、误操作与模型波动问题，统一收敛工具执行入口，对身份、权限、风险确认和写操作进行集中校验，并支持高风险任务中断后继续执行；同时对模型侧突发并发和异常进行排队、限流与降级处理，降低模型不稳定对业务执行链路的影响</li>
+              <li><strong>Skill演进：</strong>构建「轨迹学习 → 候选提炼 → 重放轨迹 → 回归校验」闭环，从脱敏轨迹归因失败与绕路路径，生成 Skill 候选；基于数据快照重建原场景，重放验证候选是否修复失败并减少无效工具调用，产出 SKILL.md、diff 与证据报告。</li>
+              <li><strong>离线评测：</strong>记录 Agent 规划、工具调用、跨 Agent 协作及最终状态的完整 Trace，搭建 Agent 离线评测闭环，以任务完成度和工具执行链路为核心判分维度，形成「离线评测 → 问题定位 → 定向迭代 → 回归验证」的持续优化循环。</li>
             </ul>
-            <p><strong>成果：</strong>平均上下文 Token 消耗 <strong>8.1K</strong> -> <strong>5.6K</strong>；pass^1：<strong>77.3%</strong> -> <strong>92.9%</strong>，pass^3：<strong>64.3%</strong> -> <strong>82.1%</strong></p>
+            <p><strong>成果：</strong>平均上下文 Token 消耗 <strong>8.1K</strong> -> <strong>5.6K</strong>; pass^1：<strong>77.3%</strong> -> <strong>92.9%</strong>，pass^3：<strong>64.3%</strong> -> <strong>82.1%</strong>; purchase-advisor 触发率：<strong>6.67%</strong> -> <strong>100%</strong></p>
           </article>
 
           <article class="entry">
@@ -371,20 +371,20 @@
             <p class="project-title">Python / FastAPI / LangChain / LangGraph / PostgreSQL / pgvector / Elasticsearch / Redis / Kafka / RAGAS</p>
             <p><strong>项目简介：</strong>面向企业文档、商品资料及运营规范等非结构化知识，构建文档接入、解析加工、混合检索、开放服务与质量评测一体化 Retrieval 平台，为 RAG / Agent 提供稳定、可评测、可追踪的知识检索能力。</p>
             <ul>
-              <li><strong>可编排知识入库：</strong>将文档处理拆分为 Fetch → Parse → Enhance → Chunk → Enrich → Index 节点化 Pipeline，支持条件执行、拓扑校验及节点状态/耗时记录，通过任务状态和防重入机制处理失败及重复执行，使文档处理链路可定位、可恢复。</li>
+              <li><strong>可编排知识入库：</strong>将文档处理拆分为 Fetch → Parse → Enhance → Chunk → Enrich → Index 节点化 Pipeline，支持条件执行、拓扑校验及节点状态/耗时记录，通过任务状态和防重入机制处理失败及重复执行，使文档处理链路可定位。</li>
               <li><strong>问题理解与意图识别：</strong>对复杂问题或模糊问题引入 Query 改写 -> 子问题拆分 -> 意图树，并根据意图缩小候选知识库范围，降低无关召回对后续排序的干扰。</li>
               <li><strong>混合检索与排序：</strong>采用向量检索 + 关键词检索 + 知识图谱 + 联网检索四通道并行召回，经去重后使用加权 RRF 融合并通过 Cross-Encoder 精排，形成综合排序结果，并通过 chunk_id 回查对应文档及上下文内容，实现检索结果来源追溯。</li>
               <li><strong>Retrieval 服务化：</strong>设计统一 Retrieval OpenAPI，返回 Chunk、Score、来源文档；通过 API Key 绑定知识库访问范围，并使用 Redis Lua 原子维护 Key 级 QPS / 日配额，记录 HitCount、Latency、Status 等运行数据。</li>
-              <li><strong>检索质量闭环：</strong>统一计算 Recall@K、MRR、Context Precision 等指标，对 Chunk 策略、TopK、RRF 权重与 Rerank 候选数进行 A/B 回归，并记录不同召回通道及排序前后的结果用于问题归因。</li>
+              <li><strong>检索质量闭环：</strong>设计「评测指标 → A/B 实验 → 链路归因 → 迭代调优」的完整闭环，覆盖TopK、RRF 权重、Rerank 候选数等核心参数的系统化优化。</li>
             </ul>
-            <p><strong>成果：</strong>相较单路向量检索，Recall@5: <strong>69.8%</strong> → <strong>84.2%</strong>，Context Precision: <strong>67.5%</strong> → <strong>78.1%</strong>，形成「检索 → 评测 → 参数优化 → 回归验证」的质量迭代闭环。</p>
+            <p><strong>成果：</strong>相较单路向量检索，Recall@5: <strong>69.8%</strong> → <strong>84.2%</strong>，Context Precision: <strong>67.5%</strong> → <strong>78.1%</strong></p>
           </article>
         </section>
 
         <section class="section">
           <h2 class="section-title">专业技能</h2>
           <ul class="compact-list">
-            <li><strong>后端语言与工程：</strong>熟练掌握 Go 和 Python，熟悉 goroutine、channel、context、错误处理、并发控制与常见服务分层，具备 Golang、Python 后端业务开发和接口联调经验。</li>
+            <li><strong>后端语言与工程：</strong>熟练掌握 Go，Python，熟悉 goroutine、channel、context、错误处理、并发控制与常见服务分层，具备后端业务开发和接口联调经验。</li>
             <li><strong>AI 应用工程：</strong>熟悉 Eino、LangChain、LangGraph 等大模型应用框架，理解 Tool Calling、Agent 编排、上下文压缩、长期记忆、Human-in-the-loop 与模型不可用降级。</li>
             <li><strong>RAG 与检索：</strong>熟悉文档解析、Chunk、Embedding、向量召回、BM25、RRF、Rerank 和离线评测流程，了解 Milvus、pgvector、Elasticsearch 等检索/向量存储方案。</li>
             <li><strong>存储与中间件：</strong>熟悉 MySQL 表设计与基础性能优化，掌握 Redis 常见数据结构，对缓存持久化、缓存穿透、缓存击穿有一定理解，具备 Kafka/MQ 异步任务处理经验。</li>

@@ -331,7 +331,7 @@
           <h2 class="section-title">实习经历</h2>
           <article class="entry">
             <div class="entry-head">
-              <div class="entry-title">深圳小鹅网络技术有限公司 · Golang 后端开发实习生 · 直播中控台 / 数据导出</div>
+              <div class="entry-title">深圳小鹅网络技术有限公司（私域 SaaS 头部公司）      Golang 后端开发实习生</div>
               <div class="date">2025.09 - 2026.01</div>
             </div>
             <p><strong>业务背景：</strong>参与直播中控台与年度报告等后端迭代，围绕运营数据构建、异步导出、权限字段适配和线上问题治理交付可复用能力。</p>
@@ -366,16 +366,16 @@
               <div class="entry-title">KnowledgeFlow · 企业级知识库数据平台</div>
               <div class="date">2026.03 - 2026.08</div>
             </div>
-            <p class="project-title">Go / Gin / Eino / PostgreSQL / pgvector / Elasticsearch / Redis / MQ / Apache Tika / RAGAS</p>
+            <p class="project-title">Go / Eino / PostgreSQL / pgvector / Elasticsearch / Redis / Kafka / RAGAS</p>
             <p><strong>项目简介：</strong>面向企业文档、商品资料及运营规范等非结构化知识，构建文档接入、解析加工、混合检索、开放服务与质量评测一体化 Retrieval 平台，为 RAG / Agent 提供稳定、可评测、可追踪的知识检索能力。</p>
             <ul>
               <li><strong>可编排知识入库：</strong>将文档处理拆分为 Fetch → Parse → Enhance → Chunk → Enrich → Index 节点化 Pipeline，支持条件执行、拓扑校验及节点状态/耗时记录，通过任务状态和防重入机制处理失败及重复执行，使文档处理链路可定位。</li>
               <li><strong>问题理解与意图识别：</strong>对复杂问题或模糊问题引入 Query 改写 -> 子问题拆分 -> 意图树，并根据意图缩小候选知识库范围，降低无关召回对后续排序的干扰。</li>
               <li><strong>混合检索与排序：</strong>采用向量检索 + 关键词检索 + 知识图谱 + 联网检索四通道并行召回，经去重后使用加权 RRF 融合并通过 Cross-Encoder 精排，形成综合排序结果，并通过 chunk_id 回查对应文档及上下文内容，实现检索结果来源追溯。</li>
               <li><strong>Retrieval 服务化：</strong>设计统一 Retrieval OpenAPI，返回 Chunk、Score、来源文档；通过 API Key 绑定知识库访问范围，并使用 Redis Lua 原子维护 Key 级 QPS / 日配额，记录 HitCount、Latency、Status 等运行数据。</li>
-              <li><strong>检索质量闭环：</strong>统一计算 Recall@K、MRR、Context Precision 等指标，对 Chunk 策略、TopK、RRF 权重与 Rerank 候选数进行 A/B 回归，并记录不同召回通道及排序前后的结果用于问题归因。</li>
+              <li><strong>检索质量闭环：</strong>设计「评测指标 → A/B 实验 → 链路归因 → 迭代调优」的完整闭环，覆盖TopK、RRF 权重、Rerank 候选数等核心参数的系统化优化。</li>
             </ul>
-            <p><strong>成果：</strong>相较单路向量检索，Recall@5: <strong>69.8%</strong> → <strong>84.2%</strong>，Context Precision: <strong>67.5%</strong> → <strong>78.1%</strong>，形成「检索 → 评测 → 参数优化 → 回归验证」的质量迭代闭环。</p>
+            <p><strong>成果：</strong>相较单路向量检索，Recall@5: <strong>69.8%</strong> → <strong>84.2%</strong>，Context Precision: <strong>67.5%</strong> → <strong>78.1%</strong></p>
           </article>
         </section>
 
