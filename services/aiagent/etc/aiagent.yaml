@@ -51,6 +51,31 @@ Eino:
   MaxTokens: 2048
   Temperature: 0.2
 
+# 可选：候选模型池（主备降级 + 熔断）。配置后主 agent 走候选池，
+# 未配置则沿用上面的 Eino 单模型。候选按 Priority 升序取用，主模型 Priority 最小。
+#ModelPool:
+#  DefaultCooldown: 30
+#  DefaultThreshold: 3
+#  DefaultMaxRetries: 3
+#  RetryBaseDelayMs: 200
+#  Candidates:
+#    - Provider: ${AI_MODEL_PROVIDER}
+#      APIKey: ${AI_MODEL_API_KEY}
+#      BaseURL: ${AI_MODEL_BASE_URL}
+#      Model: ${AI_MODEL_NAME}
+#      Timeout: 300
+#      MaxTokens: 2048
+#      Temperature: 0.2
+#      Priority: 0
+#    - Provider: openai-compatible
+#      APIKey: ${AI_BACKUP_MODEL_API_KEY}
+#      BaseURL: ${AI_BACKUP_MODEL_BASE_URL}
+#      Model: ${AI_BACKUP_MODEL_NAME}
+#      Timeout: 300
+#      MaxTokens: 2048
+#      Temperature: 0.2
+#      Priority: 1
+
 SummaryModel:
   Provider: ${AI_SUMMARY_MODEL_PROVIDER}
   APIKey: ${AI_SUMMARY_MODEL_API_KEY}

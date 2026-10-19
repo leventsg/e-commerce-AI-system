@@ -240,7 +240,13 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if skillErr != nil {
 		logx.Errorw("ai skill config load failed", logx.Field("component", "skill"), logx.Field("stage", "initialize"), logx.Field("err", skillErr))
 	}
-	if runner, err := eino.NewSupervisorAgent(context.Background(), modelFactory, c.Eino, toolRegistry,
+	// 主 agent（supervisor + 子 agent）走候选池 + 熔断 + 降级；配置了 ModelPool 才启用，
+	// 否则保持单模型行为。summary/profile/extractor 等无副作用模型继续用 modelFactory。
+	agentModelFactory := modelFactory
+	if len(c.ModelPool.Candidates) > 0 {
+		agentModelFactory = eino.NewResilientModelFactory(modelFactory, c.ModelPool)
+	}
+	if runner, err := eino.NewSupervisorAgent(context.Background(), agentModelFactory, c.Eino, toolRegistry,
 		eino.WithApprovalManager(approvalManager),
 		eino.WithCheckpointStore(eino.NewPersistentCheckpointStore(redisClient, agentRunsModel, checkpointTTL)),
 		eino.WithMemoryProvider(memoryProvider),

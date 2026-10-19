@@ -19,6 +19,30 @@ type EinoConfig struct {
 	Temperature float64
 }
 
+// ModelCandidate 候选模型池中的一个模型配置（嵌入 EinoConfig 复用单模型字段）。
+type ModelCandidate struct {
+	EinoConfig
+	// Priority 优先级，数值越小越靠前（主模型为 0）。
+	Priority int `json:",optional"`
+	// CooldownSeconds 该候选熔断冷却秒数，覆盖 ModelPoolConfig.DefaultCooldown。
+	CooldownSeconds *int `json:",optional"`
+	// FailureThreshold 该候选连续失败熔断阈值，覆盖 ModelPoolConfig.DefaultThreshold。
+	FailureThreshold *int `json:",optional"`
+}
+
+// ModelPoolConfig 候选模型池配置。Candidates 为空时回退单模型（Config.Eino）。
+type ModelPoolConfig struct {
+	Candidates []ModelCandidate `json:",optional"`
+	// DefaultCooldown 熔断冷却秒数，默认 30。
+	DefaultCooldown int `json:",default=30"`
+	// DefaultThreshold 连续失败熔断阈值，默认 3。
+	DefaultThreshold int `json:",default=3"`
+	// DefaultMaxRetries 单候选内最大重试次数，默认 3。
+	DefaultMaxRetries int `json:",default=3"`
+	// RetryBaseDelayMs 重试退避基数（毫秒），默认 200。
+	RetryBaseDelayMs int `json:",default=200"`
+}
+
 type LangfuseConfig struct {
 	Enabled      bool    `json:",default=false"`
 	Host         string  `json:",optional"`
@@ -95,8 +119,9 @@ type Config struct {
 	RedisConf    redis.RedisConf
 	Cache        cache.CacheConf
 	Eino         EinoConfig
-	Langfuse     LangfuseConfig `json:",optional"`
-	Skill        SkillConfig    `json:",optional"`
+	ModelPool    ModelPoolConfig `json:",optional"`
+	Langfuse     LangfuseConfig  `json:",optional"`
+	Skill        SkillConfig     `json:",optional"`
 	SummaryModel EinoConfig
 	ProfileModel EinoConfig
 	KafkaMQ      config.KafkaConfig
